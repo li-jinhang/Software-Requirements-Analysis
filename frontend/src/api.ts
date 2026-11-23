@@ -193,6 +193,8 @@ export async function setPersona(id: string, role: string) {
 type Citation = CourseCitation & { score: number };
 type Update = {
   node_id: number;
+  concept_name: string;
+  delta: number;
   mastery_score: number;
   status: Concept["mastery"];
   tag: string;
@@ -216,7 +218,13 @@ function assistant(
     text,
     node: meta.updates?.length ? String(meta.updates[0].node_id) : undefined,
     badge: meta.updates
-      ?.map((u) => u.tag + " · " + u.mastery_score + "%")
+      ?.map((u) => {
+        const change = u.delta >= 0 ? "+" + u.delta : String(u.delta);
+        const tag = u.tag.endsWith(" " + change) ? u.tag : u.tag + " " + change;
+        return [u.concept_name, tag, u.mastery_score + "%"]
+          .filter(Boolean)
+          .join(" · ");
+      })
       .join(" / "),
     citations: meta.citations,
   };
@@ -333,7 +341,10 @@ export async function remoteReport(
     ],
     comment: r.overall_comment,
     weaknesses: list(r.weakness_summary),
-    plan: list(r.review_plan),
+    plan: list(r.review_plan)
+      .flatMap((line) => line.split("；"))
+      .map((line) => line.trim().replace(/^(?:[-*•]|\d+[.)、])\s*/, ""))
+      .filter(Boolean),
   };
 }
 export type ReviewTable =
@@ -545,3 +556,56 @@ export async function reportHistory(space: Space, signal: AbortSignal) {
   );
   return reports.filter((r): r is Report => r !== null);
 }
+
+export type ModelPurpose =
+  "default" | "extract" | "feynman" | "encyclopedia" | "report";
+export type ModelProfile = {
+  id: string;
+  name: string;
+  mode: "api" | "chatgpt";
+  model: string;
+  base_url: string;
+  has_key: boolean;
+};
+export type ProfileDraft = Omit<ModelProfile, "id" | "has_key"> & {
+  api_key?: string;
+};
+export type ModelSettings = {
+  profiles: ModelProfile[];
+  bindings: Partial<Record<ModelPurpose, string>>;
+  environment_live: boolean;
+  chatgpt: { connected: boolean; pending: boolean; error: string };
+};
+const modelPath = "/model-settings";
+export const modelSettingsApi = {
+  read: () => json<ModelSettings>(modelPath),
+  active: () =>
+    json<Record<Exclude<ModelPurpose, "default">, string>>(
+      modelPath + "/active",
+    ),
+  save: (p: ProfileDraft, id?: string) =>
+    json<{ id: string }>(modelPath + "/profiles" + (id ? "/" + id : ""), {
+      ...post(p),
+      method: id ? "PUT" : "POST",
+    }),
+  remove: (id: string) =>
+    request(modelPath + "/profiles/" + id, { method: "DELETE" }),
+  bind: (purpose: ModelPurpose, id: string) =>
+    request(modelPath + "/bindings/" + purpose, {
+      ...post({ profile_id: id || null }),
+      method: "PUT",
+    }),
+  catalog: (p: ProfileDraft, id?: string) =>
+    json<string[]>(
+      modelPath + "/catalog",
+      post({ ...p, model: p.model || "catalog", id }),
+    ),
+  test: (id: string) =>
+    json<{ latency_ms: number }>(modelPath + "/profiles/" + id + "/test", {
+      method: "POST",
+    }),
+  login: () =>
+    json<{ url: string }>(modelPath + "/chatgpt/login", { method: "POST" }),
+  cancel: () => request(modelPath + "/chatgpt/login", { method: "DELETE" }),
+  logout: () => request(modelPath + "/chatgpt/account", { method: "DELETE" }),
+};

@@ -15,16 +15,37 @@ QUESTIONS = {
 }
 
 
+def previous_question(db, session_id):
+    return db.scalar(select(Message.content).where(
+        Message.session_id == session_id, Message.window_type == "feynman",
+        Message.sender_role == "assistant",
+    ).order_by(Message.id.desc()).limit(1)) or ""
+
+
+def follow_up(nodes, updated, previous, persona, proposed=None):
+    target = updated
+    if updated["mastery_score"] >= 80:
+        candidates = [n for n in nodes if n["id"] != updated["id"] and n["mastery_score"] < 80]
+        priority = {"weak": 0, "learning": 1, "unlearned": 2}
+        target = min(candidates, key=lambda n: (priority[n["status"]], n["mastery_score"], n["id"]),
+                     default=None)
+    if proposed and proposed.strip() != previous.strip() and updated["mastery_score"] < 80:
+        return proposed
+    if target:
+        questions = QUESTIONS[persona]
+        prev_dimension = next((i for i, q in enumerate(questions) if previous.endswith(q)), -1)
+        question = questions[(prev_dimension + 1) % len(questions)]
+        return f"「{target['concept_name']}」：{question}"
+    return "本课知识点均已达到掌握阈值。可以结束本轮查看诊断报告，或自选一个概念复习。"
+
+
 def stream(db, turn: AgentInput) -> Iterator[AgentEvent]:
     # TODO(Agent 队友): replace baseline evidence heuristic with LangGraph assessment.
     nodes = memory.get_memory_context(db, turn.doc_id, turn.session_id)["nodes"]
     if not nodes:
         yield from tokens("这份资料的知识点已被清理，请重新上传资料后再练习。")
         return
-    previous = db.scalar(select(Message.content).where(
-        Message.session_id == turn.session_id, Message.window_type == "feynman",
-        Message.sender_role == "assistant",
-    ).order_by(Message.id.desc()).limit(1)) or ""
+    previous = previous_question(db, turn.session_id)
     mentioned = [n for n in nodes if n["concept_name"] in turn.content]
     previous_focus = next((n for n in nodes if f"「{n['concept_name']}」" in previous), None)
     node = (max(mentioned, key=lambda n: len(n["concept_name"])) if mentioned
@@ -37,19 +58,7 @@ def stream(db, turn: AgentInput) -> Iterator[AgentEvent]:
         memory.log_weakness(
             db, turn.session_id, node["id"], "omission", "请补充：" + node["concept_name"]
         )
-    target = updated
-    if updated["mastery_score"] >= 80:
-        candidates = [n for n in nodes if n["id"] != node["id"] and n["mastery_score"] < 80]
-        priority = {"weak": 0, "learning": 1, "unlearned": 2}
-        target = min(candidates, key=lambda n: (priority[n["status"]], n["mastery_score"], n["id"]),
-                     default=None)
-    if target:
-        questions = QUESTIONS[turn.persona_type]
-        prev_dimension = next((i for i, q in enumerate(questions) if previous.endswith(q)), -1)
-        question = questions[(prev_dimension + 1) % len(questions)]
-        yield from tokens(f"「{target['concept_name']}」：{question}")
-    else:
-        yield from tokens("本课知识点均已达到掌握阈值。可以结束本轮查看诊断报告，或自选一个概念复习。")
+    yield from tokens(follow_up(nodes, updated, previous, turn.persona_type))
     actual = updated["mastery_score"] - node["mastery_score"]
     yield MemoryUpdate(
         updates=[

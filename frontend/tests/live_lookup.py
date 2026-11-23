@@ -83,10 +83,9 @@ def run():
             page.get_by_label("讲解内容").fill(question)
             btn("发送讲解").click()
             listener = page.locator(".p0 .msg:not(.mine)").last
-            expect(page.locator(".p0 .msg:not(.mine)")).to_have_count(i + 1)
-            if i:
-                expect(listener).to_contain_text("100%")
-                expect(listener).to_contain_text("「过拟合」")
+            expect(page.locator(".p0 .msg:not(.mine) .pill")).to_have_count(i + 1, timeout=150000)
+            # Real providers assess each lecture; exact +8 transitions belong to the offline regression.
+            expect(listener.locator(".pill")).to_contain_text(re.compile(r".+ · .+[+-]\d+ · \d+%"))
             start = time.monotonic()
             listener.get_by_role("button", name="去右侧查证").click()
             replies = page.locator(".p1 article:not(.mine):has(.source-list)")
@@ -110,7 +109,7 @@ def run():
                 assert "正则化" not in heading
                 visible = card.inner_text()
                 assert not re.search(r"(?m)^\s*#{1,6}\s|\$[^$]+\$", visible), visible
-            if i:
+            if any("梯度下降" == h for h in cards.locator("h2").all_inner_texts()):
                 assert cards.locator(".katex-html").count() > 0
             print(question, round(time.monotonic() - start, 1), "s", titles, flush=True)
             print("公式:", reply.locator("annotation").all_text_contents()[:14], flush=True)

@@ -1,6 +1,8 @@
 from app.schemas.responses import SessionOut, MessageOut, ReportOut
 import json
-from itertools import chain
+from threading import Lock
+from app.agents import model_teaching
+from app.services.model_profiles import resolve
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
@@ -8,6 +10,9 @@ from app.core.security import current_user
 from concurrent.futures import ThreadPoolExecutor
 from queue import SimpleQueue
 from app.db.database import get_db, SessionLocal
+
+# Serialize turns and completion per session without holding a SQLite write lock during inference.
+session_locks = [Lock() for _ in range(127)]
 
 workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="feynman-turn")
 from app.db.models import Session, Document, Message, DiagnosticReport, now, public
@@ -68,29 +73,29 @@ def frame(event):
     return f"event: {EVENT_NAMES[type(event)]}\ndata: {event.model_dump_json()}\n\n"
 
 
-def produce(id, content, window, user_id, doc_id, events):
+def produce(id, content, window, user_id, events):
     """Finish the accepted turn even if the HTTP client disconnects."""
     try:
-        with SessionLocal() as db:
+        with session_locks[id % len(session_locks)], SessionLocal() as db:
             s = db.get(Session, id)
-            if not s or s.user_id != user_id or s.doc_id != doc_id:
+            if s is None or s.user_id != user_id:
                 raise HTTPException(404, "会话不存在")
             turn = AgentInput(
                 session_id=id, doc_id=s.doc_id, persona_type=s.persona_type, content=content
             )
-            db.rollback()  # End the read transaction before remote model I/O.
-            agent = encyclopedia_agent if window == "encyclopedia" else feynman_agent
-            stream = agent.stream(db, turn)
-            if window == "encyclopedia":
-                # The encyclopedia prepares its evidence before its first event.
-                first = next(stream, None)
-                stream = chain([first], stream) if first is not None else stream
+            if s.status != "active":
+                raise HTTPException(409, "会话已结束")
+            profile = resolve(window)
+            prepared = model_teaching.prepare(db, turn, window, profile) if profile else None
             lock_active(db, id)
+            agent = feynman_agent if window == "feynman" else encyclopedia_agent
             db.add(Message(session_id=id, window_type=window, sender_role="user", content=content))
             text = []
             meta = {}
             node_ids = []
-            for event in stream:
+            for event in (
+                model_teaching.apply(db, turn, prepared) if prepared else agent.stream(db, turn)
+            ):
                 if isinstance(event, Token):
                     text.append(event.delta)
                 elif isinstance(event, Citation):
@@ -121,7 +126,7 @@ def conversation(id, body, window, db, user):
     if session.status != "active":
         raise HTTPException(409, "会话已结束")
     events = SimpleQueue()
-    workers.submit(produce, id, body.content, window, user.id, session.doc_id, events)
+    workers.submit(produce, id, body.content, window, user.id, events)
     first = events.get()
     if isinstance(first, Exception):
         raise first
@@ -152,13 +157,22 @@ def right(id: int, body: Turn, db=Depends(get_db), user=Depends(current_user)):
 
 @router.post("/{id}/report", response_model=ReportOut)
 def finish(id: int, db=Depends(get_db), user=Depends(current_user)):
+    with session_locks[id % len(session_locks)]:
+        return finish_locked(id, db, user)
+
+
+def finish_locked(id, db, user):
     s = owned(db, Session, id, user)
-    db.execute(update(Session).where(Session.id == id).values(status="completed"))
     old = db.scalar(select(DiagnosticReport).where(DiagnosticReport.session_id == id))
     if old:
         db.commit()
         return public(old)
-    data = report_agent.generate(db, s).model_dump()
+    profile = resolve("report")
+    data = (
+        model_teaching.diagnose(db, s, profile) if profile else report_agent.generate(db, s)
+    ).model_dump()
+    lock_active(db, id)
+    s.status = "completed"
     data["weakness_summary"] = json.dumps(data["weakness_summary"], ensure_ascii=False)
     row = DiagnosticReport(session_id=id, **data)
     db.add(row)

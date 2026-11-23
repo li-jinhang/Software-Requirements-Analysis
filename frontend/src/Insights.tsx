@@ -1,5 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ReactFlow, Background, Controls, useNodesState } from "@xyflow/react";
+import {
+  ReactFlow,
+  Background,
+  Controls,
+  useNodesState,
+  useNodesInitialized,
+  useReactFlow,
+} from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import * as echarts from "echarts/core";
 import { RadarChart } from "echarts/charts";
@@ -8,6 +15,23 @@ import { CanvasRenderer } from "echarts/renderers";
 import { Course, Concept, Report, Space, download, status } from "./model";
 import { dimensions } from "./model";
 echarts.use([RadarChart, RadarComponent, CanvasRenderer]);
+const graphFit = { padding: 0.22, minZoom: 0.1, maxZoom: 1.3 };
+const relationNames: Record<string, string> = {
+  prerequisite: "前置依赖",
+  contains: "包含",
+  contrast: "对比",
+  applies_to: "应用于",
+};
+function FitLoadedGraph({ layout }: { layout: string }) {
+  const ready = useNodesInitialized();
+  const { fitView } = useReactFlow();
+  useEffect(() => {
+    if (!ready) return;
+    const frame = requestAnimationFrame(() => void fitView(graphFit));
+    return () => cancelAnimationFrame(frame);
+  }, [ready, layout, fitView]);
+  return null;
+}
 export function Graph({
   space,
   c,
@@ -89,16 +113,22 @@ export function Graph({
                   matches.some((n) => n.id === l.to),
               )
               .map((l) => ({
-                id: l.from + l.to,
+                id: JSON.stringify([l.from, l.to, l.label]),
                 source: l.from,
                 target: l.to,
-                label: l.label,
+                label: relationNames[l.label] || l.label,
+                labelShowBg: true,
+                labelBgStyle: { fill: "#eef2ff", fillOpacity: 0.96 },
+                labelBgPadding: [5, 3],
+                labelBgBorderRadius: 4,
               }))}
             onNodesChange={change}
             onNodeClick={(_, node) => setSelected(node.id)}
             fitView
+            fitViewOptions={graphFit}
             minZoom={0.1}
           >
+            <FitLoadedGraph layout={JSON.stringify(nodes.map((n) => n.id))} />
             <Background />
             <Controls showInteractive={false} />
           </ReactFlow>
@@ -228,7 +258,7 @@ export function Reports({
                     "## 盲区复盘",
                     ...(r.weaknesses.length ? r.weaknesses : ["暂无记录"]),
                     "## 复习计划",
-                    ...r.plan,
+                    r.plan.map((p) => "- " + p).join("\n"),
                   ].join("\n\n"),
                 )
               }
@@ -255,9 +285,11 @@ export function Reports({
             <p key={x}>{x}</p>
           ))}
           <h3>复习清单</h3>
-          {r.plan.map((p) => (
-            <p key={p}>{p}</p>
-          ))}
+          <ol className="review-plan">
+            {r.plan.map((p, i) => (
+              <li key={i}>{p}</li>
+            ))}
+          </ol>
         </article>
       )}
     </>

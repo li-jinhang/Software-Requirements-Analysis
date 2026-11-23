@@ -97,6 +97,13 @@ export default function Workbench({
 }) {
   const c = space.courses.find((x) => x.id === session.doc)!,
     n = c.nodes.find((x) => x.id === session.focus) || c.nodes[0];
+  function displayBadge(message: Message) {
+    const name =
+      !online && c.nodes.find((node) => node.id === message.node)?.name;
+    return name && message.badge && !message.badge.startsWith(name + " · ")
+      ? name + " · " + message.badge
+      : message.badge;
+  }
   const [ratio, setRatio] = useState(55),
     [collapsed, setCollapsed] = useState(false),
     [notice, setNotice] = useState(""),
@@ -307,9 +314,13 @@ export default function Workbench({
               topic.name +
               "」后，试着用自己的话再讲一次。"
             : "回到「" + topic.name + "」，你能具体说明它在什么条件下成立吗？",
-        badge: good
-          ? "演示评估 · +" + (score - topic.score)
-          : "待补漏 · 适用条件",
+        badge:
+          topic.name +
+          " · " +
+          (good ? "演示评估 +" + (score - topic.score) : "待补漏 · 适用条件") +
+          " · " +
+          score +
+          "%",
       };
       if (streak >= 2)
         logs = logs.map((w) =>
@@ -398,6 +409,13 @@ export default function Workbench({
             date: new Date().toISOString(),
             scores,
             weaknesses,
+            comment:
+              "你完成了 " +
+              turns.length +
+              " 轮讲解。" +
+              (weaknesses.length
+                ? "接下来挑一个刚才需要查证的地方，把原理和适用条件连起来讲一遍。"
+                : "试着换一个听众，用新例子说明同一个道理。"),
             plan: weaknesses.length
               ? weaknesses.map((t) => "结合原文重新讲解：" + t)
               : ["用一个新的例子复讲本轮知识点。"],
@@ -575,7 +593,9 @@ export default function Workbench({
                   >
                     <small>{m.who}</small>
                     <CourseText text={m.text} />
-                    {m.badge && <small className="pill">{m.badge}</small>}
+                    {m.badge && (
+                      <small className="pill">{displayBadge(m)}</small>
+                    )}
                     {m.citations?.length ? (
                       <details className="source-list">
                         <summary>

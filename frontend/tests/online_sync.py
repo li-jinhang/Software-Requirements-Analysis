@@ -4,6 +4,7 @@ The run uploads one course and completes one teaching session.
 """
 import json
 import os
+import re
 import sqlite3
 from pathlib import Path
 from uuid import uuid4
@@ -99,7 +100,7 @@ def run(browser):
         assert message["content"].strip()
         expect(page.locator(selector + " .feed")).to_contain_text(message["content"].splitlines()[0].strip("*"))
         for update in message["meta_json"].get("updates", []):
-            expect(page.locator(selector + " .feed")).to_contain_text(update["tag"])
+            expect(page.locator(selector + " .feed")).to_contain_text(update["concept_name"] + " · " + update["tag"])
     citations = answers[-1]["meta_json"]["citations"]
     assert citations
     page.locator(".p1 summary").click()
@@ -125,11 +126,23 @@ def run(browser):
             page.get_by_label("图谱资料").select_option(str(upload.value.json()["id"]))
         scores = {n["id"]: n["mastery_score"] for n in memory.value.json()["nodes"]}
     assert all(scores[u["node_id"]] == u["mastery_score"] for u in updates)
+    expect(page.locator(".react-flow__edge-text").first).to_have_text(re.compile("^(前置依赖|包含|对比|应用于)$"))
+    page.wait_for_function("""() => {
+        const graph = document.querySelector('.react-flow')?.getBoundingClientRect();
+        const nodes = [...document.querySelectorAll('.react-flow__node')];
+        return graph && nodes.length && nodes.every(node => {
+            const r = node.getBoundingClientRect();
+            return r.width > 0 && r.top >= graph.top && r.bottom <= graph.bottom
+                && r.left >= graph.left && r.right <= graph.right;
+        });
+    }""")
     button(page, "双窗工作台").click()
     with page.expect_response(lambda r: r.url.endswith("/report") and r.request.method == "POST") as report:
         button(page, "结束并生成报告").click()
     assert report.value.json()["session_id"] == session_id
     expect(page.locator(".report")).to_contain_text(title)
+    expect(page.locator(".review-plan li").first).to_be_visible()
+    expect(page.locator(".report")).not_to_contain_text("基线练习指标")
     # Fresh browser storage proves that reports and conversations come from the API.
     fresh = browser.new_page()
     fresh.goto(root)
