@@ -112,6 +112,21 @@ def events(resp):
     return pairs
 
 
+def test_mastered_topic_advances_and_next_questions_rotate(server):
+    h = login(server, "student", "123456")
+    sid = server.post("/api/v1/sessions", headers=h, json={"doc_id": 1}).json()["id"]
+    url = f"/api/v1/sessions/{sid}/feynman/stream"
+    questions = []
+    for topic in ["梯度下降", "过拟合", "过拟合"]:
+        frames = events(server.post(url, headers=h, json={"content": topic}))
+        questions.append("".join(d["delta"] for k, d in frames if k == "token"))
+        if topic == "梯度下降":
+            update = next(d["updates"][0] for k, d in frames if k == "memory_update")
+            assert update["concept_name"] == topic and update["mastery_score"] == 100
+    assert all("「过拟合」" in q for q in questions)
+    assert len(set(questions)) == len(questions)
+
+
 def test_upload_teach_lookup_report_export(server, tmp_path):
     api = server
     base = "/api/v1"

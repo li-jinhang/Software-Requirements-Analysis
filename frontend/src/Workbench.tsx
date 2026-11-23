@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { localLookup, lookupQuestion } from "./lookup";
 import Markdown from "react-markdown";
 import gfm from "remark-gfm";
 import math from "remark-math";
@@ -22,6 +23,7 @@ import {
   refreshMemory,
 } from "./api";
 import {
+  CourseCitation,
   opening,
   Message,
   Session,
@@ -31,6 +33,51 @@ import {
   status,
   uid,
 } from "./model";
+
+function CourseText({ text }: { text: string }) {
+  return (
+    <Markdown remarkPlugins={[gfm, math]} rehypePlugins={[katex, highlight]}>
+      {text}
+    </Markdown>
+  );
+}
+
+function SourceCard({ hit }: { hit: CourseCitation }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = hit.snippet.length > 200 || hit.snippet.split("\n").length > 7;
+  const preview = hit.snippet
+    .split(/\n\s*\n|(?<=[。！？])\s*/u)
+    .find((part) => part.trim() && !/^\s*#{1,6}\s+[^\n]*$/.test(part));
+  return (
+    <section className="source-card">
+      <header>
+        <strong>
+          {hit.doc_title} · 片段 #{hit.chunk_index}
+        </strong>
+        <small>
+          {hit.score === undefined
+            ? "本地课件"
+            : "相关度 " + hit.score.toFixed(2)}
+        </small>
+      </header>
+      <div className={long && !expanded ? "source-preview" : ""}>
+        <CourseText
+          text={long && !expanded ? preview || hit.snippet : hit.snippet}
+        />
+      </div>
+      {long && (
+        <button
+          type="button"
+          className="quiet"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "收起片段" : "展开全文"}
+        </button>
+      )}
+    </section>
+  );
+}
 export default function Workbench({
   online,
   space,
@@ -229,28 +276,15 @@ export default function Workbench({
     let updated = topic;
     let logs = space.logs;
     if (side === 1) {
-      reply = match
-        ? {
-            who: "百科",
-            text: topic.summary,
-            node: topic.id,
-            citation: c.title + " · 片段 #" + (c.nodes.indexOf(topic) + 1),
-          }
-        : {
-            who: "百科",
-            text:
-              "当前资料中未定位到直接对应的概念。可尝试输入知识点名称，例如「" +
-              n.name +
-              "」。",
-          };
-      if (match)
+      reply = localLookup(c, text, sourceId);
+      if (reply.node)
         logs = [
           ...logs,
           {
             id: uid(),
             doc: c.id,
-            node: topic.id,
-            detail: "查证「" + topic.name + "」：" + text,
+            node: reply.node,
+            detail: "查证：" + text,
             resolved: false,
             session: session.id,
           },
@@ -540,21 +574,32 @@ export default function Workbench({
                     key={j}
                   >
                     <small>{m.who}</small>
-                    <Markdown
-                      remarkPlugins={[gfm, math]}
-                      rehypePlugins={[katex, highlight]}
-                    >
-                      {m.text}
-                    </Markdown>
+                    <CourseText text={m.text} />
                     {m.badge && <small className="pill">{m.badge}</small>}
-                    {m.citation && (
-                      <details>
-                        <summary>{m.citation}</summary>
-                        {m.excerpt ||
-                          (online
-                            ? "服务端仅返回了出处位置。"
-                            : c.nodes.find((x) => x.id === m.node)?.summary)}
+                    {m.citations?.length ? (
+                      <details className="source-list">
+                        <summary>
+                          参考资料片段（共 {m.citations.length} 条）
+                        </summary>
+                        {m.citations.map((hit) => (
+                          <SourceCard key={hit.chunk_index} hit={hit} />
+                        ))}
                       </details>
+                    ) : (
+                      m.citation && (
+                        <details>
+                          <summary>{m.citation}</summary>
+                          <CourseText
+                            text={
+                              m.excerpt ||
+                              (online
+                                ? "服务端仅返回了出处位置。"
+                                : c.nodes.find((x) => x.id === m.node)
+                                    ?.summary || "")
+                            }
+                          />
+                        </details>
+                      )
                     )}
                     {i === 1 && m.node && (
                       <small>
@@ -576,7 +621,7 @@ export default function Workbench({
                         className="quiet"
                         disabled={locked || !!pending[1]}
                         onClick={() => {
-                          send(1, m.text, m.node);
+                          send(1, lookupQuestion(session.left, j, c), m.node);
                           focus(1);
                         }}
                       >
@@ -593,7 +638,7 @@ export default function Workbench({
                 ))}
                 {pending[i] && (
                   <article className="msg" role="status">
-                    {pending[i]}
+                    <CourseText text={pending[i]} />
                   </article>
                 )}
               </div>

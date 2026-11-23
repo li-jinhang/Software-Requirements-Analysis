@@ -542,12 +542,12 @@ progress::-moz-progress-bar {
   flex-direction: column;
   overflow: hidden;
 }
-.pane header {
+.pane > header {
   padding: 16px;
   border-bottom: 1px solid var(--line);
   border-top: 3px solid var(--indigo);
 }
-.p1 header {
+.p1 > header {
   border-top-color: var(--teal);
 }
 .p0 h2 svg {
@@ -556,10 +556,10 @@ progress::-moz-progress-bar {
 .p1 h2 svg {
   color: var(--teal);
 }
-.pane header h2 {
+.pane > header h2 {
   font-size: 17px;
 }
-.pane header small {
+.pane > header small {
   display: block;
   margin-top: 6px;
 }
@@ -874,4 +874,36 @@ summary small {
   .report h3 {
     break-after: avoid;
   }
+}
+.source-card {
+  margin: 0.65rem 0;
+  padding: 0.7rem 0.85rem;
+  background: #f8fafc;
+  border: 1px solid #dce3e8;
+  border-radius: 0.65rem;
+  overflow-wrap: anywhere;
+}
+.source-card > header {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 0.5rem;
+}
+.source-card > header small {
+  color: #28565b;
+  background: #e4f3f0;
+  border-radius: 0.35rem;
+  padding: 0.1rem 0.4rem;
+}
+.source-card :is(h1, h2, h3, h4) {
+  font-size: 1rem;
+  margin: 0.5rem 0;
+}
+.source-card .source-preview {
+  max-height: 6em;
+  overflow: hidden;
+}
+.source-card .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
 }

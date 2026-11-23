@@ -42,8 +42,14 @@ def run(browser):
         button(page, "解析资料").click()
     assert upload.value.status == 201
     drawer = page.get_by_role("dialog")
-    drawer.locator("summary").first.click()
-    concept = drawer.locator("summary").first.inner_text().split()[0]
+    # Look up an actual lesson section. The document title alone can legitimately have no hits.
+    section = next(line[3:].strip() for line in sample.read_text(encoding="utf-8").splitlines()
+                   if line.startswith("## "))
+    expect(drawer.locator("summary").first).to_be_visible()
+    matching = drawer.locator("summary").filter(has_text=section)
+    entry = matching.first if matching.count() else drawer.locator("summary").first
+    entry.click()
+    concept = entry.inner_text().split()[0]
     drawer.locator("details[open]").get_by_label("个人笔记").fill("联调笔记")
     with page.expect_response(lambda r: r.url.endswith("/note")) as note:
         drawer.get_by_role("button", name="同步笔记").click()
@@ -58,8 +64,11 @@ def run(browser):
         button(page, "开始教学").click()
     assert created.value.status == 201
     session_id = created.value.json()["id"]
+    # Wait for initial history and the workbench selector, not the setup dialog selector.
+    role_selector = page.locator(".p0").get_by_label("听众角色")
+    expect(role_selector).to_be_enabled()
     with page.expect_response(lambda r: r.url.endswith("/persona")) as changed:
-        page.get_by_label("听众角色").select_option("严苛考官")
+        role_selector.select_option("严苛考官")
     assert changed.value.json()["persona_type"] == "examiner"
     def truncate_done(route):
         response = route.fetch()
@@ -88,14 +97,23 @@ def run(browser):
     for message in answers:
         selector = ".p0" if message["window_type"] == "feynman" else ".p1"
         assert message["content"].strip()
-        expect(page.locator(selector + " .feed")).to_contain_text(message["content"].splitlines()[0])
+        expect(page.locator(selector + " .feed")).to_contain_text(message["content"].splitlines()[0].strip("*"))
         for update in message["meta_json"].get("updates", []):
             expect(page.locator(selector + " .feed")).to_contain_text(update["tag"])
     citations = answers[-1]["meta_json"]["citations"]
     assert citations
     page.locator(".p1 summary").click()
-    for source in citations:
-        expect(page.locator(".p1 details")).to_contain_text(source["snippet"])
+    cards = page.locator(".p1 .source-card")
+    expect(cards).to_have_count(len(citations))
+    for card, source in zip(cards.all(), citations):
+        expect(card.locator("header")).to_contain_text(f"{source['doc_title']} · 片段 #{source['chunk_index']}")
+        more = card.get_by_role("button", name="展开全文")
+        if more.count():
+            more.click()
+        # These Markdown course fixtures contain headings and prose.
+        for line in source["snippet"].splitlines():
+            if line.strip():
+                expect(card).to_contain_text(line.lstrip("# "))
     updates = answers[-2]["meta_json"]["updates"]
     assert updates
     with page.expect_response(lambda r: "/documents/" in r.url and r.url.endswith("/memory")) as memory:

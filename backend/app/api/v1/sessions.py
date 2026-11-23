@@ -1,5 +1,6 @@
 from app.schemas.responses import SessionOut, MessageOut, ReportOut
 import json
+from itertools import chain
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
@@ -67,23 +68,29 @@ def frame(event):
     return f"event: {EVENT_NAMES[type(event)]}\ndata: {event.model_dump_json()}\n\n"
 
 
-def produce(id, content, window, user_id, events):
+def produce(id, content, window, user_id, doc_id, events):
     """Finish the accepted turn even if the HTTP client disconnects."""
     try:
         with SessionLocal() as db:
-            lock_active(db, id)
             s = db.get(Session, id)
-            if s.user_id != user_id:
+            if not s or s.user_id != user_id or s.doc_id != doc_id:
                 raise HTTPException(404, "会话不存在")
             turn = AgentInput(
                 session_id=id, doc_id=s.doc_id, persona_type=s.persona_type, content=content
             )
-            agent = feynman_agent if window == "feynman" else encyclopedia_agent
+            db.rollback()  # End the read transaction before remote model I/O.
+            agent = encyclopedia_agent if window == "encyclopedia" else feynman_agent
+            stream = agent.stream(db, turn)
+            if window == "encyclopedia":
+                # The encyclopedia prepares its evidence before its first event.
+                first = next(stream, None)
+                stream = chain([first], stream) if first is not None else stream
+            lock_active(db, id)
             db.add(Message(session_id=id, window_type=window, sender_role="user", content=content))
             text = []
             meta = {}
             node_ids = []
-            for event in agent.stream(db, turn):
+            for event in stream:
                 if isinstance(event, Token):
                     text.append(event.delta)
                 elif isinstance(event, Citation):
@@ -114,7 +121,7 @@ def conversation(id, body, window, db, user):
     if session.status != "active":
         raise HTTPException(409, "会话已结束")
     events = SimpleQueue()
-    workers.submit(produce, id, body.content, window, user.id, events)
+    workers.submit(produce, id, body.content, window, user.id, session.doc_id, events)
     first = events.get()
     if isinstance(first, Exception):
         raise first

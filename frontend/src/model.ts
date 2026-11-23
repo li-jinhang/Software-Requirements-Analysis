@@ -29,6 +29,13 @@ export type Message = {
   badge?: string;
   citation?: string;
   excerpt?: string;
+  citations?: CourseCitation[];
+};
+export type CourseCitation = {
+  doc_title: string;
+  chunk_index: number;
+  snippet: string;
+  score?: number;
 };
 export type Session = {
   id: string;

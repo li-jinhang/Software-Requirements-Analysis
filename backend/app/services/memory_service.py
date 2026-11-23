@@ -64,7 +64,7 @@ def ingest_document(db, doc_id):
 
 
 def search_rag(doc_id, query, top_k=4):
-    return rag_store.search(doc_id, query, top_k)
+    return rag_store.search(doc_id, query.strip(), top_k) if query.strip() else []
 
 
 def get_memory_context(db, doc_id, session_id=None, *, concept=None, query=None):

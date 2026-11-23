@@ -1,4 +1,5 @@
 import {
+  CourseCitation,
   Concept,
   Course,
   Message,
@@ -189,12 +190,7 @@ export async function setPersona(id: string, role: string) {
     body: JSON.stringify({ persona_type: persona(role) }),
   });
 }
-type Citation = {
-  doc_title: string;
-  chunk_index: number;
-  snippet: string;
-  score: number;
-};
+type Citation = CourseCitation & { score: number };
 type Update = {
   node_id: number;
   mastery_score: number;
@@ -222,20 +218,7 @@ function assistant(
     badge: meta.updates
       ?.map((u) => u.tag + " · " + u.mastery_score + "%")
       .join(" / "),
-    citation: meta.citations
-      ?.map((c) => c.doc_title + " · 片段 #" + c.chunk_index)
-      .join(" / "),
-    excerpt: meta.citations
-      ?.map(
-        (c) =>
-          "片段 #" +
-          c.chunk_index +
-          " · 相关度 " +
-          c.score.toFixed(2) +
-          "\n" +
-          c.snippet,
-      )
-      .join("\n\n"),
+    citations: meta.citations,
   };
 }
 export async function stream(

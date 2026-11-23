@@ -182,6 +182,12 @@ def hybrid_rank(query, chunks, semantic, top_k):
         lexical = bm / (bm + sum(idf.values()) or 1)
         idx = meta["chunk_index"]
         score = 0.35 * semantic.get(idx, 0) + 0.20 * lexical + 0.45 * exact
+        heading = re.match(r"^#{1,6}\s+([^\n]+)", text)
+        named = heading and "".join(normalize(heading[1]).split()) in phrase
+        if named and not exact:
+            score += 0.25
+        if score < 0.12 and not (exact or named):
+            continue
         scores.append(
             dict(doc_title=meta["doc_title"], chunk_index=idx, snippet=text, score=round(score, 5))
         )

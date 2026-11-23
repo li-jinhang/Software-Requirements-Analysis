@@ -277,6 +277,26 @@ def test_file_read_retries_transient_io_only(monkeypatch):
     assert doc_parser.parse("sample") == "可读正文" and len(attempts) == 3
 
 
+def test_sections_paragraphs_and_overlapping_long_blocks():
+    from app.services.doc_parser import split_chunks
+
+    long = "参数" * 550
+    chunks = split_chunks("# 课名\n\n## 定义\n\n定义正文。\n\n第二段。\n### 演算\n" + long)
+    assert chunks[:2] == ["## 定义\n定义正文。", "第二段。"]
+    windows = chunks[2:]
+    assert all(0 < len(chunk) <= 450 for chunk in windows)
+    assert windows[0] + "".join(chunk[80:] for chunk in windows[1:]) == "### 演算\n" + long
+
+
+def test_low_scoring_unrelated_tail_is_not_cited():
+    from app.services.rag_store import hybrid_rank
+
+    chunks = ["## 损失函数\n预测误差。", "## L1 正则化\n系数稀疏。"]
+    rows = [({"doc_title": "示范课", "chunk_index": i}, s) for i, s in enumerate(chunks)]
+    assert [h["chunk_index"] for h in hybrid_rank("损失函数如何举例？", rows, {0: .7, 1: .14}, 4)] == [0]
+    assert not hybrid_rank("死锁", rows, {0: .1, 1: .14}, 4)
+
+
 def test_existing_sqlite_migrates_without_losing_memory(tmp_path):
     import subprocess
     import os
@@ -292,12 +312,14 @@ from app.db.database import engine
 with TestClient(app):
     with engine.begin() as conn:
         conn.exec_driver_sql("UPDATE knowledge_nodes SET user_note='legacy note' WHERE id=1")
+        conn.exec_driver_sql("UPDATE documents SET chunk_count=2 WHERE id=1")
         conn.exec_driver_sql("ALTER TABLE knowledge_nodes DROP COLUMN key_points")
 with TestClient(app) as api:
     token=api.post('/api/v1/auth/login',json={'username':'student','password':'123456'}).json()['access_token']
     headers={'Authorization':'Bearer '+token}
     old=api.get('/api/v1/documents/1/graph',headers=headers).json()['nodes'][0]
     assert old['key_points']==[] and old['user_note']=='legacy note'
+    assert api.get('/api/v1/documents/1',headers=headers).json()['chunk_count']==8
     response=api.post('/api/v1/documents/upload',headers=headers,files={'file':('notes.md',b'Alpha: first. Beta: second.')})
     assert response.status_code==201,response.text
     doc=response.json()
