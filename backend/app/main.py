@@ -16,6 +16,14 @@ async def lifespan(app):
     (settings.data_dir / "uploads").mkdir(exist_ok=True)
     signing_key()
     Base.metadata.create_all(engine)
+    # SQLite create_all does not alter tables created by phase one.
+    with engine.begin() as conn:
+        conn.exec_driver_sql("BEGIN IMMEDIATE")
+        columns = conn.exec_driver_sql("PRAGMA table_info(knowledge_nodes)")
+        if "key_points" not in {row[1] for row in columns}:
+            conn.exec_driver_sql(
+                "ALTER TABLE knowledge_nodes ADD COLUMN key_points JSON NOT NULL DEFAULT '[]'"
+            )
     # With the single-worker deployment a processing row at startup is an interrupted ingest.
     with SessionLocal.begin() as db:
         recover_deletions(db)

@@ -20,7 +20,14 @@ class Settings(BaseSettings):
     embedding_api_key: SecretStr = SecretStr("")
     jwt_secret: SecretStr = SecretStr("")
     seed_demo: bool = True
-    cors_origins: list[str] = ["http://localhost:5173", "http://127.0.0.1:5173"]
+    cors_origins: list[str] = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://localhost:3000",
+        "http://127.0.0.1:3000",
+        "http://localhost:4173",
+        "http://127.0.0.1:4173",
+    ]
 
 
 settings = Settings()

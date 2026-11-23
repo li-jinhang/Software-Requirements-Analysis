@@ -12,7 +12,7 @@ Copy-Item .env.example .env   # 首次配置时执行
 .\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 ~~~
 
-Swagger UI 位于 http://127.0.0.1:8000/docs，完整字段定义可从 /openapi.json 读取。下文路径均相对于 **/api/v1**。默认允许 localhost:5173 和 127.0.0.1:5173。更换前端端口时修改 CORS_ORIGINS 后重启。教学演示使用单个 Uvicorn worker。
+Swagger UI 位于 http://127.0.0.1:8000/docs，完整字段定义可从 /openapi.json 读取。下文路径均相对于 **/api/v1**。默认允许 localhost 和 127.0.0.1 上的 5173、3000、4173 端口。更换前端端口时修改 CORS_ORIGINS 后重启。教学演示使用单个 Uvicorn worker。
 
 | 角色 | 用户名 | 密码 | 首次登录可见内容 |
 | --- | --- | --- | --- |
@@ -44,7 +44,7 @@ JWT 有效期 24 小时。注册密码至少 6 字符且 UTF-8 编码至多 72 �
 | GET /documents/{id} | 无 | Document |
 | POST /documents/{id}/retry | 无 | Document；重试 failed 文档 |
 | DELETE /documents/{id} | 无 | 204，空响应；级联删除会话、知识点、日志、报告、上传文件与向量 |
-| GET /documents/{id}/memory | 无 | {"nodes":[…],"edges":[…],"weaknesses":[…]}，weaknesses 仅含未解决记录 |
+| GET /documents/{id}/memory | 无 | {"nodes":[…],"edges":[…],"weaknesses":[…]}，weaknesses 仅含未解决记录；可选 query 匹配概念，附 matched_node_ids、prerequisites 与跨会话 historical_weaknesses |
 | PATCH /documents/{id}/nodes/{node_id}/note | {"user_note":"复习步长边界"} | 更新后的 Node |
 | GET /documents/{id}/memory/export?format=md | format 为 md（默认）或 json | 带 Content-Disposition 的 Markdown 或 JSON 文件 |
 | GET /documents/{id}/graph | 无 | {"nodes":[…],"edges":[…]} |
@@ -55,7 +55,7 @@ JWT 有效期 24 小时。注册密码至少 6 字符且 UTF-8 编码至多 72 �
 {"id":1,"user_id":2,"title":"机器学习基础：梯度下降与过拟合","subject":"机器学习","file_type":"md","parse_status":"completed","error_message":"","chunk_count":2,"structured_summary":"从损失最小化到泛化误差与正则化。","created_at":"2026-11-23T03:10:00"}
 ~~~
 
-节点字段为 id、doc_id、concept_name、summary、importance、mastery_score、status、lookup_count、user_note、updated_at。图谱用 id 连接边的 source_node_id 与 target_node_id；边还返回 id、doc_id、relation_type 和 description。未学习用 unlearned，中低高掌握显示 weak（红）、learning（黄）、mastered（绿）。weaknesses 项含 id、session_id、node_id、weakness_type、detail、is_resolved、created_at。导出包含“核心概念树”“概念关联说明”“已掌握清单”“薄弱点警示”四个部分。
+节点字段为 id、doc_id、concept_name、summary、key_points（核心要点数组，旧节点默认为空）、importance、mastery_score、status、lookup_count、user_note、updated_at。图谱用 id 连接边的 source_node_id 与 target_node_id；边还返回 id、doc_id、relation_type 和 description。未学习用 unlearned，中低高掌握显示 weak（红）、learning（黄）、mastered（绿）。weaknesses 项含 id、session_id、node_id、weakness_type、detail、is_resolved、created_at。导出包含“核心概念树”“概念关联说明”“已掌握清单”“薄弱点警示”四个部分。
 
 ### 学习会话
 
@@ -95,7 +95,7 @@ data: {"message_id":123}
 
 ~~~
 
-chunk_index 从 0 开始。score 为余弦相似度（−1 到 1）。左窗按 token 拼接文本并消费 memory_update；右窗展示 citation 和文本，可将左窗的问题直接作为右窗 content 提交。done 表示本轮消息和关联记忆已提交；若连接提前结束，先刷新历史再决定是否重发，避免重复计分。
+chunk_index 从 0 开始。score 为文档内混合排序分数（0 到 1），可用于比较本次命中。左窗按 token 拼接文本并消费 memory_update；右窗展示 citation 和文本，可将左窗的问题直接作为右窗 content 提交。done 表示本轮消息和关联记忆已提交；若连接提前结束，先刷新历史再决定是否重发，避免重复计分。
 
 ~~~javascript
 async function streamTurn(url, accessToken, content, onEvent) {

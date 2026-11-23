@@ -1,41 +1,60 @@
-# Software Requirements Analysis
+# 智溯费曼 · FeynmanMind
 
-## 智溯费曼 · FeynmanMind
+React 学习工作台提供费曼反向讲解和百科溯源双窗，FastAPI 负责认证、SQL 知识图谱、ChromaDB 检索、教学会话和报告。需求规格见 [SRS.md](SRS.md)。
 
-按 [软件需求规格说明](SRS.md) 实现的 React 18 学习工作台。前端源码在 [frontend](frontend/)。界面沿用 LJHAgent 的中性白灰侧栏、石墨色按钮和本机中文字体，双窗分别使用靛蓝与青绿标记。
+## 首次安装
 
-### 本地运行
+在仓库根目录运行以下 PowerShell 命令，需要 Python 3.12 和 Node.js 20 或以上版本。若已完成第一阶段安装，可复用 backend/.venv。首次需要网络下载依赖。
 
-需要 Node.js 20 或更高版本。在仓库根目录执行以下命令，然后打开 Vite 输出的本地地址。
+~~~powershell
+python -m venv backend/.venv
+.\backend\.venv\Scripts\python.exe -m pip install -r backend/requirements.txt
+npm.cmd --prefix frontend ci
+~~~
 
-```sh
+## 一键联调
+
+~~~powershell
+python dev.py
+~~~
+
+打开 [学习工作台](http://127.0.0.1:5173) 和 [Swagger](http://127.0.0.1:8000/docs)。启动器为 Vite 设置 VITE_BACKEND_URL，Ctrl+C 同时结束两个进程。它固定使用 5173 和 8000；若先前的服务还在运行，请在原终端停止它再启动，以便载入本次更新。首次启动自动建立演示库；已有一期数据库会补上知识点要点字段。默认无需 API Key。
+
+从侧栏的**账号登录**进入服务端空间，用学生 `student / 123456` 或管理员 `admin / admin123` 登录；侧栏的快捷演示入口使用浏览器本地数据。先试登录、上传 [课程样例](backend/data/sample_docs/) 和打开图谱，再按 [联调体检清单](docs/FRONTEND_SYNC_CHECKLIST.md) 核对双窗、笔记和导出。前端第一版有已知协议差异，完整后端流程可直接在 Swagger 中验证。
+
+需要分开调试时，在两个终端中从仓库根目录执行：
+
+~~~powershell
+# 终端一
+cd backend
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+~~~
+
+~~~powershell
+# 终端二
 cd frontend
-npm ci
-npm run dev
-```
+$env:VITE_BACKEND_URL = "http://127.0.0.1:8000"
+npm.cmd run dev -- --host 127.0.0.1 --port 5173 --strictPort
+~~~
 
-执行 `npm run build` 会检查 TypeScript 并生成可静态托管的 `dist/`。执行 `npm run preview` 可预览构建结果。
+VITE_BACKEND_URL 填服务根地址，前端会拼接 /api/v1。仅运行 Vite 且不设置此变量可体验纯前端演示。前端构建命令为 `npm.cmd --prefix frontend run build`。
 
-### 体验教学流程
+## 本地教学演示
 
-1. 首页内置三份示范资料。可搜索、按学科筛选，或上传 20 MB 以内的 PDF、DOCX、MD、TXT。记忆档案支持概念笔记和 Markdown、JSON 导出。
-2. 在课程卡片点击「开讲」，选择知识点和听众。左侧讲解、右侧查证可独立输入，追问可直接带入右窗，引用可展开。桌面支持拖动分隔条或使用左右方向键调宽，手机通过页签切窗。
-3. 从图谱点选节点可发起专项考核。完成至少两轮讲解后，可生成诊断报告、查看四维雷达图、导出 Markdown，或通过浏览器打印保存 PDF。
-4. 侧栏底部可注册个人空间、切换学生演示或管理员演示。管理页提供薄弱点排行、分页检索、记录清理及 JSON / SQLite 导出。
+浏览器演示空间内置三份示范资料，支持搜索、学科筛选和上传 20 MB 以内的 PDF、DOCX、MD、TXT。从课程卡片点击「开讲」，选择知识点和听众；可将左窗追问带入右窗查证。桌面支持拖动分隔条，手机通过页签切窗。完成两轮讲解后可查看四维雷达图与复习建议，并导出 Markdown 或通过浏览器保存 PDF。
 
-### 数据与后端联调
+本地模式按文本片段和规则生成教学反馈。演示管理员审阅本浏览器的演示空间；服务端管理员使用独立的 SQLite 数据库与管理接口。
 
-默认使用浏览器本地存储。演示模式按文本片段建立档案，使用课程原文和规则模拟追问、掌握度与四维评分。演示管理员可审阅本浏览器的本地演示空间。SQLite 演示快照按空间保存 JSON 数据，在线服务使用后端返回的数据库文件。
+## 模型、检索与测试
 
-如需连接 FastAPI，在 `frontend/.env.local` 设置 `VITE_BACKEND_URL=http://127.0.0.1:8000`，重启 Vite 或重新构建，再通过侧栏账号入口登录服务端账号。后端须允许前端来源访问。内置学生与管理员演示入口始终使用本地数据。
+将 backend/.env.example 复制为 backend/.env 后填写 OPENAI_API_KEY、OPENAI_BASE_URL 与 OPENAI_MODEL。设 MOCK_LLM=false 后重启服务，新上传资料会走结构化抽取。长文分段归纳并合并，模型不可用时回退至本地规则。默认 EMBEDDING_PROVIDER=local_lite；如需验证远程向量，改为 api，并填写供应商实际支持的 EMBEDDING_MODEL 与对应的嵌入端点及凭据。
 
-服务适配器位于 [api.ts](frontend/src/api.ts)，按 SRS 第 5.2 节使用 `/api/v1` 下的认证、上传、记忆、图谱、会话、双窗 SSE、报告与管理接口。在线空间缓存本浏览器已打开的课程、会话、报告及草稿。真实鉴权、知识抽取、检索和评分由后端提供。
+~~~powershell
+# 显式调用真实模型：使用仓库样例与一次性索引，打印每一阶段耗时
+.\backend\.venv\Scripts\python.exe backend/scripts/check_llm_live.py
 
-| 联调项 | 前端采用的约定 |
-| --- | --- |
-| 登录与上传 | 登录返回 `access_token` 和含 `role`、`nickname` 的 `user`。上传返回 `doc_id` 或 `id`，随后查询记忆的 `parse_status` 及图谱的 `nodes`、`edges`。 |
-| 双窗消息 | POST 以 Bearer JWT 发送 `content`、`node_id`、`persona_type`。事件 `token` 追加文本，`citation` 提供 `doc_title`、`chunk_index` 和可选 `excerpt`，`memory_update` 更新节点分数与评估，`done` 结束回复。 |
-| 笔记同步 | PATCH `/documents/{id}/memory` 发送 `node_id` 和 `user_note`。 |
-| 后台审阅 | GET `/admin/tables/{table}?q=&page=1&page_size=10` 返回 `{items,total}`，每行含 `id,name,status,updated_at`。DELETE 同路径下的 `/{id}` 清理记录。服务端校验管理员权限并维护关联记录。 |
+# 完整离线回归
+.\backend\.venv\Scripts\python.exe -m pytest backend/tests -q
+~~~
 
-笔记写入和后台分页维护的具体路径是前端为 SRS 用例补充的接口约定，可在联调时集中调整。仓库当前提供前端，完整 FastAPI、LangGraph、SQLite 和 ChromaDB 服务需由后端实现。
+[前端接口契约](docs/API_CONTRACT.md) · [Agent 记忆服务接口](docs/AGENT_INTERFACE.md) · [第一版前端联调体检](docs/FRONTEND_SYNC_CHECKLIST.md)

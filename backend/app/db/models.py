@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Annotated
-from sqlalchemy import ForeignKey, CheckConstraint, Text, inspect
+from sqlalchemy import JSON, ForeignKey, CheckConstraint, Text, inspect
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -58,6 +58,7 @@ class KnowledgeNode(Base):
     doc_id: Mapped[int] = fk("documents")
     concept_name: Mapped[str]
     summary: Mapped[str]
+    key_points: Mapped[list[str]] = mapped_column(JSON,default=list,server_default='[]')
     importance: Mapped[int]
     mastery_score: Mapped[int] = mapped_column(default=0)
     status: Mapped[str] = mapped_column(default="unlearned")

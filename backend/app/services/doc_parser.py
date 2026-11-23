@@ -1,10 +1,27 @@
+import logging
+import time
 from pathlib import Path
-from zipfile import ZipFile, BadZipFile
+from zipfile import ZipFile
 from docx import Document
 from pypdf import PdfReader
 
 
 def parse(path):
+    for attempt in range(3):
+        try:
+            return _read(path)
+        except FileNotFoundError:
+            raise
+        except OSError as exc:
+            if attempt == 2:
+                raise
+            logging.getLogger(__name__).warning(
+                "读取资料遇到 %s，第 %d 次重试", type(exc).__name__, attempt + 1
+            )
+            time.sleep(0.1 * (attempt + 1))
+
+
+def _read(path):
     path = Path(path)
     suffix = path.suffix.lower()
     if suffix == ".pdf":

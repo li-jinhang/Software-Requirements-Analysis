@@ -21,6 +21,7 @@ class NodeOut(BaseModel):
     id: int
     doc_id: int
     concept_name: str
+    key_points: list[str]
     summary: str
     importance: int
     mastery_score: int
@@ -55,6 +56,9 @@ class WeaknessOut(BaseModel):
 
 
 class ContextOut(GraphOut):
+    matched_node_ids: list[int] = []
+    prerequisites: list[NodeOut] = []
+    historical_weaknesses: list[WeaknessOut] = []
     weaknesses: list[WeaknessOut]
 
 

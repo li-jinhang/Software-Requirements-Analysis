@@ -96,10 +96,10 @@ def delete(id: int, db=Depends(get_db), user=Depends(current_user)):
     memory.delete_document(db, doc)
 
 
-@router.get("/{id}/memory", response_model=ContextOut)
-def archive(id: int, db=Depends(get_db), user=Depends(current_user)):
+@router.get("/{id}/memory", response_model=ContextOut, response_model_exclude_unset=True)
+def archive(id: int, db=Depends(get_db), user=Depends(current_user), query: str | None = None):
     owned(db, Document, id, user)
-    return memory.get_memory_context(db, id)
+    return memory.get_memory_context(db, id, query=query)
 
 
 @router.patch("/{id}/nodes/{node_id}/note", response_model=NodeOut)

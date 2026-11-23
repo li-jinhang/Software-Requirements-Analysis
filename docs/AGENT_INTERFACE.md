@@ -19,15 +19,15 @@ AgentInput 含 session_id、doc_id、persona_type、content。persona_type 是 c
 | 函数 | 输入与行为 | 返回值 / 事务 |
 | --- | --- | --- |
 | ingest_document(db, doc_id) | 处理已有 pending/failed Document 的 file_path；申请 processing 状态，解析、450 字符分片、80 字符重叠，写向量和抽取的知识点、关系 | Document 字典。此函数自己提交；失败标记 failed，回滚部分 SQL 记录并清理向量，抛出 ValueError。不要在对话事务中调用 |
-| search_rag(doc_id, query, top_k=4) | 仅查询当前文档；top_k 为 1–30；没有命中返回空列表 | [{doc_title, chunk_index, snippet, score}]。chunk_index 从 0 开始，score 为余弦相似度；保持来源片段与分数，不生成虚构引用 |
-| get_memory_context(db, doc_id, session_id=None) | 查询资料全部节点、关系和未解决记录；传会话 ID 后仅收窄薄弱点，仍保留文档图谱 | {nodes, edges, weaknesses}。不匹配的会话与文档会抛出 ValueError |
+| search_rag(doc_id, query, top_k=4) | 仅查询当前文档；top_k 为 1–30；没有命中返回空列表 | [{doc_title, chunk_index, snippet, score}]。chunk_index 从 0 开始，score 为 0–1 的混合排序分数，结合向量余弦、中文词项 BM25 与连续术语命中；保持来源片段与分数，不生成虚构引用 |
+| get_memory_context(db, doc_id, session_id=None, *, concept=None, query=None) | 查询资料全部节点、关系和未解决记录；传会话 ID 后仅收窄薄弱点，仍保留文档图谱 | {nodes, edges, weaknesses}。不匹配的会话与文档会抛出 ValueError |
 | update_mastery(db, node_id, delta) | 使用 SQL 原子加减并钳位到 0–100；新分数 <40 为 weak，40–79 为 learning，至少 80 为 mastered。新建未评估节点为 unlearned | 更新后的 Node 字典；不会提交。事件 delta 应使用更新后减更新前的实际分差 |
 | log_weakness(db, session_id, node_id, weakness_type, detail) | 校验会话和节点的资料归属；类型为 omission、misconception、jargon 或 need_lookup。need_lookup 自动将 lookup_count 加一 | 新日志字典；不会提交，无需再手工增加计数 |
 | export_memory_markdown(db, doc_id) | 从同一份 SQL 记忆生成 Markdown | str，四个二级标题 |
 | export_memory_json(db, doc_id) | 返回核心概念树、概念关联说明、已掌握清单、薄弱点警示；薄弱点警示含知识点和未解决记录 | dict，API 负责 JSON 序列化 |
 | delete_document(db, doc) | 清理文档、外键记录、上传文件与该文档的向量 | 无返回值，自己提交。由资料与后台路由调用 |
 
-核心概念树以节点数组提供，包含关系由 edges 中的 contains 边表达。source_node_id 与 target_node_id 都是知识点主键；prerequisite 的方向为前置概念指向依赖它的概念。节点的 summary、importance、mastery_score、status、lookup_count、user_note 可直接进入状态图上下文。不要把完整 ORM 对象送入模型。
+核心概念树以节点数组提供，包含关系由 edges 中的 contains 边表达。source_node_id 与 target_node_id 都是知识点主键；prerequisite 的方向为前置概念指向依赖它的概念。可用 concept 传入节点 ID（整数）或概念全名，也可用 query 传入含概念名的讨论文本。同时传入时取匹配并集。额外返回 matched_node_ids、沿 prerequisite 反向追溯的全部 prerequisites、命中节点及其前置节点在同一份资料历次会话的 historical_weaknesses（含已解决记录）。原有 weaknesses 仍按当前会话及未解决状态过滤。节点的 summary、key_points、importance、mastery_score、status、lookup_count、user_note 可直接进入状态图上下文。不要把完整 ORM 对象送入模型。
 
 ## 替换为 LangGraph
 
@@ -54,7 +54,7 @@ def stream(db, turn):
 
 ## 模型与索引
 
-默认 MOCK_LLM=true、EMBEDDING_PROVIDER=local_lite，无需 Key 或模型下载。离线抽取优先使用章节名、定义前缀和段落；很短的资料会用标明“离线阅读提示”的条目补齐 6 项。真实抽取将 MOCK_LLM 设为 false，填写 OPENAI_BASE_URL、OPENAI_API_KEY 和供应商对应的 OPENAI_MODEL，重启服务后上传新资料。OpenAI SDK 会对瞬时错误进行有限重试；非法结构化输出另有一次纠错，持续失败进入可重试的 failed 状态。
+默认 MOCK_LLM=true、EMBEDDING_PROVIDER=local_lite，无需 Key 或模型下载。离线抽取优先使用章节名、定义前缀和段落；很短的资料会用标明“离线阅读提示”的条目补齐 6 项。真实抽取将 MOCK_LLM 设为 false，填写 OPENAI_BASE_URL、OPENAI_API_KEY 和供应商对应的 OPENAI_MODEL，重启服务后上传新资料。短文直接按 JSON schema 抽取，长文分段压缩并分层合并后综合抽取。每个模型步骤最多额外重试两次，持续失败时记录异常类型并降级离线抽取。文件损坏仍标记为 failed。
 
 本地基础集合 feynman_doc_chunks 使用显式 384 维中英文词元哈希向量；所有 upsert/query 均传入显式向量，不调用 Chroma 默认下载器。若要使用远程嵌入，将 EMBEDDING_PROVIDER 设为 api，设置 EMBEDDING_MODEL，必要时单独提供 EMBEDDING_API_KEY、EMBEDDING_BASE_URL。系统始终保留本地集合，并按供应商与模型标识为远程向量建立独立集合，避免不同维度混写；远程嵌入失败回退本地集合。切换模型后，已有资料仍可使用本地检索；重新导入可建立新模型的向量。
 

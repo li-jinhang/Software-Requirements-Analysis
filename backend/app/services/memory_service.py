@@ -1,6 +1,8 @@
 """Shared SQL + RAG services. Mutating agent methods flush; caller owns the transaction."""
 
+import re
 from pathlib import Path
+from collections import defaultdict
 from tempfile import NamedTemporaryFile
 from app.core.config import settings
 from sqlalchemy import select, update, func, case
@@ -43,7 +45,7 @@ def ingest_document(db, doc_id):
             )
         doc.parse_status = "completed"
         doc.chunk_count = len(chunks)
-        doc.structured_summary = "、".join(nodes)
+        doc.structured_summary = extracted.structured_summary
         db.commit()
     except Exception as exc:
         db.rollback()
@@ -65,7 +67,7 @@ def search_rag(doc_id, query, top_k=4):
     return rag_store.search(doc_id, query, top_k)
 
 
-def get_memory_context(db, doc_id, session_id=None):
+def get_memory_context(db, doc_id, session_id=None, *, concept=None, query=None):
     def rows(stmt):
         return [public(x) for x in db.scalars(stmt)]
 
@@ -80,7 +82,7 @@ def get_memory_context(db, doc_id, session_id=None):
     )
     if session_id is not None:
         weaknesses = weaknesses.where(WeaknessLog.session_id == session_id)
-    return {
+    context = {
         "nodes": rows(
             select(KnowledgeNode).where(KnowledgeNode.doc_id == doc_id).order_by(KnowledgeNode.id)
         ),
@@ -89,6 +91,50 @@ def get_memory_context(db, doc_id, session_id=None):
         ),
         "weaknesses": rows(weaknesses.order_by(WeaknessLog.id)),
     }
+
+    if concept is not None or query:
+
+        def compact(value):
+            return "".join(rag_store.normalize(str(value)).split())
+
+        needle = compact(query or "")
+        # Match the longest concept at each position: “梯度下降” alone should
+        # preserve “梯度” as a prerequisite instead of a second focus node.
+        names = sorted(
+            {compact(n["concept_name"]) for n in context["nodes"]}, key=len, reverse=True
+        )
+        matched_names = (
+            set(re.findall("|".join(map(re.escape, names)), needle)) if names and needle else set()
+        )
+        focus = {
+            n["id"]
+            for n in context["nodes"]
+            if (
+                concept is not None
+                and (concept == n["id"] or compact(concept) == compact(n["concept_name"]))
+            )
+            or compact(n["concept_name"]) in matched_names
+        }
+        parents = defaultdict(set)
+        for edge in context["edges"]:
+            if edge["relation_type"] == "prerequisite":
+                parents[edge["target_node_id"]].add(edge["source_node_id"])
+        seen = set(focus)
+        frontier = list(focus)
+        while frontier:
+            fresh = parents[frontier.pop()] - seen
+            seen.update(fresh)
+            frontier.extend(fresh)
+        context["matched_node_ids"] = sorted(focus)
+        parent_ids = seen - focus
+        context["prerequisites"] = [n for n in context["nodes"] if n["id"] in parent_ids]
+        context["historical_weaknesses"] = rows(
+            select(WeaknessLog)
+            .join(Session)
+            .where(Session.doc_id == doc_id, WeaknessLog.node_id.in_(seen))
+            .order_by(WeaknessLog.id.desc())
+        )
+    return context
 
 
 def update_mastery(db, node_id, delta):
@@ -146,7 +192,10 @@ def export_memory_markdown(db, doc_id):
     names = {n["id"]: n["concept_name"] for n in nodes}
     warnings = data["薄弱点警示"]
     lists = [
-        [f"{n['concept_name']}：{n['summary']}（笔记：{n['user_note'] or '无'}）" for n in nodes],
+        [
+            f"{n['concept_name']}：{n['summary']}（要点：{'；'.join(n['key_points']) or '暂无'}；笔记：{n['user_note'] or '无'}）"
+            for n in nodes
+        ],
         [
             f"{names[e['source_node_id']]} → {names[e['target_node_id']]}（{e['relation_type']}）：{e['description']}"
             for e in data["概念关联说明"]

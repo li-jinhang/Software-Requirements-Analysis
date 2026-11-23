@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Annotated, Literal
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 Persona = Literal["child", "peer", "examiner"]
@@ -58,6 +58,9 @@ class Note(Input):
 
 
 class Concept(Input):
+    key_points: list[Annotated[str, Field(min_length=1, max_length=350)]] = Field(
+        min_length=1, max_length=5
+    )
     concept_name: str = Field(min_length=1, max_length=80)
     summary: str = Field(min_length=1, max_length=1000)
     importance: int = Field(ge=1, le=5)
@@ -67,10 +70,11 @@ class Edge(Input):
     source: str
     target: str
     relation_type: Relation
-    description: str
+    description: str = Field(min_length=1, max_length=500, pattern=r"[\u3400-\u9fff]")
 
 
 class Extraction(Input):
+    structured_summary: str = Field(min_length=1, max_length=1800)
     nodes: list[Concept] = Field(min_length=6, max_length=15)
     edges: list[Edge] = Field(min_length=1, max_length=60)
 
