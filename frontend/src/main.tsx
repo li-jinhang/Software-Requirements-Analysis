@@ -12,7 +12,16 @@ import {
   GraduationCap,
   ChevronsUpDown,
 } from "lucide-react";
-import { connected, createRemote, signIn, token } from "./api";
+import {
+  connected,
+  createRemote,
+  signIn,
+  token,
+  restoreSpace,
+  reportHistory,
+  currentService,
+  refreshMemory,
+} from "./api";
 import Library from "./Library";
 import { Concept, Course, Space, initial, roles } from "./model";
 import { User, student, admin, authenticate, read, write } from "./storage";
@@ -131,17 +140,71 @@ function App() {
     [doc, setDoc] = useState(""),
     [node, setNode] = useState(""),
     [role, setRole] = useState(roles[1]),
-    [sid, setSid] = useState(""),
+    [sid, setSid] = useState(
+      () => sessionStorage.getItem("fm.active:" + user.id) || "",
+    ),
     [rid, setRid] = useState(""),
     [err, setErr] = useState(""),
     [starting, setStarting] = useState(false);
   const online = user.id.startsWith("api:");
   const latest = useRef(space);
+  const identity = useRef(user.id);
+  const [ready, setReady] = useState(""),
+    [retry, setRetry] = useState(0);
+  useEffect(() => {
+    if (!online) return;
+    const ctrl = new AbortController();
+    const expired = () => {
+      login(student);
+      setAuth(true);
+      setErr("登录已失效，请重新登录。");
+    };
+    window.addEventListener("fm:expired", expired);
+    if (!currentService(user.id) || !token()) {
+      expired();
+    } else {
+      setReady("");
+      setErr("");
+      restoreSpace(user.id, ctrl.signal)
+        .then((remote) => {
+          if (ctrl.signal.aborted || identity.current !== user.id) return;
+          save((local) => ({
+            ...remote,
+            sessions: remote.sessions.map((s) => ({
+              ...s,
+              drafts:
+                local.sessions.find((v) => v.id === s.id)?.drafts || s.drafts,
+            })),
+          }));
+          setReady(user.id);
+        })
+        .catch((e) => {
+          if (!ctrl.signal.aborted) setErr(e.message);
+        });
+    }
+    return () => {
+      ctrl.abort();
+      window.removeEventListener("fm:expired", expired);
+    };
+  }, [user, retry]);
+  useEffect(() => {
+    if (!online || ready !== user.id || page !== "reports") return;
+    const ctrl = new AbortController();
+    reportHistory(latest.current, ctrl.signal)
+      .then((reports) => {
+        if (!ctrl.signal.aborted) save((s) => ({ ...s, reports }));
+      })
+      .catch((e) => {
+        if (!ctrl.signal.aborted) setErr(e.message);
+      });
+    return () => ctrl.abort();
+  }, [page, user.id, ready]);
   const c = space.courses.find((x) => x.id === doc) || space.courses[0],
     sess =
-      space.sessions.find((s) => s.id === sid && !s.closed) ||
+      space.sessions.find((s) => s.id === sid && (online || !s.closed)) ||
       space.sessions.find((s) => !s.closed);
   useEffect(() => {
+    if (online) return;
     try {
       write(user.id, latest.current);
     } catch {
@@ -157,6 +220,7 @@ function App() {
     return () => window.removeEventListener("hashchange", change);
   }, []);
   function save(fn: (s: Space) => Space) {
+    if (identity.current !== user.id) return;
     const next = fn(latest.current);
     try {
       write(user.id, next);
@@ -176,6 +240,9 @@ function App() {
     if (!u.id.startsWith("api:")) token("");
     const next = read(u.id);
     sessionStorage.setItem("fm.user", JSON.stringify(u));
+    identity.current = u.id;
+    setErr("");
+    setReady("");
     setUser(u);
     latest.current = next;
     setSpace(next);
@@ -183,11 +250,43 @@ function App() {
     setSid("");
     setRid("");
     setAuth(false);
+    setSetup(false);
     go(u.admin ? "admin" : "library");
   }
+  useEffect(() => {
+    if (sid) sessionStorage.setItem("fm.active:" + user.id, sid);
+  }, [sid, user.id]);
+  useEffect(() => {
+    if (
+      !online ||
+      ready !== user.id ||
+      page !== "graph" ||
+      !c ||
+      c.parseStatus !== "completed"
+    )
+      return;
+    const ctrl = new AbortController();
+    refreshMemory(c, ctrl.signal)
+      .then(({ course, logs }) => {
+        if (!ctrl.signal.aborted)
+          save((s) => ({
+            ...s,
+            courses: s.courses.map((d) => (d.id === course.id ? course : d)),
+            logs: [...s.logs.filter((w) => w.doc !== course.id), ...logs],
+          }));
+      })
+      .catch((e) => {
+        if (!ctrl.signal.aborted) setErr(e.message);
+      });
+    return () => ctrl.abort();
+  }, [c?.id, page, ready, user.id]);
   function begin(course: Course, n?: Concept) {
+    if (!course.nodes.length) {
+      setErr("资料尚无可讲解的知识点。");
+      return;
+    }
     setDoc(course.id);
-    setNode(n?.id || course.nodes[0].id);
+    setNode(n?.id || course.nodes[0]?.id || "");
     setSetup(true);
   }
   const title = pages.find((p) => p[0] === page)?.[1] || "学习资料库";
@@ -260,7 +359,17 @@ function App() {
         <div className={"content " + (page === "studio" ? "studio" : "")}>
           {err && <p role="alert">{err}</p>}
           <Suspense fallback={<p>正在载入…</p>}>
-            {page === "admin" ? (
+            {online && ready !== user.id ? (
+              <div className="box">
+                {err ? (
+                  <button onClick={() => setRetry((v) => v + 1)}>
+                    重新加载
+                  </button>
+                ) : (
+                  "正在恢复服务端学习空间…"
+                )}
+              </div>
+            ) : page === "admin" ? (
               user.admin ? (
                 <Admin online={online} />
               ) : (
@@ -276,6 +385,14 @@ function App() {
                 space={space}
                 id={rid}
                 select={setRid}
+                history={
+                  online
+                    ? (id) => {
+                        setSid(id);
+                        go("studio");
+                      }
+                    : undefined
+                }
                 go={() => go("studio")}
               />
             ) : page === "studio" && sess ? (
@@ -375,11 +492,13 @@ function App() {
                 setNode("");
               }}
             >
-              {space.courses.map((d) => (
-                <option key={d.id} value={d.id}>
-                  {d.title}
-                </option>
-              ))}
+              {space.courses
+                .filter((d) => d.nodes.length)
+                .map((d) => (
+                  <option key={d.id} value={d.id}>
+                    {d.title}
+                  </option>
+                ))}
             </select>
           </label>
           <label>
@@ -416,8 +535,7 @@ function App() {
                   c.nodes.find((n) => n.id === node) || c.nodes[0],
                   role,
                 );
-                if (online)
-                  session.id = await createRemote(c.id, session.focus, role);
+                if (online) session.id = await createRemote(c.id, role);
                 save((s) => ({ ...s, sessions: [session, ...s.sessions] }));
                 setSid(session.id);
                 setSetup(false);

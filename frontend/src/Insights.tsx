@@ -40,7 +40,7 @@ export function Graph({
         data: { label: n.name + " · " + n.score + "%" },
         className:
           "node " +
-          { 已掌握: "green", 巩固中: "amber", 待补漏: "red" }[
+          { 未学习: "", 已掌握: "green", 巩固中: "amber", 待补漏: "red" }[
             status(n, space.logs)
           ],
       })),
@@ -171,11 +171,13 @@ export function Reports({
   space,
   id,
   select,
+  history,
   go,
 }: {
   space: Space;
   id: string;
   select: (id: string) => void;
+  history?: (id: string) => void;
   go: () => void;
 }) {
   const r = space.reports.find((x) => x.id === id) || space.reports[0];
@@ -210,6 +212,9 @@ export function Reports({
         <article className="box report">
           <small>费曼学习诊断 · {new Date(r.date).toLocaleString()}</small>
           <h2>{r.title}</h2>
+          {history && r.sessionId && (
+            <button onClick={() => history(r.sessionId!)}>查看双窗历史</button>
+          )}
           <div className="tools">
             <button
               onClick={() =>

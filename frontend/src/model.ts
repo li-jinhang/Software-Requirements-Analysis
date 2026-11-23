@@ -6,6 +6,8 @@ export type Concept = {
   importance: number;
   note: string;
   streak: number;
+  mastery?: "weak" | "unlearned" | "learning" | "mastered";
+  points?: string[];
 };
 export type Link = { from: string; to: string; label: string };
 export type Course = {
@@ -14,10 +16,13 @@ export type Course = {
   subject: string;
   format: string;
   cover: number;
+  parseStatus?: string;
+  error?: string;
   nodes: Concept[];
   links: Link[];
 };
 export type Message = {
+  id?: number;
   who: "我" | "听众" | "百科" | "系统";
   text: string;
   node?: string;
@@ -44,6 +49,7 @@ export type Weak = {
   session: string;
 };
 export type Report = {
+  sessionId?: string;
   id: string;
   doc: string;
   title: string;
@@ -185,11 +191,20 @@ export function initial(): Space {
   };
 }
 export const status = (n: Concept, logs: Weak[]) =>
-  logs.some((w) => w.node === n.id && !w.resolved) || n.score < 40
-    ? "待补漏"
-    : n.score < 80
-      ? "巩固中"
-      : "已掌握";
+  n.mastery
+    ? (
+        {
+          weak: "待补漏",
+          unlearned: "未学习",
+          learning: "巩固中",
+          mastered: "已掌握",
+        } as const
+      )[n.mastery]
+    : logs.some((w) => w.node === n.id && !w.resolved) || n.score < 40
+      ? "待补漏"
+      : n.score < 80
+        ? "巩固中"
+        : "已掌握";
 export function download(name: string, body: BlobPart, type = "text/plain") {
   const url = URL.createObjectURL(new Blob([body], { type }));
   const a = document.createElement("a");

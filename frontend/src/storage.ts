@@ -16,7 +16,18 @@ export function read(id: string): Space {
       : { courses: [], reports: [], sessions: [], logs: [] };
 }
 export function write(id: string, s: Space) {
-  localStorage.setItem(prefix + id, JSON.stringify(s));
+  // Server records are reloaded on login. Persist only edits that have not been sent.
+  const stored: Space = id.startsWith("api:")
+    ? {
+        courses: [],
+        reports: [],
+        logs: [],
+        sessions: s.sessions
+          .filter((session) => session.drafts.some(Boolean))
+          .map((session) => ({ ...session, left: [], right: [] })),
+      }
+    : s;
+  localStorage.setItem(prefix + id, JSON.stringify(stored));
 }
 export function spaces(): Record<string, Space> {
   return Object.fromEntries(
