@@ -142,3 +142,18 @@ async function streamTurn(url, accessToken, content, onEvent) {
 
 错误使用 FastAPI 的 detail 字段。401 为令牌过期、未登录或凭据错误；403 为权限不足；404 为记录不存在、非本人资源或报告尚未生成；409 为重名、状态冲突或会话已结束；413 为文件过大；415 为不支持的后缀；422 为字段校验或文件解析错误。解析失败时示例：`{"detail":{"doc_id":4,"message":"无可解析文字；扫描件请上传文字版"}}`。字段校验的 detail 为错误数组。流开始后的故障表现为流中断，客户端应检查 done。
 
+
+### 模型连接和应用绑定
+
+以下路径相对 `/api/v1/model-settings`。普通服务端账号可读取 `GET /active` 查看各教学环节的实际模型名称，其余接口需要管理员 JWT。浏览器接收方案 ID、模型名、连接方式及是否已保存密钥。
+
+| 方法与路径 | 行为 |
+| --- | --- |
+| GET 根路径 | 返回 profiles、bindings、environment_live 和 ChatGPT 授权状态 |
+| POST /profiles，PUT /profiles/{id} | 保存 name、mode（api / chatgpt）、model、base_url、可选 api_key。编辑时省略 api_key 沿用原地址的密钥，空字符串清除密钥 |
+| POST /catalog，GET /profiles/{id}/models | 从草稿连接或已保存方案获取模型 ID 列表；草稿可带原方案 id |
+| POST /profiles/{id}/test | 实际请求模型，返回 latency_ms |
+| PUT /bindings/{purpose} | 传 `{"profile_id":"方案ID"}` 或 null。purpose 为 default、extract、feynman、encyclopedia、report |
+| DELETE /profiles/{id} | 删除未绑定方案 |
+| POST /chatgpt/login | 建立限时 PKCE 授权，返回 url；本机浏览器完成授权后查询根路径获取结果 |
+| DELETE /chatgpt/login，DELETE /chatgpt/account | 取消待完成授权，或退出服务端 ChatGPT 账号 |

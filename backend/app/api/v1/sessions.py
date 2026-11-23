@@ -1,5 +1,8 @@
 from app.schemas.responses import SessionOut, MessageOut, ReportOut
 import json
+from threading import Lock
+from app.agents import model_teaching
+from app.services.model_profiles import resolve
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
@@ -7,6 +10,9 @@ from app.core.security import current_user
 from concurrent.futures import ThreadPoolExecutor
 from queue import SimpleQueue
 from app.db.database import get_db, SessionLocal
+
+# Serialize turns and completion per session without holding a SQLite write lock during inference.
+session_locks = [Lock() for _ in range(127)]
 
 workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="feynman-turn")
 from app.db.models import Session, Document, Message, DiagnosticReport, now, public
@@ -70,20 +76,26 @@ def frame(event):
 def produce(id, content, window, user_id, events):
     """Finish the accepted turn even if the HTTP client disconnects."""
     try:
-        with SessionLocal() as db:
-            lock_active(db, id)
+        with session_locks[id % len(session_locks)], SessionLocal() as db:
             s = db.get(Session, id)
-            if s.user_id != user_id:
+            if s is None or s.user_id != user_id:
                 raise HTTPException(404, "会话不存在")
             turn = AgentInput(
                 session_id=id, doc_id=s.doc_id, persona_type=s.persona_type, content=content
             )
+            if s.status != "active":
+                raise HTTPException(409, "会话已结束")
+            profile = resolve(window)
+            prepared = model_teaching.prepare(db, turn, window, profile) if profile else None
+            lock_active(db, id)
             agent = feynman_agent if window == "feynman" else encyclopedia_agent
             db.add(Message(session_id=id, window_type=window, sender_role="user", content=content))
             text = []
             meta = {}
             node_ids = []
-            for event in agent.stream(db, turn):
+            for event in (
+                model_teaching.apply(db, turn, prepared) if prepared else agent.stream(db, turn)
+            ):
                 if isinstance(event, Token):
                     text.append(event.delta)
                 elif isinstance(event, Citation):
@@ -145,13 +157,22 @@ def right(id: int, body: Turn, db=Depends(get_db), user=Depends(current_user)):
 
 @router.post("/{id}/report", response_model=ReportOut)
 def finish(id: int, db=Depends(get_db), user=Depends(current_user)):
+    with session_locks[id % len(session_locks)]:
+        return finish_locked(id, db, user)
+
+
+def finish_locked(id, db, user):
     s = owned(db, Session, id, user)
-    db.execute(update(Session).where(Session.id == id).values(status="completed"))
     old = db.scalar(select(DiagnosticReport).where(DiagnosticReport.session_id == id))
     if old:
         db.commit()
         return public(old)
-    data = report_agent.generate(db, s).model_dump()
+    profile = resolve("report")
+    data = (
+        model_teaching.diagnose(db, s, profile) if profile else report_agent.generate(db, s)
+    ).model_dump()
+    lock_active(db, id)
+    s.status = "completed"
     data["weakness_summary"] = json.dumps(data["weakness_summary"], ensure_ascii=False)
     row = DiagnosticReport(session_id=id, **data)
     db.add(row)

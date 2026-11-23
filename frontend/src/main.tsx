@@ -9,6 +9,7 @@ import {
   Menu,
   BookOpen,
   ChevronRight,
+  Settings2,
   GraduationCap,
   ChevronsUpDown,
 } from "lucide-react";
@@ -27,6 +28,7 @@ import { Concept, Course, Space, initial, roles } from "./model";
 import { User, student, admin, authenticate, read, write } from "./storage";
 import { Dialog } from "./ui";
 import { newSession } from "./model";
+const ModelSettingsPage = lazy(() => import("./ModelSettings"));
 const Workbench = lazy(() => import("./Workbench"));
 import "./style.css";
 const Graph = lazy(() =>
@@ -41,6 +43,7 @@ const pages = [
   ["studio", "双窗工作台", PanelsTopLeft],
   ["graph", "知识图谱", Workflow],
   ["reports", "历史报告", Files],
+  ["models", "模型配置", Settings2],
   ["admin", "后台数据中心", ChartNoAxesColumn],
 ] as const;
 function Auth({
@@ -369,6 +372,13 @@ function App() {
                   "正在恢复服务端学习空间…"
                 )}
               </div>
+            ) : page === "models" ? (
+              <ModelSettingsPage
+                key={user.id}
+                online={online}
+                admin={user.admin}
+                login={() => setAuth(true)}
+              />
             ) : page === "admin" ? (
               user.admin ? (
                 <Admin online={online} />

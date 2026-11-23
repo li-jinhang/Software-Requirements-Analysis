@@ -1,5 +1,9 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
+from fastapi.responses import JSONResponse
+from app.services.model_profiles import ModelError
+from app.services.chatgpt_login import end_login
+from app.api.v1 import model_settings
 from fastapi.middleware.cors import CORSMiddleware
 from app.api.v1 import auth, documents, sessions, admin
 from app.core.config import settings
@@ -35,16 +39,33 @@ async def lifespan(app):
     if settings.seed_demo:
         with SessionLocal() as db:
             seed(db)
-    yield
+    try:
+        yield
+    finally:
+        end_login()
 
 
 app = FastAPI(title="智溯费曼 · 混合记忆服务", version="0.1.0", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
-    allow_methods=["GET", "POST", "PATCH", "DELETE"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE"],
     allow_headers=["Authorization", "Content-Type"],
     expose_headers=["Content-Disposition"],
 )
-for router in (auth.router, documents.router, sessions.router, admin.router):
+
+
+@app.exception_handler(ModelError)
+async def model_error(request, exc):
+    return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+
+
+for router in (
+    auth.router,
+    documents.router,
+    sessions.router,
+    admin.router,
+    model_settings.public_router,
+    model_settings.router,
+):
     app.include_router(router, prefix="/api/v1")

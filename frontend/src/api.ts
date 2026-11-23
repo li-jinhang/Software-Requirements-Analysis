@@ -562,3 +562,56 @@ export async function reportHistory(space: Space, signal: AbortSignal) {
   );
   return reports.filter((r): r is Report => r !== null);
 }
+
+export type ModelPurpose =
+  "default" | "extract" | "feynman" | "encyclopedia" | "report";
+export type ModelProfile = {
+  id: string;
+  name: string;
+  mode: "api" | "chatgpt";
+  model: string;
+  base_url: string;
+  has_key: boolean;
+};
+export type ProfileDraft = Omit<ModelProfile, "id" | "has_key"> & {
+  api_key?: string;
+};
+export type ModelSettings = {
+  profiles: ModelProfile[];
+  bindings: Partial<Record<ModelPurpose, string>>;
+  environment_live: boolean;
+  chatgpt: { connected: boolean; pending: boolean; error: string };
+};
+const modelPath = "/model-settings";
+export const modelSettingsApi = {
+  read: () => json<ModelSettings>(modelPath),
+  active: () =>
+    json<Record<Exclude<ModelPurpose, "default">, string>>(
+      modelPath + "/active",
+    ),
+  save: (p: ProfileDraft, id?: string) =>
+    json<{ id: string }>(modelPath + "/profiles" + (id ? "/" + id : ""), {
+      ...post(p),
+      method: id ? "PUT" : "POST",
+    }),
+  remove: (id: string) =>
+    request(modelPath + "/profiles/" + id, { method: "DELETE" }),
+  bind: (purpose: ModelPurpose, id: string) =>
+    request(modelPath + "/bindings/" + purpose, {
+      ...post({ profile_id: id || null }),
+      method: "PUT",
+    }),
+  catalog: (p: ProfileDraft, id?: string) =>
+    json<string[]>(
+      modelPath + "/catalog",
+      post({ ...p, model: p.model || "catalog", id }),
+    ),
+  test: (id: string) =>
+    json<{ latency_ms: number }>(modelPath + "/profiles/" + id + "/test", {
+      method: "POST",
+    }),
+  login: () =>
+    json<{ url: string }>(modelPath + "/chatgpt/login", { method: "POST" }),
+  cancel: () => request(modelPath + "/chatgpt/login", { method: "DELETE" }),
+  logout: () => request(modelPath + "/chatgpt/account", { method: "DELETE" }),
+};

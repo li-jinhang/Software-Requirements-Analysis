@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.schemas import Persona
 
 
@@ -43,10 +43,10 @@ class Done(BaseModel):
 
 
 class Report(BaseModel):
-    coverage_score: int
-    accuracy_score: int
-    clarity_score: int
-    logic_score: int
+    coverage_score: int = Field(ge=0, le=100)
+    accuracy_score: int = Field(ge=0, le=100)
+    clarity_score: int = Field(ge=0, le=100)
+    logic_score: int = Field(ge=0, le=100)
     overall_comment: str
     weakness_summary: list[str]
     review_plan: str
