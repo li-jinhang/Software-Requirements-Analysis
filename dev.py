@@ -11,6 +11,27 @@ import time
 ROOT = Path(__file__).resolve().parent
 
 
+def ensure_langgraph(python: Path, backend: Path):
+    probe = [
+        python,
+        "-c",
+        "from langgraph.config import get_stream_writer; "
+        "from langgraph.graph import END, START, StateGraph; "
+        "from langgraph.runtime import Runtime",
+    ]
+    if subprocess.run(probe, cwd=backend, capture_output=True).returncode == 0:
+        return
+    print("正在为 backend/.venv 同步后端依赖…", flush=True)
+    install = [
+        python, "-m", "pip", "install", "--disable-pip-version-check", "--no-input",
+        "-r", str(backend / "requirements.txt"),
+    ]
+    if subprocess.run(install, cwd=backend).returncode != 0:
+        sys.exit("后端依赖安装失败，请查看上方 pip 输出。")
+    if subprocess.run(probe, cwd=backend).returncode != 0:
+        sys.exit("LangGraph 仍无法导入，请检查上方 Python 错误。")
+
+
 def main():
     parser = argparse.ArgumentParser(description="启动原版 React 工作台与本地教学后端")
     parser.add_argument("--backend-port", type=int, default=18080)
@@ -30,6 +51,7 @@ def main():
     children = []
     try:
         if not args.frontend_only:
+            ensure_langgraph(python, backend)
             children.append(
                 subprocess.Popen(
                     [python, "-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(args.backend_port)],
