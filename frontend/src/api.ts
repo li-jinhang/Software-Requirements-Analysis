@@ -23,6 +23,7 @@ export class ApiError extends Error {
     message: string,
     readonly docId?: number,
     readonly status?: number,
+    readonly code?: string,
   ) {
     super(message);
   }
@@ -57,6 +58,7 @@ async function request(
           : detail?.message || "请求失败（" + res.status + "）",
       detail?.doc_id,
       res.status,
+      detail?.code,
     );
   }
   return res;
@@ -564,6 +566,7 @@ export async function reportHistory(space: Space, signal: AbortSignal) {
 
 export type ModelPurpose =
   "default" | "extract" | "feynman" | "encyclopedia" | "report";
+export type TeachingPurpose = Exclude<ModelPurpose, "default">;
 export type ModelProfile = {
   id: string;
   name: string;
@@ -601,6 +604,8 @@ async function modelJson<T>(path: string, options?: RequestInit): Promise<T> {
   return (await modelRequest(path, options)).json();
 }
 export const modelSettingsApi = {
+  availability: () =>
+    modelJson<Record<TeachingPurpose, boolean>>("/availability"),
   read: () => modelJson<ModelSettings>(""),
   exportArchive: () => modelJson<unknown>("/export"),
   importArchive: (archive: unknown) =>
@@ -608,10 +613,7 @@ export const modelSettingsApi = {
       "/import",
       post(archive),
     ),
-  active: () =>
-    json<Record<Exclude<ModelPurpose, "default">, string>>(
-      modelPath + "/active",
-    ),
+  active: () => json<Record<TeachingPurpose, string>>(modelPath + "/active"),
   save: (p: ProfileDraft, id?: string) =>
     modelJson<{ id: string }>("/profiles" + (id ? "/" + id : ""), {
       ...post(p),

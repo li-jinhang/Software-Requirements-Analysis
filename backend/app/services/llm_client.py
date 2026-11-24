@@ -8,7 +8,6 @@ from openai import APIError, BadRequestError, OpenAI
 from pydantic import BaseModel, Field, create_model, field_validator
 from app.core.config import settings
 from app.services.model_connection import ModelConnection, StructuredOutputError
-from app.services.model_profiles import resolve
 from app.schemas import Concept, Edge, Extraction, Relation
 
 
@@ -239,15 +238,5 @@ def extract_in_parts(client, material):
     return Extraction(structured_summary=outline.summary, nodes=nodes, edges=edges)
 
 
-def extract(text, title):
-    profile = resolve("extract", environment=False)
-    if profile:
-        return live_extract(ModelConnection(profile), text, title)
-    if settings.mock_llm or not settings.openai_api_key.get_secret_value():
-        return local_extract(text, title)
-    try:
-        with live_client() as client:
-            return live_extract(client, text, title)
-    except (APIError, ValueError, IndexError) as exc:
-        log.warning("真实抽取失败 (%s)，本次使用离线规则抽取", type(exc).__name__)
-        return local_extract(text, title)
+def extract(text, title, profile):
+    return live_extract(ModelConnection(profile), text, title)

@@ -496,7 +496,7 @@ export default function Settings({
                         {k === "default"
                           ? settings.environment_live
                             ? "使用环境配置"
-                            : "离线演示"
+                            : "未配置模型"
                           : "继承默认模型"}
                       </option>
                       {settings.profiles.map((p) => (

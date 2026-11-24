@@ -22,7 +22,7 @@ from app.db.models import (
 from app.services import doc_parser, rag_store, llm_client
 
 
-def ingest_document(db, doc_id):
+def ingest_document(db, doc_id, profile):
     claimed = db.execute(
         update(Document)
         .where(Document.id == doc_id, Document.parse_status.in_(["pending", "failed"]))
@@ -36,7 +36,7 @@ def ingest_document(db, doc_id):
     try:
         text = doc_parser.parse(doc.file_path)
         chunks = doc_parser.split_chunks(text)
-        extracted = llm_client.extract(text, doc.title)
+        extracted = llm_client.extract(text, doc.title, profile)
         rag_store.remove(doc_id)
         rag_store.index(doc_id, doc.title, chunks)
         nodes = {

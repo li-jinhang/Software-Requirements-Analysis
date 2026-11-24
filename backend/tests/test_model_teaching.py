@@ -22,6 +22,15 @@ def test_model_processing_and_binding_isolation(server):
     )
     assert preflight.is_success and "PUT" in preflight.headers["access-control-allow-methods"]
     assert api.get(root).status_code == 200
+    assert api.get(root + "/availability").json() == dict.fromkeys(
+        ("extract", "feynman", "encyclopedia", "report"), False,
+    )
+    missing = api.post("/api/v1/sessions", headers=student, json={"doc_id": 1})
+    assert missing.status_code == 409 and missing.json()["detail"]["code"] == "model_required"
+    missing = api.post(
+        "/api/v1/documents/upload", headers=student, files={"file": ("file.md", b"lesson")},
+    )
+    assert missing.status_code == 409 and missing.json()["detail"]["purpose"] == "extract"
     assert api.get(root, headers={"Origin": "https://outside.example"}).status_code == 403
     assert api.get(root, headers={"Host": "outside.example"}).status_code == 403
     assert api.get(root + "/active", headers=student).status_code == 200
@@ -137,6 +146,15 @@ def test_model_processing_and_binding_isolation(server):
             "/api/v1/sessions", headers=student, json={"doc_id": doc.json()["id"]}
         ).json()["id"]
         path = f"/api/v1/sessions/{session}"
+        assert api.put(root + "/bindings/default", json={"profile_id": None}).status_code == 204
+        assert api.put(root + "/bindings/report", json={"profile_id": None}).status_code == 204
+        for window in ("feynman", "encyclopedia"):
+            rejected = api.post(path + "/" + window + "/stream", headers=student, json={"content": "测试"})
+            assert rejected.status_code == 409 and rejected.json()["detail"]["purpose"] == window
+        assert api.post(path + "/report", headers=student).json()["detail"]["purpose"] == "report"
+        assert api.get(path + "/messages", headers=student).json() == []
+        assert api.put(root + "/bindings/default", json={"profile_id": first}).status_code == 204
+        assert api.put(root + "/bindings/report", json={"profile_id": second}).status_code == 204
         for window in ["feynman", "encyclopedia"]:
             r = api.post(
                 path + "/" + window + "/stream",

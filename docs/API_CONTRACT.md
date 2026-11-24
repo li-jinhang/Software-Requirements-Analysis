@@ -150,6 +150,7 @@ async function streamTurn(url, accessToken, content, onEvent) {
 | 方法与路径 | 行为 |
 | --- | --- |
 | GET 根路径 | 返回 profiles、bindings、environment_live 和 ChatGPT 授权状态 |
+| GET /availability | 返回 extract、feynman、encyclopedia、report 各环节是否有可用配置 |
 | GET /export | 返回版本为 1 的 JSON，包含 profiles 和 bindings。API Key 与 ChatGPT 授权保存在本机 |
 | POST /import | 校验并合并导出的 JSON。保留已有 ID 和绑定，返回 added、skipped、bindings_added |
 | POST /profiles，PUT /profiles/{id} | 保存 name、mode（api / chatgpt）、model、base_url、可选 api_key。编辑时省略 api_key 沿用原地址的密钥，空字符串清除密钥 |
@@ -159,3 +160,5 @@ async function streamTurn(url, accessToken, content, onEvent) {
 | DELETE /profiles/{id} | 删除未绑定方案 |
 | POST /chatgpt/login | 建立限时 PKCE 授权，返回 url；本机浏览器完成授权后查询根路径获取结果 |
 | DELETE /chatgpt/login，DELETE /chatgpt/account | 取消待完成授权，或退出服务端 ChatGPT 账号 |
+
+缺少操作所需模型时返回 409，detail 对象包含 code（model_required）、purpose 和 message。

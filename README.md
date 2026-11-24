@@ -20,7 +20,7 @@ Windows 完成首次安装后，双击仓库根目录的 [run.bat](run.bat) 即�
 python dev.py
 ~~~
 
-打开 [学习工作台](http://127.0.0.1:5173) 和 [Swagger](http://127.0.0.1:8000/docs)。启动器为 Vite 设置 VITE_BACKEND_URL，Ctrl+C 同时结束两个进程。它固定使用 5173 和 8000；若先前的服务还在运行，请在原终端停止它再启动，以便载入本次更新。首次启动自动建立演示库；已有一期数据库会补上知识点要点字段。默认无需 API Key。
+打开 [学习工作台](http://127.0.0.1:5173) 和 [Swagger](http://127.0.0.1:8000/docs)。启动器为 Vite 设置 VITE_BACKEND_URL，Ctrl+C 同时结束两个进程。它固定使用 5173 和 8000。首次启动自动建立演示库；已有一期数据库会补上知识点要点字段。开始教学前请先配置模型。
 
 从侧栏的**账号登录**进入服务端空间，用学生 `student / 123456` 或管理员 `admin / admin123` 登录；侧栏的快捷演示入口使用浏览器本地数据。可上传 [课程样例](backend/data/sample_docs/)，选择听众开始讲解，在右窗查证后回到左窗复讲。在线会话、引用、掌握度和报告从服务端恢复，未发送的草稿保存在当前浏览器。[前端联调清单与验收记录](docs/FRONTEND_SYNC_CHECKLIST.md)
 
@@ -41,11 +41,9 @@ npm.cmd run dev -- --host 127.0.0.1 --port 5173 --strictPort
 
 VITE_BACKEND_URL 填服务根地址，前端会拼接 /api/v1。仅运行 Vite 且不设置此变量可体验纯前端演示。前端构建命令为 `npm.cmd --prefix frontend run build`。
 
-## 本地教学演示
+## 浏览示范资料
 
-浏览器演示空间内置三份示范资料，支持搜索、学科筛选和上传 20 MB 以内的 PDF、DOCX、MD、TXT。从课程卡片点击「开讲」，选择知识点和听众；可将左窗追问带入右窗查证。桌面支持拖动分隔条，手机通过页签切窗。完成两轮讲解后可查看四维雷达图与复习建议，并导出 Markdown 或通过浏览器保存 PDF。
-
-本地模式按文本片段和规则生成教学反馈。演示管理员审阅本浏览器的演示空间；服务端管理员使用独立的 SQLite 数据库与管理接口。
+浏览器演示空间内置三份示范资料，可搜索、筛选和浏览记忆档案。上传解析、开讲、双窗回复和诊断报告使用已配置的模型和学习账号。缺少模型时，弹窗可直接打开模型配置。
 
 ## 模型、检索与测试
 
@@ -59,7 +57,7 @@ VITE_BACKEND_URL 填服务根地址，前端会拼接 /api/v1。仅运行 Vite �
 
 方案和凭据保存在后端数据目录的私有 `model-settings/profiles.sqlite3`，由运行后端的系统账号保管。教学 JSON 和数据库导出仅包含业务数据。显式绑定的方案失败时界面会显示错误。模型读取超时可用 `MODEL_TIMEOUT_SECONDS` 调整，默认 180 秒。
 
-未设置方案时沿用环境配置。默认 `MOCK_LLM=true` 使用离线基线。也可在 `backend/.env` 设置 `MOCK_LLM=false`、`OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `OPENAI_MODEL`，重启后作为四个环节的环境默认值。环境模式的旧版资料抽取保留失败时降级的行为。嵌入模型独立配置，默认 `EMBEDDING_PROVIDER=local_lite`，远程嵌入使用 `api` 和供应商对应的嵌入模型、端点及凭据。
+也可在 `backend/.env` 设置 `OPENAI_API_KEY`、`OPENAI_BASE_URL` 和 `OPENAI_MODEL`，重启后作为四个环节的环境默认值。旧配置中的 `MOCK_LLM=true` 会停用环境模型。嵌入模型独立配置，默认 `EMBEDDING_PROVIDER=local_lite`，远程嵌入使用 `api` 和供应商对应的嵌入模型、端点及凭据。
 
 ~~~powershell
 # 显式调用真实模型：使用仓库样例与一次性索引，打印每一阶段耗时

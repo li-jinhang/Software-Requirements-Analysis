@@ -22,6 +22,9 @@ import {
   reportHistory,
   currentService,
   refreshMemory,
+  ApiError,
+  modelSettingsApi,
+  type TeachingPurpose,
 } from "./api";
 import Library from "./Library";
 import { Concept, Course, Space, initial, roles } from "./model";
@@ -143,6 +146,8 @@ function App() {
       workspaceRoute() === "models" ? "library" : workspaceRoute(),
     ),
     [settings, setSettings] = useState(() => workspaceRoute() === "models"),
+    [modelPrompt, setModelPrompt] = useState(""),
+    [learningLogin, setLearningLogin] = useState(false),
     [auth, setAuth] = useState(false),
     [nav, setNav] = useState(false),
     [setup, setSetup] = useState(false),
@@ -265,6 +270,8 @@ function App() {
     setRid("");
     setAuth(false);
     setSettings(false);
+    setModelPrompt("");
+    setLearningLogin(false);
     setSetup(false);
     go(u.admin ? "admin" : "library");
   }
@@ -295,11 +302,34 @@ function App() {
       });
     return () => ctrl.abort();
   }, [c?.id, page, ready, user.id]);
-  function begin(course: Course, n?: Concept) {
+  function modelRequired(error: unknown) {
+    if (!(error instanceof ApiError) || error.code !== "model_required")
+      return false;
+    setModelPrompt(error.message);
+    return true;
+  }
+  async function canLearn(purpose: TeachingPurpose) {
+    try {
+      if (!connected || !(await modelSettingsApi.availability())[purpose]) {
+        setModelPrompt("当前操作需要可用的模型，请先配置并分配模型。");
+        return false;
+      }
+    } catch (e) {
+      setErr((e as Error).message);
+      return false;
+    }
+    if (!online) {
+      setLearningLogin(true);
+      return false;
+    }
+    return true;
+  }
+  async function begin(course: Course, n?: Concept) {
     if (!course.nodes.length) {
       setErr("资料尚无可讲解的知识点。");
       return;
     }
+    if (!(await canLearn("feynman"))) return;
     setDoc(course.id);
     setNode(n?.id || course.nodes[0]?.id || "");
     setSetup(true);
@@ -427,6 +457,8 @@ function App() {
                 space={space}
                 session={sess}
                 save={save}
+                canLearn={canLearn}
+                modelRequired={modelRequired}
                 choose={() =>
                   begin(space.courses.find((d) => d.id === sess.doc) || c)
                 }
@@ -469,6 +501,8 @@ function App() {
                 space={space}
                 save={save}
                 start={begin}
+                canLearn={canLearn}
+                modelRequired={modelRequired}
               />
             )}
           </Suspense>
@@ -561,21 +595,23 @@ function App() {
             className="primary"
             disabled={starting}
             onClick={async () => {
+              if (!online || starting) return;
               setStarting(true);
               setErr("");
               try {
+                const id = await createRemote(c.id, role);
                 const session = newSession(
+                  id,
                   c,
                   c.nodes.find((n) => n.id === node) || c.nodes[0],
                   role,
                 );
-                if (online) session.id = await createRemote(c.id, role);
                 save((s) => ({ ...s, sessions: [session, ...s.sessions] }));
                 setSid(session.id);
                 setSetup(false);
                 go("studio");
               } catch (e) {
-                setErr((e as Error).message);
+                if (!modelRequired(e)) setErr((e as Error).message);
               } finally {
                 setStarting(false);
               }
@@ -583,6 +619,34 @@ function App() {
           >
             {starting ? "正在创建…" : "开始教学"}
             <ChevronRight />
+          </button>
+        </Dialog>
+      )}
+      {modelPrompt && (
+        <Dialog title="请配置模型" close={() => setModelPrompt("")}>
+          <p>{modelPrompt}</p>
+          <button
+            className="primary"
+            onClick={() => {
+              setModelPrompt("");
+              setSettings(true);
+            }}
+          >
+            前往模型配置
+          </button>
+        </Dialog>
+      )}
+      {learningLogin && (
+        <Dialog title="登录学习账号" close={() => setLearningLogin(false)}>
+          <p>模型已配置。登录学习账号后即可开始教学并保存学习记录。</p>
+          <button
+            className="primary"
+            onClick={() => {
+              setLearningLogin(false);
+              setAuth(true);
+            }}
+          >
+            账号登录
           </button>
         </Dialog>
       )}

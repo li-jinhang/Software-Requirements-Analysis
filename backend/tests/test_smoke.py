@@ -16,6 +16,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
+    yield from serve(tmp_path_factory)
+
+
+@pytest.fixture(scope="module")
+def fixture_server(tmp_path_factory):
+    yield from serve(tmp_path_factory, fixture_inference=True)
+
+
+def serve(tmp_path_factory, *, fixture_inference=False):
     work = tmp_path_factory.mktemp("backend")
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -31,17 +40,17 @@ def server(tmp_path_factory):
             "PYTHONIOENCODING": "utf-8",
             "ANONYMIZED_TELEMETRY": "False",
         }
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "app.main:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
+        command = ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)]
+        if fixture_inference:
+            command = [
+                "-c",
+                "import sys, uvicorn; sys.path.insert(0, 'tests'); "
+                "from fixture_inference import install; install(); "
+                "uvicorn.run('app.main:app', host='127.0.0.1', port=int(sys.argv[1]))",
                 str(port),
-            ],
+            ]
+        proc = subprocess.Popen(
+            [sys.executable, *command],
             cwd=ROOT,
             env=env,
             stdout=log,
@@ -116,7 +125,8 @@ def events(resp):
     return pairs
 
 
-def test_mastered_topic_advances_and_next_questions_rotate(server):
+def test_mastered_topic_advances_and_next_questions_rotate(fixture_server):
+    server = fixture_server
     h = login(server, "student", "123456")
     sid = server.post("/api/v1/sessions", headers=h, json={"doc_id": 1}).json()["id"]
     url = f"/api/v1/sessions/{sid}/feynman/stream"
@@ -131,8 +141,8 @@ def test_mastered_topic_advances_and_next_questions_rotate(server):
     assert len(set(questions)) == len(questions)
 
 
-def test_upload_teach_lookup_report_export(server, tmp_path):
-    api = server
+def test_upload_teach_lookup_report_export(fixture_server, tmp_path):
+    api = fixture_server
     base = "/api/v1"
     account = {"username": "smoke-user", "password": "smoke-123", "nickname": "联调"}
     assert api.post(base + "/auth/register", json=account).status_code == 201
@@ -247,8 +257,10 @@ def test_retry_and_cross_store_cleanup(tmp_path, monkeypatch):
     from app.db.models import Document
     from app.services import rag_store
     from app.services.memory_service import update_mastery
+    from fixture_inference import install
 
     with TestClient(app) as api:
+        install(monkeypatch.setattr)
         h = login(api, "student", "123456")
         response = api.post(
             "/api/v1/documents/upload", headers=h, files={"file": ("empty.md", b" ", "text/plain")}

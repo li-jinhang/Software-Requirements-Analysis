@@ -2,7 +2,7 @@ from app.schemas.responses import SessionOut, MessageOut, ReportOut
 import json
 from threading import Lock
 from app.agents import model_teaching
-from app.services.model_profiles import resolve
+from app.services.model_profiles import require_profile
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
@@ -18,7 +18,6 @@ workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="feynman-turn")
 from app.db.models import Session, Document, Message, DiagnosticReport, now, public
 from app.api.v1.documents import owned
 from app.schemas import SessionCreate, PersonaChange, Turn
-from app.agents import feynman_agent, encyclopedia_agent, report_agent
 from app.agents.contracts import AgentInput, MemoryUpdate, Citation, Token, Done, EVENT_NAMES
 
 router = APIRouter(prefix="/sessions", tags=["会话"])
@@ -35,6 +34,7 @@ def lock_active(db, id):
 def create(body: SessionCreate, db=Depends(get_db), user=Depends(current_user)):
     if owned(db, Document, body.doc_id, user).parse_status != "completed":
         raise HTTPException(409, "资料尚未解析完成")
+    require_profile("feynman")
     row = Session(user_id=user.id, **body.model_dump())
     db.add(row)
     db.commit()
@@ -85,17 +85,13 @@ def produce(id, content, window, user_id, events):
             )
             if s.status != "active":
                 raise HTTPException(409, "会话已结束")
-            profile = resolve(window)
-            prepared = model_teaching.prepare(db, turn, window, profile) if profile else None
+            prepared = model_teaching.prepare(db, turn, window, require_profile(window))
             lock_active(db, id)
-            agent = feynman_agent if window == "feynman" else encyclopedia_agent
             db.add(Message(session_id=id, window_type=window, sender_role="user", content=content))
             text = []
             meta = {}
             node_ids = []
-            for event in (
-                model_teaching.apply(db, turn, prepared) if prepared else agent.stream(db, turn)
-            ):
+            for event in model_teaching.apply(db, turn, prepared):
                 if isinstance(event, Token):
                     text.append(event.delta)
                 elif isinstance(event, Citation):
@@ -167,10 +163,7 @@ def finish_locked(id, db, user):
     if old:
         db.commit()
         return public(old)
-    profile = resolve("report")
-    data = (
-        model_teaching.diagnose(db, s, profile) if profile else report_agent.generate(db, s)
-    ).model_dump()
+    data = model_teaching.diagnose(db, s, require_profile("report")).model_dump()
     lock_active(db, id)
     s.status = "completed"
     data["weakness_summary"] = json.dumps(data["weakness_summary"], ensure_ascii=False)

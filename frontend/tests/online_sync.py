@@ -1,4 +1,4 @@
-"""Run against a disposable seeded dev.py instance. Requires Python Playwright and Edge.
+"""Run against a disposable seeded backend with a configured test model. Requires Python Playwright and Edge.
 Set FM_STUDENT_PASSWORD and FM_ADMIN_PASSWORD to the test instance credentials.
 The run uploads one course and completes one teaching session.
 """

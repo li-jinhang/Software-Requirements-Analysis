@@ -107,9 +107,7 @@ def test_bounded_hierarchical_synthesis_keeps_last_section(monkeypatch):
     assert graph.structured_summary and all(n.key_points for n in graph.nodes)
 
 
-def test_invalid_live_json_retries_twice_then_falls_back(monkeypatch, caplog):
-    from contextlib import nullcontext
-    from pydantic import SecretStr
+def test_invalid_live_json_retries_twice_then_errors(caplog):
     from app.services import llm_client as llm
 
     calls = []
@@ -121,11 +119,9 @@ def test_invalid_live_json_retries_twice_then_falls_back(monkeypatch, caplog):
         )
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=invalid)))
-    monkeypatch.setattr(llm, "live_client", lambda: nullcontext(client))
-    monkeypatch.setattr(llm.settings, "mock_llm", False)
-    monkeypatch.setattr(llm.settings, "openai_api_key", SecretStr("unit-test-only"))
-    graph = llm.extract("学习率：控制步长。", "机器学习")
-    assert len(calls) == 3 and "离线" in graph.structured_summary and "离线规则" in caplog.text
+    with pytest.raises(ValueError):
+        llm.structured(client, llm.LIVE_EXTRACTION, "提取概念", "学习率：控制步长。")
+    assert len(calls) == 3 and "准备重试" in caplog.text
 
 
 @pytest.mark.parametrize("port", [5173, 3000, 4173])
@@ -305,6 +301,9 @@ def test_existing_sqlite_migrates_without_losing_memory(tmp_path):
     # Boot in a fresh interpreter to exercise the same entry point as Uvicorn.
     backend = Path(__file__).resolve().parents[1]
     code = """
+import sys
+sys.path.insert(0, 'tests')
+from fixture_inference import install
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from app.main import app
@@ -320,6 +319,7 @@ with TestClient(app) as api:
     old=api.get('/api/v1/documents/1/graph',headers=headers).json()['nodes'][0]
     assert old['key_points']==[] and old['user_note']=='legacy note'
     assert api.get('/api/v1/documents/1',headers=headers).json()['chunk_count']==8
+    install()
     response=api.post('/api/v1/documents/upload',headers=headers,files={'file':('notes.md',b'Alpha: first. Beta: second.')})
     assert response.status_code==201,response.text
     doc=response.json()

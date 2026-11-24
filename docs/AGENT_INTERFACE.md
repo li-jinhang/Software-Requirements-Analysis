@@ -56,7 +56,7 @@ def stream(db, turn):
 
 ## 模型与索引
 
-默认 MOCK_LLM=true、EMBEDDING_PROVIDER=local_lite，无需 Key 或模型下载。离线抽取优先使用章节名、定义前缀和段落；很短的资料会用标明“离线阅读提示”的条目补齐 6 项。真实抽取将 MOCK_LLM 设为 false，填写 OPENAI_BASE_URL、OPENAI_API_KEY 和供应商对应的 OPENAI_MODEL，重启服务后上传新资料。短文直接按 JSON schema 抽取，长文分段压缩并分层合并后综合抽取。每个模型步骤最多额外重试两次，持续失败时记录异常类型并降级离线抽取。文件损坏仍标记为 failed。
+上传解析使用「教学设置」分配的模型。也可设置 OPENAI_BASE_URL、OPENAI_API_KEY 和 OPENAI_MODEL 作为环境默认模型。短文直接按 JSON schema 抽取，长文分段压缩并分层合并后综合抽取。模型请求或解析失败会进入失败状态，可修正配置后重试。默认向量索引使用 EMBEDDING_PROVIDER=local_lite。
 
 本地基础集合 feynman_doc_chunks 使用显式 384 维中英文词元哈希向量；所有 upsert/query 均传入显式向量，不调用 Chroma 默认下载器。若要使用远程嵌入，将 EMBEDDING_PROVIDER 设为 api，设置 EMBEDDING_MODEL，必要时单独提供 EMBEDDING_API_KEY、EMBEDDING_BASE_URL。系统始终保留本地集合，并按供应商与模型标识为远程向量建立独立集合，避免不同维度混写；远程嵌入失败回退本地集合。切换模型后，已有资料仍可使用本地检索；重新导入可建立新模型的向量。
 

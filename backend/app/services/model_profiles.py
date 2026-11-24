@@ -12,12 +12,19 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 from app.core.config import settings
 
 Use = Literal["default", "extract", "feynman", "encyclopedia", "report"]
+TEACHING_USES = ("extract", "feynman", "encyclopedia", "report")
 
 
 class ModelError(ValueError):
     def __init__(self, message, status_code=502):
         super().__init__(message)
         self.status_code = status_code
+
+
+class ModelRequired(ModelError):
+    def __init__(self, purpose: Use):
+        super().__init__("当前操作需要可用的模型，请先配置并分配模型。", 409)
+        self.purpose = purpose
 
 
 class ProfileConfig(BaseModel):
@@ -198,7 +205,7 @@ def delete_profile(id):
             raise ModelError("请先解除该方案的默认及应用绑定", 409) from None
 
 
-def resolve(purpose, *, environment=True):
+def resolve(purpose):
     with store() as db:
         row = db.execute(
             """SELECT p.* FROM profiles p JOIN bindings b ON p.id=b.profile
@@ -206,8 +213,10 @@ def resolve(purpose, *, environment=True):
             (purpose, purpose),
         ).fetchone()
         if row:
+            if row["mode"] == "chatgpt" and not db.execute("SELECT 1 FROM account WHERE id=1").fetchone():
+                return None
             return dict(row)
-    if environment and not settings.mock_llm and settings.openai_api_key.get_secret_value():
+    if not settings.mock_llm and settings.openai_api_key.get_secret_value():
         return dict(
             mode="api",
             base_url=settings.openai_base_url.rstrip("/"),
@@ -215,6 +224,13 @@ def resolve(purpose, *, environment=True):
             model=settings.openai_model,
         )
     return None
+
+
+def require_profile(purpose: Use):
+    profile = resolve(purpose)
+    if profile is None:
+        raise ModelRequired(purpose)
+    return profile
 
 
 def account_data():

@@ -115,6 +115,16 @@ def test_model_management_rejects_nonlocal_peer(profiles):
     assert client.get("/model-settings/export").status_code == 403
 
 
+def test_chatgpt_binding_without_authorization_requires_configuration(profiles):
+    profile_id = profiles.save_profile(profiles.ProfileInput(
+        name="ChatGPT", mode="chatgpt", model="fixture",
+    ))
+    with pytest.raises(profiles.ModelRequired):
+        profiles.require_profile("feynman")
+    profiles.save_account({"access_token": "fixture-access"})
+    assert profiles.require_profile("feynman")["id"] == profile_id
+
+
 def test_browser_login_refresh_and_codex_transport(profiles, monkeypatch):
     from app.services import chatgpt_login as login
     from app.services.model_connection import ModelConnection

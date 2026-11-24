@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
-import { localLookup, lookupQuestion } from "./lookup";
+import { lookupQuestion } from "./lookup";
 import Markdown from "react-markdown";
 import gfm from "remark-gfm";
 import math from "remark-math";
@@ -21,17 +21,16 @@ import {
   sessionHistory,
   setPersona,
   refreshMemory,
+  type TeachingPurpose,
 } from "./api";
 import {
   CourseCitation,
-  opening,
   Message,
   Session,
   Space,
   mean,
   roles,
   status,
-  uid,
 } from "./model";
 
 function CourseText({ text }: { text: string }) {
@@ -86,6 +85,8 @@ export default function Workbench({
   choose,
   graph,
   report,
+  canLearn,
+  modelRequired,
 }: {
   online: boolean;
   space: Space;
@@ -94,6 +95,8 @@ export default function Workbench({
   choose: () => void;
   graph: () => void;
   report: (id: string) => void;
+  canLearn: (purpose: TeachingPurpose) => Promise<boolean>;
+  modelRequired: (error: unknown) => boolean;
 }) {
   const c = space.courses.find((x) => x.id === session.doc)!,
     n = c.nodes.find((x) => x.id === session.focus) || c.nodes[0];
@@ -162,22 +165,16 @@ export default function Workbench({
     loadingHistory ||
     historyError;
   async function changeRole(role: string) {
-    if (locked || (online && pending.some(Boolean))) return;
-    if (online) {
-      setChangingRole(true);
-      try {
-        await setPersona(session.id, role);
-        patch({ role });
-      } catch (e) {
-        setNotice((e as Error).message);
-      } finally {
-        setChangingRole(false);
-      }
-    } else
-      patch({
-        role,
-        left: [...session.left, { who: "系统", text: "听众已切换为" + role }],
-      });
+    if (!online || locked || pending.some(Boolean)) return;
+    setChangingRole(true);
+    try {
+      await setPersona(session.id, role);
+      patch({ role });
+    } catch (e) {
+      setNotice((e as Error).message);
+    } finally {
+      setChangingRole(false);
+    }
   }
   async function onlineSend(side: number, text: string) {
     if (locked || streams.current[side]) return;
@@ -219,7 +216,7 @@ export default function Workbench({
         }),
       }));
     } catch (e) {
-      if (ctrl.signal.aborted) return;
+      if (ctrl.signal.aborted || modelRequired(e)) return;
       const reason = (e as Error).message;
       try {
         const [history, memory] = await Promise.all([
@@ -267,159 +264,21 @@ export default function Workbench({
       if (!ctrl.signal.aborted) show("");
     }
   }
-  function send(side: number, text: string, sourceId?: string) {
+  function send(side: number, text: string) {
     text = text.trim();
     if (!text || locked) return;
-    if (online) {
-      void onlineSend(side, text);
-      return;
-    }
-    setNotice("");
-    const match =
-      c.nodes.find((x) => x.id === sourceId) ||
-      c.nodes.find((x) => text.includes(x.name));
-    const topic = match || n;
-    let reply: Message;
-    let updated = topic;
-    let logs = space.logs;
-    if (side === 1) {
-      reply = localLookup(c, text, sourceId);
-      if (reply.node)
-        logs = [
-          ...logs,
-          {
-            id: uid(),
-            doc: c.id,
-            node: reply.node,
-            detail: "查证：" + text,
-            resolved: false,
-            session: session.id,
-          },
-        ];
-    } else {
-      const good = text.length >= 22 && !/不会|卡壳|不懂/.test(text) && !!match;
-      const streak = good ? topic.streak + 1 : 0,
-        score = good
-          ? Math.min(100, Math.max(streak >= 2 ? 80 : 0, topic.score + 12))
-          : topic.score;
-      updated = { ...topic, streak, score };
-      reply = {
-        who: "听众",
-        node: topic.id,
-        text: good
-          ? opening(topic.name, session.role) +
-            " 如果改变一个条件，结果还一样吗？"
-          : /不会|卡壳/.test(text)
-            ? "我们先看一段原文。查证「" +
-              topic.name +
-              "」后，试着用自己的话再讲一次。"
-            : "回到「" + topic.name + "」，你能具体说明它在什么条件下成立吗？",
-        badge:
-          topic.name +
-          " · " +
-          (good ? "演示评估 +" + (score - topic.score) : "待补漏 · 适用条件") +
-          " · " +
-          score +
-          "%",
-      };
-      if (streak >= 2)
-        logs = logs.map((w) =>
-          w.node === topic.id ? { ...w, resolved: true } : w,
-        );
-      if (!good)
-        logs = [
-          ...logs,
-          {
-            id: uid(),
-            doc: c.id,
-            node: topic.id,
-            detail: topic.name + " · 需补充解释或适用条件",
-            resolved: false,
-            session: session.id,
-          },
-        ];
-    }
-    const key = side === 0 ? "left" : "right",
-      drafts: [string, string] = [...session.drafts];
-    drafts[side] = "";
-    save((s) => ({
-      ...s,
-      logs,
-      courses: s.courses.map((d) =>
-        d.id === c.id
-          ? {
-              ...d,
-              nodes: d.nodes.map((x) => (x.id === updated.id ? updated : x)),
-            }
-          : d,
-      ),
-      sessions: s.sessions.map((v) =>
-        v.id === session.id
-          ? {
-              ...v,
-              focus: topic.id,
-              drafts,
-              [key]: [...v[key], { who: "我", text }, reply],
-            }
-          : v,
-      ),
-    }));
+    if (online) void onlineSend(side, text);
+    else void canLearn(side ? "encyclopedia" : "feynman");
   }
   async function finish() {
-    const turns = session.left.filter((m) => m.who === "我");
-    if (turns.length < 2) {
-      setNotice("至少完成两轮讲解后即可生成报告。");
-      return;
-    }
-    const weaknesses = [
-      ...new Set(
-        space.logs
-          .filter((w) => w.session === session.id && !w.resolved)
-          .map((w) => w.detail),
-      ),
-    ];
-    const answers = session.left.filter((m) => m.badge);
-    const scores = [
-      Math.round(
-        (new Set(answers.map((m) => m.node)).size / c.nodes.length) * 100,
-      ),
-      Math.round(
-        (answers.filter((m) => m.badge?.includes("+")).length / turns.length) *
-          100,
-      ),
-      Math.round(
-        (turns.filter((m) => /例如|比如|就像|好比/.test(m.text)).length /
-          turns.length) *
-          100,
-      ),
-      Math.round(
-        (turns.filter((m) => /因为|所以|如果|因此|条件/.test(m.text)).length /
-          turns.length) *
-          100,
-      ),
-    ];
     setFinishing(true);
     try {
-      const r = online
-        ? await remoteReport(session.id, c.id, c.title)
-        : {
-            id: session.id,
-            doc: c.id,
-            title: c.title,
-            date: new Date().toISOString(),
-            scores,
-            weaknesses,
-            comment:
-              "你完成了 " +
-              turns.length +
-              " 轮讲解。" +
-              (weaknesses.length
-                ? "接下来挑一个刚才需要查证的地方，把原理和适用条件连起来讲一遍。"
-                : "试着换一个听众，用新例子说明同一个道理。"),
-            plan: weaknesses.length
-              ? weaknesses.map((t) => "结合原文重新讲解：" + t)
-              : ["用一个新的例子复讲本轮知识点。"],
-          };
+      if (!(await canLearn("report"))) return;
+      if (session.left.filter((m) => m.who === "我").length < 2) {
+        setNotice("至少完成两轮讲解后即可生成报告。");
+        return;
+      }
+      const r = await remoteReport(session.id, c.id, c.title);
       save((s) => ({
         ...s,
         sessions: s.sessions.map((v) =>
@@ -429,7 +288,7 @@ export default function Workbench({
       }));
       report(r.id);
     } catch (e) {
-      setNotice((e as Error).message);
+      if (!modelRequired(e)) setNotice((e as Error).message);
     } finally {
       setFinishing(false);
     }
@@ -527,7 +386,7 @@ export default function Workbench({
                     <select
                       aria-label="听众角色"
                       value={session.role}
-                      disabled={locked || (online && pending.some(Boolean))}
+                      disabled={!online || locked || pending.some(Boolean)}
                       onChange={(e) => void changeRole(e.target.value)}
                     >
                       {roles.map((r) => (
@@ -581,7 +440,7 @@ export default function Workbench({
                       {i
                         ? "输入概念名称，或从左窗带入一个追问。"
                         : n
-                          ? opening(n.name, session.role)
+                          ? "用自己的话讲解「" + n.name + "」。"
                           : "围绕当前资料进行讲解。"}
                     </p>
                   </div>
@@ -641,7 +500,7 @@ export default function Workbench({
                         className="quiet"
                         disabled={locked || !!pending[1]}
                         onClick={() => {
-                          send(1, lookupQuestion(session.left, j, c), m.node);
+                          send(1, lookupQuestion(session.left, j, c));
                           focus(1);
                         }}
                       >

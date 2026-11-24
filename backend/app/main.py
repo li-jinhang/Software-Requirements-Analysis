@@ -1,7 +1,7 @@
 from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
-from app.services.model_profiles import ModelError
+from app.services.model_profiles import ModelError, ModelRequired
 from app.services.chatgpt_login import end_login
 from app.api.v1 import model_settings
 from fastapi.middleware.cors import CORSMiddleware
@@ -58,6 +58,14 @@ app.add_middleware(
 @app.exception_handler(ModelError)
 async def model_error(request, exc):
     return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+
+
+@app.exception_handler(ModelRequired)
+async def model_required(request, exc):
+    return JSONResponse(
+        status_code=exc.status_code,
+        content={"detail": {"code": "model_required", "purpose": exc.purpose, "message": str(exc)}},
+    )
 
 
 for router in (

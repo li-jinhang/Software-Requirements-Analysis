@@ -103,12 +103,17 @@ def logout():
 public_router = APIRouter(prefix="/model-settings", tags=["模型设置"])
 
 
+@public_router.get("/availability")
+def availability():
+    return {purpose: profiles.resolve(purpose) is not None for purpose in profiles.TEACHING_USES}
+
+
 @public_router.get("/active")
 def active(user=Depends(current_user)):
     result = {}
-    for purpose in ("extract", "feynman", "encyclopedia", "report"):
+    for purpose in profiles.TEACHING_USES:
         p = profiles.resolve(purpose)
-        result[purpose] = (p.get("name", "环境配置") + " · " + p["model"]) if p else "离线演示"
+        result[purpose] = (p.get("name", "环境配置") + " · " + p["model"]) if p else "未配置模型"
     return result
 
 

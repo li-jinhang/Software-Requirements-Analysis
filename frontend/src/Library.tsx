@@ -10,7 +10,7 @@ import {
   LibraryBig,
   UploadCloud,
 } from "lucide-react";
-import { Course, Space, archive, mean, parseFile, status } from "./model";
+import { Course, Space, archive, mean, status } from "./model";
 import {
   uploadRemote,
   syncNote,
@@ -18,6 +18,7 @@ import {
   retryRemote,
   exportMemory,
   refreshMemory,
+  type TeachingPurpose,
 } from "./api";
 import { Dialog, Diagram } from "./ui";
 type Props = {
@@ -25,8 +26,17 @@ type Props = {
   space: Space;
   save: (fn: (s: Space) => Space) => void;
   start: (c: Course) => void;
+  canLearn: (purpose: TeachingPurpose) => Promise<boolean>;
+  modelRequired: (error: unknown) => boolean;
 };
-export default function Library({ online, space, save, start }: Props) {
+export default function Library({
+  online,
+  space,
+  save,
+  start,
+  canLearn,
+  modelRequired,
+}: Props) {
   const [query, setQuery] = useState(""),
     [subject, setSubject] = useState(""),
     [upload, setUpload] = useState(false),
@@ -63,7 +73,7 @@ export default function Library({ online, space, save, start }: Props) {
     return () => ctrl.abort();
   }, [online, detail]);
   async function submit() {
-    if (!file || busy) return;
+    if (!online || !file || busy) return;
     setBusy(true);
     setError("");
     try {
@@ -72,10 +82,9 @@ export default function Library({ online, space, save, start }: Props) {
         file.size > 20 * 1024 * 1024
       )
         throw Error("请选择 20 MB 以内的 PDF、DOCX、MD 或 TXT 文件。");
-      const c =
-        online && failedId
-          ? await retryRemote(failedId)
-          : await (online ? uploadRemote : parseFile)(file, tag);
+      const c = failedId
+        ? await retryRemote(failedId)
+        : await uploadRemote(file, tag);
       setFailedId(undefined);
       save((s) => ({ ...s, courses: [c, ...s.courses] }));
       setUpload(false);
@@ -83,6 +92,7 @@ export default function Library({ online, space, save, start }: Props) {
       setFile(undefined);
       setTag("");
     } catch (e) {
+      if (modelRequired(e)) return;
       if (e instanceof ApiError) setFailedId(e.docId);
       setError((e as Error).message);
     } finally {
@@ -98,7 +108,8 @@ export default function Library({ online, space, save, start }: Props) {
         </div>
         <button
           className="primary"
-          onClick={() => {
+          onClick={async () => {
+            if (!(await canLearn("extract"))) return;
             setError("");
             setUpload(true);
           }}
@@ -195,7 +206,7 @@ export default function Library({ online, space, save, start }: Props) {
                             ),
                           }));
                         } catch (e) {
-                          setError((e as Error).message);
+                          if (!modelRequired(e)) setError((e as Error).message);
                         } finally {
                           setBusy(false);
                         }
@@ -263,11 +274,7 @@ export default function Library({ online, space, save, start }: Props) {
                 placeholder="选填，如数据结构"
               />
             </label>
-            <p className="meta">
-              {online
-                ? "上传后将等待服务端完成解析。"
-                : "本地演示按原文分段建立记忆档案。"}
-            </p>
+            <p className="meta">上传后由模型解析资料。</p>
             <p role="alert">{error}</p>
             <button className="primary" disabled={!file || busy}>
               {busy ? "正在解析…" : error ? "重新解析" : "解析资料"}
