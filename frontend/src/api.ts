@@ -27,9 +27,13 @@ export class ApiError extends Error {
     super(message);
   }
 }
-async function request(path: string, opts: RequestInit = {}) {
+async function request(
+  path: string,
+  opts: RequestInit = {},
+  useSession = true,
+) {
   const headers = new Headers(opts.headers);
-  if (token()) headers.set("Authorization", "Bearer " + token());
+  if (useSession && token()) headers.set("Authorization", "Bearer " + token());
   if (opts.body && !(opts.body instanceof FormData))
     headers.set("Content-Type", "application/json");
   const res = await fetch(base + "/api/v1" + path, { ...opts, headers });
@@ -38,6 +42,7 @@ async function request(path: string, opts: RequestInit = {}) {
     const detail = msg.detail;
     if (
       res.status === 401 &&
+      useSession &&
       !path.startsWith("/auth/login") &&
       headers.get("Authorization") === "Bearer " + token()
     ) {
@@ -63,7 +68,7 @@ const post = (body: unknown) => ({
 export async function signIn(
   username: string,
   password: string,
-  { nickname, requireAdmin = false }: { nickname?: string; requireAdmin?: boolean } = {},
+  nickname?: string,
 ) {
   if (nickname !== undefined)
     await request("/auth/register", post({ username, password, nickname }));
@@ -72,9 +77,6 @@ export async function signIn(
   ).json();
   if (!a.access_token) throw Error("登录响应缺少访问令牌。");
   const u = a.user || a;
-  if (requireAdmin && u.role !== "admin") {
-    throw Error("请使用服务端管理员账号登录。");
-  }
   token(a.access_token);
   return {
     id: "api:" + base + ":" + username,
@@ -580,35 +582,57 @@ export type ModelSettings = {
   chatgpt: { connected: boolean; pending: boolean; error: string };
 };
 const modelPath = "/model-settings";
+const localHosts = ["localhost", "127.0.0.1", "[::1]"];
+function isLocalModelService() {
+  try {
+    return (
+      connected &&
+      localHosts.includes(location.hostname) &&
+      localHosts.includes(new URL(base, location.href).hostname)
+    );
+  } catch {
+    return false;
+  }
+}
+export const localModelSettings = isLocalModelService();
+const modelRequest = (path: string, options?: RequestInit) =>
+  request(modelPath + path, options, false);
+async function modelJson<T>(path: string, options?: RequestInit): Promise<T> {
+  return (await modelRequest(path, options)).json();
+}
 export const modelSettingsApi = {
-  read: () => json<ModelSettings>(modelPath),
+  read: () => modelJson<ModelSettings>(""),
+  exportArchive: () => modelJson<unknown>("/export"),
+  importArchive: (archive: unknown) =>
+    modelJson<{ added: number; skipped: number; bindings_added: number }>(
+      "/import",
+      post(archive),
+    ),
   active: () =>
     json<Record<Exclude<ModelPurpose, "default">, string>>(
       modelPath + "/active",
     ),
   save: (p: ProfileDraft, id?: string) =>
-    json<{ id: string }>(modelPath + "/profiles" + (id ? "/" + id : ""), {
+    modelJson<{ id: string }>("/profiles" + (id ? "/" + id : ""), {
       ...post(p),
       method: id ? "PUT" : "POST",
     }),
-  remove: (id: string) =>
-    request(modelPath + "/profiles/" + id, { method: "DELETE" }),
+  remove: (id: string) => modelRequest("/profiles/" + id, { method: "DELETE" }),
   bind: (purpose: ModelPurpose, id: string) =>
-    request(modelPath + "/bindings/" + purpose, {
+    modelRequest("/bindings/" + purpose, {
       ...post({ profile_id: id || null }),
       method: "PUT",
     }),
   catalog: (p: ProfileDraft, id?: string) =>
-    json<string[]>(
-      modelPath + "/catalog",
+    modelJson<string[]>(
+      "/catalog",
       post({ ...p, model: p.model || "catalog", id }),
     ),
   test: (id: string) =>
-    json<{ latency_ms: number }>(modelPath + "/profiles/" + id + "/test", {
+    modelJson<{ latency_ms: number }>("/profiles/" + id + "/test", {
       method: "POST",
     }),
-  login: () =>
-    json<{ url: string }>(modelPath + "/chatgpt/login", { method: "POST" }),
-  cancel: () => request(modelPath + "/chatgpt/login", { method: "DELETE" }),
-  logout: () => request(modelPath + "/chatgpt/account", { method: "DELETE" }),
+  login: () => modelJson<{ url: string }>("/chatgpt/login", { method: "POST" }),
+  cancel: () => modelRequest("/chatgpt/login", { method: "DELETE" }),
+  logout: () => modelRequest("/chatgpt/account", { method: "DELETE" }),
 };

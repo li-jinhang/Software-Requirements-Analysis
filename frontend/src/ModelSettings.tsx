@@ -1,13 +1,15 @@
-import { useEffect, useId, useState, type ReactNode } from "react";
+import { useEffect, useId, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight, Folder } from "lucide-react";
 import {
   connected,
+  localModelSettings,
   modelSettingsApi as api,
   type ModelProfile,
   type ModelPurpose,
   type ModelSettings,
   type ProfileDraft,
 } from "./api";
+import { download } from "./model";
 import { Dialog } from "./ui";
 import "./settings.css";
 
@@ -310,18 +312,15 @@ function ChatGPTAccount({
 
 export default function Settings({
   online,
-  admin,
   close,
-  openAdminLogin,
 }: {
   online: boolean;
-  admin: boolean;
   close: () => void;
-  openAdminLogin: () => void;
 }) {
   const [category, setCategory] = useState<"models" | "teaching">("models");
   const [expanded, setExpanded] = useState(true);
   const profileListId = useId();
+  const archivePicker = useRef<HTMLInputElement>(null);
   const [settings, setSettings] = useState<ModelSettings>(),
     [active, setActive] = useState<Awaited<ReturnType<typeof api.active>>>(),
     [message, setMessage] = useState(""),
@@ -331,12 +330,12 @@ export default function Settings({
     [remove, setRemove] = useState<ModelProfile>(),
     [authUrl, setAuthUrl] = useState("");
   async function reload() {
-    if (admin) setSettings(await api.read());
-    else setActive(await api.active());
+    if (localModelSettings) setSettings(await api.read());
+    else if (online) setActive(await api.active());
   }
   useEffect(() => {
-    if (online) void reload().catch((e) => setError(e.message));
-  }, [online, admin]);
+    void reload().catch((e) => setError(e.message));
+  }, [online]);
   useEffect(() => {
     if (!settings?.chatgpt.pending) return;
     let alive = true;
@@ -371,12 +370,24 @@ export default function Settings({
       setBusy(false);
     }
   }
+  async function readArchive(file: File) {
+    const text = await file.text();
+    let archive: unknown;
+    try {
+      archive = JSON.parse(text.replace(/^\uFEFF/, ""));
+    } catch {
+      throw Error("文件不是有效的 JSON，请选择导出的模型配置文件。");
+    }
+    const { added, skipped, bindings_added } = await api.importArchive(archive);
+    setExpanded(true);
+    return `已导入 ${added} 个配置，保留 ${skipped} 个已有配置，补充 ${bindings_added} 项绑定。`;
+  }
 
   return (
     <Dialog title="设置" close={close} className="settings-dialog">
       <div className="settings-layout">
         <nav className="settings-nav" aria-label="设置栏目">
-          {online && admin && (
+          {localModelSettings && (
             <button
               type="button"
               aria-current={category === "teaching" ? "page" : undefined}
@@ -397,33 +408,73 @@ export default function Settings({
           className="settings-panel"
           aria-labelledby="settings-panel-title"
         >
-          <h3 id="settings-panel-title">
-            {category === "models" ? "模型配置" : "教学设置"}
-          </h3>
+          <div className="settings-panel-heading">
+            <h3 id="settings-panel-title">
+              {category === "models" ? "模型配置" : "教学设置"}
+            </h3>
+            {category === "models" && settings && (
+              <div className="tools">
+                <input
+                  ref={archivePicker}
+                  type="file"
+                  accept=".json,application/json"
+                  aria-label="选择模型配置文件"
+                  hidden
+                  onChange={(event) => {
+                    const file = event.currentTarget.files?.[0];
+                    event.currentTarget.value = "";
+                    if (file) void run(() => readArchive(file));
+                  }}
+                />
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() => archivePicker.current?.click()}
+                >
+                  导入配置
+                </button>
+                <button
+                  type="button"
+                  disabled={busy}
+                  onClick={() =>
+                    run(async () => {
+                      const archive = await api.exportArchive();
+                      download(
+                        "feynman-models.json",
+                        JSON.stringify(archive, null, 2),
+                        "application/json",
+                      );
+                    })
+                  }
+                >
+                  导出配置
+                </button>
+              </div>
+            )}
+          </div>
           {message && <p role="status">{message}</p>}
           {error && <p role="alert">{error}</p>}
-          {(!online || !admin) && (
+          {!localModelSettings && !online && (
             <div className="settings-empty">
-              <strong>{online ? "需要管理员权限" : "本地演示"}</strong>
-              <p>新增和编辑模型配置需要服务端管理员账号。</p>
-              {connected ? (
-                <button type="button" onClick={openAdminLogin}>
-                  {online ? "切换管理员账号" : "管理员登录"}
-                  <ChevronRight aria-hidden="true" />
-                </button>
-              ) : (
-                <p>
-                  双击 <code>run.bat</code> 或运行 <code>python dev.py</code>
-                  ，然后在服务端工作台登录。
-                </p>
-              )}
+              <strong>本机模型设置</strong>
+              <p>
+                {connected ? (
+                  "请在运行服务的电脑上打开本机工作台。"
+                ) : (
+                  <>
+                    双击 <code>run.bat</code> 或运行 <code>python dev.py</code>{" "}
+                    后打开本机工作台。
+                  </>
+                )}
+              </p>
             </div>
           )}
-          {!online ? null : category === "teaching" && settings ? (
+          {!localModelSettings && !online ? null : category === "teaching" &&
+            settings ? (
             <>
               <h4 className="settings-subtitle">应用绑定</h4>
               <p className="meta">
-                设置对服务端学习账号生效。相关课件片段和学习记录会发送给对应的模型服务。
+                本机教学服务使用这里的模型。相关课件片段和学习记录会发送给对应的模型服务。
               </p>
               <div className="settings-bindings">
                 {purposeKeys.map((k) => (
@@ -460,6 +511,9 @@ export default function Settings({
             </>
           ) : settings ? (
             <section className="model-group" aria-labelledby="language-models">
+              <p className="meta settings-archive-hint">
+                导入会合并方案和绑定。API Key 与 ChatGPT 授权仅保存在本机。
+              </p>
               <div className="model-group-heading">
                 <h4>
                   <button

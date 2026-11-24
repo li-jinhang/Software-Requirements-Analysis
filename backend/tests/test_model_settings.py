@@ -74,6 +74,47 @@ def test_bindings_key_redaction_and_provider_errors(profiles, monkeypatch):
     profiles.delete_profile(second)
 
 
+def test_model_archive_restores_portable_settings(profiles, monkeypatch, tmp_path):
+    profile_id = profiles.save_profile(profiles.ProfileInput(
+        name="课程模型", mode="api", model="local-teacher", base_url="http://localhost:11434/v1",
+        api_key="fixture-key",
+    ))
+    profiles.bind("report", profile_id)
+    profiles.save_account({"access_token": "fixture-token"})
+    archive = profiles.export_archive()
+    assert "fixture-" not in json.dumps(archive)
+
+    monkeypatch.setattr(profiles.settings, "data_dir", tmp_path / "new-computer")
+    restore = profiles.ModelArchive.model_validate(archive)
+    assert profiles.import_archive(restore) == {"added": 1, "skipped": 0, "bindings_added": 2}
+    assert profiles.export_archive() == archive
+    assert profiles.resolve("report")["api_key"] == ""
+    assert profiles.account_data() is None
+
+    local = profiles.ProfileInput(
+        name="本机已修改", mode="api", model="local-teacher", base_url="http://localhost:11434/v1",
+        api_key="local-only-key",
+    )
+    profiles.save_profile(local, profile_id)
+    other_id = profiles.save_profile(local.model_copy(update={"name": "本机报告模型"}))
+    profiles.bind("report", other_id)
+    assert profiles.import_archive(restore) == {"added": 0, "skipped": 1, "bindings_added": 0}
+    assert profiles.profile(profile_id)["name"] == local.name
+    assert profiles.profile(profile_id)["api_key"] == local.api_key
+    assert profiles.resolve("report")["id"] == other_id
+
+
+def test_model_management_rejects_nonlocal_peer(profiles):
+    from fastapi import FastAPI
+    from fastapi.testclient import TestClient
+    from app.api.v1.model_settings import router
+
+    app = FastAPI()
+    app.include_router(router)
+    client = TestClient(app, base_url="http://localhost", client=("192.0.2.1", 49152))
+    assert client.get("/model-settings/export").status_code == 403
+
+
 def test_browser_login_refresh_and_codex_transport(profiles, monkeypatch):
     from app.services import chatgpt_login as login
     from app.services.model_connection import ModelConnection

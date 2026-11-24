@@ -20,13 +20,12 @@ class ModelError(ValueError):
         self.status_code = status_code
 
 
-class ProfileInput(BaseModel):
+class ProfileConfig(BaseModel):
     model_config = ConfigDict(extra="forbid", str_strip_whitespace=True)
     name: str = Field(min_length=1, max_length=100)
     mode: Literal["api", "chatgpt"]
     model: str = Field(min_length=1, max_length=200)
     base_url: str = Field(default="", max_length=2000)
-    api_key: str | None = Field(default=None, max_length=8000)
 
     @model_validator(mode="after")
     def validate_endpoint(self):
@@ -43,8 +42,36 @@ class ProfileInput(BaseModel):
                 raise ValueError("Base URL 必须是不含凭据、查询或片段的 HTTP(S) 地址")
             if u.path.rstrip("/").endswith("/chat/completions"):
                 raise ValueError("请填写服务根地址，不包含 /chat/completions")
-            if self.api_key and any(ch in self.api_key for ch in "\r\n"):
-                raise ValueError("API Key 不应包含换行")
+        return self
+
+
+class ProfileInput(ProfileConfig):
+    api_key: str | None = Field(default=None, max_length=8000)
+
+    @model_validator(mode="after")
+    def validate_key(self):
+        if self.mode == "api" and self.api_key and any(ch in self.api_key for ch in "\r\n"):
+            raise ValueError("API Key 不应包含换行")
+        return self
+
+
+class PortableProfile(ProfileConfig):
+    id: str = Field(pattern=r"^[a-f0-9]{32}$")
+
+
+class ModelArchive(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    version: Literal[1]
+    profiles: list[PortableProfile]
+    bindings: dict[Use, str]
+
+    @model_validator(mode="after")
+    def validate_bindings(self):
+        ids = {profile.id for profile in self.profiles}
+        if len(ids) != len(self.profiles):
+            raise ValueError("模型配置 ID 重复")
+        if not ids.issuperset(self.bindings.values()):
+            raise ValueError("应用绑定指向文件中不存在的模型配置")
         return self
 
 
@@ -85,6 +112,39 @@ def dashboard():
             "environment_live": not settings.mock_llm
             and bool(settings.openai_api_key.get_secret_value()),
         }
+
+
+def export_archive():
+    with store() as db:
+        db.execute("BEGIN")
+        return {
+            "version": 1,
+            "profiles": [
+                dict(row)
+                for row in db.execute("SELECT id,name,mode,model,base_url FROM profiles ORDER BY rowid")
+            ],
+            "bindings": dict(db.execute("SELECT purpose,profile FROM bindings")),
+        }
+
+
+def import_archive(archive: ModelArchive):
+    with store() as db:
+        db.execute("BEGIN IMMEDIATE")
+        added = 0
+        for profile in archive.profiles:
+            url = profile.base_url.rstrip("/") if profile.mode == "api" else ""
+            added += db.execute(
+                """INSERT INTO profiles(id,name,mode,model,base_url,api_key) VALUES(?,?,?,?,?,'')
+                ON CONFLICT(id) DO NOTHING""",
+                (profile.id, profile.name, profile.mode, profile.model, url),
+            ).rowcount
+        bound = 0
+        for purpose, profile_id in archive.bindings.items():
+            bound += db.execute(
+                "INSERT INTO bindings VALUES(?,?) ON CONFLICT(purpose) DO NOTHING",
+                (purpose, profile_id),
+            ).rowcount
+        return {"added": added, "skipped": len(archive.profiles) - added, "bindings_added": bound}
 
 
 def profile(id):

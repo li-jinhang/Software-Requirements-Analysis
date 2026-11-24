@@ -28,8 +28,20 @@ def button(page, name):
     return page.get_by_role("button", name=name, exact=True)
 
 
-def check_model_settings_entry(browser):
+def check_local_model_settings(browser):
     root = os.environ.get("FM_FRONTEND", "http://127.0.0.1:5173")
+    profile_id = uuid4().hex
+    archive = {
+        "version": 1,
+        "profiles": [{
+            "id": profile_id,
+            "name": "迁移验证-" + profile_id[:8],
+            "mode": "chatgpt",
+            "model": "fixture-model",
+            "base_url": "",
+        }],
+        "bindings": {},
+    }
     for online in (False, True):
         page = browser.new_page()
         try:
@@ -38,23 +50,28 @@ def check_model_settings_entry(browser):
                 login(page, "student")
             button(page, "设置").click()
             settings = page.get_by_role("dialog", name="设置", exact=True)
-            entry = button(settings, "切换管理员账号" if online else "管理员登录")
-            expect(entry).to_be_visible()
-            entry.click()
-            auth = page.get_by_role("dialog", name="管理员登录", exact=True)
-            submit_login(auth, "student")
-            expect(auth.get_by_role("alert")).to_contain_text("服务端管理员账号")
-            button(auth, "关闭").click()
-            expect(entry).to_be_focused()
-            entry.click()
-            submit_login(auth, "admin")
-            expect(auth).to_be_hidden()
-            expect(button(settings, "新建配置")).to_be_visible()
             button(settings, "新建配置").click()
-            expect(page.get_by_role("dialog", name="新建配置", exact=True)).to_be_visible()
+            editor = page.get_by_role("dialog", name="新建配置", exact=True)
+            expect(editor).to_be_visible()
+            button(editor, "关闭").click()
+            with page.expect_file_chooser() as chooser:
+                button(settings, "导入配置").click()
+            chooser.value.set_files({
+                "name": "models.json", "mimeType": "application/json",
+                "buffer": json.dumps(archive, ensure_ascii=False).encode("utf-8"),
+            })
+            expect(settings.get_by_role("status")).to_contain_text("已导入 1 个配置")
+            with page.expect_download() as download:
+                button(settings, "导出配置").click()
+            backup = json.loads(download.value.path().read_bytes())
+            assert archive["profiles"][0] in backup["profiles"]
+            card = settings.get_by_role("article").filter(has_text=archive["profiles"][0]["name"])
+            button(card, "删除").click()
+            button(page.get_by_role("dialog", name="删除模型配置"), "确认删除").click()
+            expect(card).to_have_count(0)
         finally:
             page.close()
-    print("PASS model settings entry from demo and student sessions")
+    print("PASS local model settings import and export from demo and student sessions")
 
 
 def run(browser):
@@ -225,7 +242,7 @@ if __name__ == "__main__":
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel=os.environ.get("FM_BROWSER", "msedge"))
         try:
-            check_model_settings_entry(browser)
+            check_local_model_settings(browser)
             run(browser)
         finally:
             browser.close()

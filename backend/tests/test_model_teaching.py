@@ -21,7 +21,9 @@ def test_model_processing_and_binding_isolation(server):
         },
     )
     assert preflight.is_success and "PUT" in preflight.headers["access-control-allow-methods"]
-    assert api.get(root, headers=student).status_code == 403
+    assert api.get(root).status_code == 200
+    assert api.get(root, headers={"Origin": "https://outside.example"}).status_code == 403
+    assert api.get(root, headers={"Host": "outside.example"}).status_code == 403
     assert api.get(root + "/active", headers=student).status_code == 200
     calls = []
 
@@ -107,17 +109,23 @@ def test_model_processing_and_binding_isolation(server):
             "api_key": "sentinel-test-value",
             "base_url": f"http://127.0.0.1:{provider.server_port}/v1",
         }
-        first = api.post(root + "/profiles", headers=admin, json=profile).json()["id"]
+        first = api.post(root + "/profiles", json=profile).json()["id"]
         second = api.post(
-            root + "/profiles", headers=admin, json={**profile, "model": "test-b"}
+            root + "/profiles", json={**profile, "model": "test-b"}
         ).json()["id"]
         assert (
             api.put(
-                root + "/bindings/report", headers=admin, json={"profile_id": second}
+                root + "/bindings/report", json={"profile_id": second}
             ).status_code
             == 204
         )
-        assert api.get(root, headers=admin).json()["bindings"]["default"] == first
+        exported = api.get(root + "/export")
+        assert exported.json()["bindings"] == {"default": first, "report": second}
+        assert api.post(root + "/import", json=exported.json()).json() == {
+            "added": 0, "skipped": 2, "bindings_added": 0
+        }
+        assert api.post(root + "/import", json={**exported.json(), "bindings": {"default": "unknown"}}).status_code == 422
+        assert b"sentinel-test-value" not in exported.content
         material = "损失函数度量预测误差。梯度指示局部上升方向。学习率决定步长并影响收敛。正则化有助于泛化。"
         doc = api.post(
             "/api/v1/documents/upload",

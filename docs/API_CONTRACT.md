@@ -145,11 +145,13 @@ async function streamTurn(url, accessToken, content, onEvent) {
 
 ### 模型连接和应用绑定
 
-以下路径相对 `/api/v1/model-settings`。普通服务端账号可读取 `GET /active` 查看各教学环节的实际模型名称，其余接口需要管理员 JWT。浏览器接收方案 ID、模型名、连接方式及是否已保存密钥。
+以下路径相对 `/api/v1/model-settings`。本机回环连接可直接使用模型管理接口。来自浏览器的跨端口请求须使用受信任的本机 Origin。普通服务端账号可读取 `GET /active` 查看各教学环节的实际模型名称。浏览器接收方案 ID、模型名、连接方式及是否已保存密钥。
 
 | 方法与路径 | 行为 |
 | --- | --- |
 | GET 根路径 | 返回 profiles、bindings、environment_live 和 ChatGPT 授权状态 |
+| GET /export | 返回版本为 1 的 JSON，包含 profiles 和 bindings。API Key 与 ChatGPT 授权保存在本机 |
+| POST /import | 校验并合并导出的 JSON。保留已有 ID 和绑定，返回 added、skipped、bindings_added |
 | POST /profiles，PUT /profiles/{id} | 保存 name、mode（api / chatgpt）、model、base_url、可选 api_key。编辑时省略 api_key 沿用原地址的密钥，空字符串清除密钥 |
 | POST /catalog，GET /profiles/{id}/models | 从草稿连接或已保存方案获取模型 ID 列表；草稿可带原方案 id |
 | POST /profiles/{id}/test | 实际请求模型，返回 latency_ms |

@@ -79,8 +79,17 @@ dialog.settings-dialog {
   scrollbar-gutter: stable;
 }
 
-.settings-panel h3 {
-  margin: 0 0 18px;
+.settings-panel-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 18px;
+}
+
+.settings-panel-heading h3 {
+  margin: 0;
   font-size: 24px;
   letter-spacing: -0.025em;
 }
@@ -102,8 +111,8 @@ dialog.settings-dialog {
   margin: 4px 0 10px;
 }
 
-.settings-empty + .settings-subtitle {
-  margin-top: 20px;
+.settings-archive-hint {
+  margin: 0 0 12px;
 }
 
 .settings-bindings {
