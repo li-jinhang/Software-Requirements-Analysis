@@ -1,12 +1,9 @@
 from app.schemas.responses import StatsOut
-import os
-import sqlite3
 import tempfile
 from pathlib import Path
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import FileResponse, JSONResponse
 from fastapi.encoders import jsonable_encoder
-from starlette.background import BackgroundTask
 from sqlalchemy import select, func, or_, cast, String
 from app.core.security import admin
 from app.db.database import get_db, db_path
@@ -14,27 +11,16 @@ from app.db.models import (
     User,
     Document,
     KnowledgeNode,
-    KnowledgeEdge,
     Session,
-    Message,
     WeaknessLog,
     DiagnosticReport,
     public,
 )
 from app.services.memory_service import delete_document
+from app.services import data_export
 
 router = APIRouter(prefix="/admin", tags=["后台"], dependencies=[Depends(admin)])
 TABLES = {m.__tablename__: m for m in (Document, KnowledgeNode, WeaknessLog, DiagnosticReport)}
-ALL = (
-    User,
-    Document,
-    KnowledgeNode,
-    KnowledgeEdge,
-    Session,
-    Message,
-    WeaknessLog,
-    DiagnosticReport,
-)
 
 
 @router.get("/stats", response_model=StatsOut)
@@ -119,35 +105,33 @@ def remove(table_name: str, id: int, db=Depends(get_db)):
         db.commit()
 
 
+def export_copy():
+    with tempfile.TemporaryDirectory(prefix="feynman-export-") as directory:
+        path = Path(directory) / "feynman.db"
+        data_export.write_sanitized_db(db_path, path)
+        yield path
+
+
 @router.get("/export/json")
-def snapshot(db=Depends(get_db)):
-    # SQLite legacy transaction mode needs explicit BEGIN for a multi-SELECT snapshot.
-    db.connection().exec_driver_sql("BEGIN")
-    data = {m.__tablename__: [public(r) for r in db.scalars(select(m).order_by(m.id))] for m in ALL}
-    for user in data["users"]:
-        user["username"] = f"user-{user['id']}"
-        user["nickname"] = f"用户 {user['id']}"
+def snapshot(path=Depends(export_copy, scope="request")):
+    with data_export.snapshot_session(path) as db:
+        data = data_export.snapshot_json(db)
     return JSONResponse(
         jsonable_encoder(data),
         headers={"Content-Disposition": 'attachment; filename="feynman.json"'},
     )
 
 
-@router.get("/export/db")
-def download():
-    fd, name = tempfile.mkstemp(suffix=".db")
-    os.close(fd)
-    try:
-        from contextlib import closing
-
-        with closing(sqlite3.connect(db_path)) as source, closing(sqlite3.connect(name)) as dest:
-            source.backup(dest)
-        return FileResponse(
-            name,
-            filename="feynman.db",
-            media_type="application/vnd.sqlite3",
-            background=BackgroundTask(Path(name).unlink, missing_ok=True),
-        )
-    except Exception:
-        Path(name).unlink(missing_ok=True)
-        raise
+@router.get(
+    "/export/db",
+    response_class=FileResponse,
+    responses={
+        200: {
+            "content": {
+                "application/vnd.sqlite3": {"schema": {"type": "string", "format": "binary"}}
+            }
+        }
+    },
+)
+def download(path=Depends(export_copy, scope="request")):
+    return FileResponse(path, filename="feynman.db", media_type="application/vnd.sqlite3")

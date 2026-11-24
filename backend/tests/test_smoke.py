@@ -93,6 +93,10 @@ def test_demo_and_access(server):
         1,
     ]
     ctx = api.get("/api/v1/documents/1/memory", headers=s).json()
+    path = "/api/v1/documents/1/learning-path"
+    assert api.get(path).status_code == 401
+    assert api.get(path, headers=a).status_code == 404
+    assert api.get(path, headers=s).json() == ctx["recommended_learning_path"]
     assert len(ctx["edges"]) == 9 and len(ctx["weaknesses"]) == 3
     assert {n["status"] for n in ctx["nodes"]} == {"mastered", "learning", "weak"}
     assert api.get("/api/v1/sessions/1/report", headers=s).json()["clarity_score"] == 91
@@ -160,7 +164,13 @@ def test_upload_teach_lookup_report_export(server, tmp_path):
         == "复习例题"
     )
     archive = api.get(url + "/memory/export?format=json", headers=h).json()
-    assert list(archive) == ["核心概念树", "概念关联说明", "已掌握清单", "薄弱点警示"]
+    assert list(archive) == [
+        "核心概念树",
+        "概念关联说明",
+        "已掌握清单",
+        "薄弱点警示",
+        "推荐学习与复讲路径",
+    ]
     md = api.get(url + "/memory/export?format=md", headers=h).text
     assert all("## " + key in md for key in archive) and "复习例题" in md
 

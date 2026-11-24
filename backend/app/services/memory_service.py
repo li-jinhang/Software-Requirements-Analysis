@@ -1,13 +1,24 @@
 """Shared SQL + RAG services. Mutating agent methods flush; caller owns the transaction."""
 
 import re
+import json
+import heapq
+from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 from collections import defaultdict
 from tempfile import NamedTemporaryFile
 from app.core.config import settings
 from sqlalchemy import select, update, func, case
 
-from app.db.models import Document, KnowledgeNode, KnowledgeEdge, Session, WeaknessLog, public
+from app.db.models import (
+    Document,
+    KnowledgeNode,
+    KnowledgeEdge,
+    Message,
+    Session,
+    WeaknessLog,
+    public,
+)
 from app.services import doc_parser, rag_store, llm_client
 
 
@@ -67,6 +78,149 @@ def search_rag(doc_id, query, top_k=4):
     return rag_store.search(doc_id, query.strip(), top_k) if query.strip() else []
 
 
+def _learning_path(db, doc_id, nodes, edges):
+    by_id = {n["id"]: n for n in nodes}
+    parents = {i: set() for i in by_id}
+    for e in edges:
+        src, dst = e["source_node_id"], e["target_node_id"]
+        if e["relation_type"] == "prerequisite" and src in by_id and dst in by_id:
+            parents[dst].add(src)
+    weak = dict(
+        db.execute(
+            select(WeaknessLog.node_id, func.count())
+            .join(Session)
+            .where(Session.doc_id == doc_id, WeaknessLog.is_resolved.is_(False))
+            .group_by(WeaknessLog.node_id)
+        ).all()
+    )
+
+    def priority(i):
+        n = by_id[i]
+        return (n["mastery_score"] >= 80, -weak.get(i, 0), -n["importance"], n["mastery_score"], i)
+
+    # Remove only edges on a proven cycle, retaining all inter-cycle dependencies.
+    deps = {i: p.copy() for i, p in parents.items()}
+    relaxed = set()
+    while True:
+        sorter = TopologicalSorter({i: sorted(p) for i, p in deps.items()})
+        try:
+            sorter.prepare()
+            break
+        except CycleError as exc:
+            cycle = exc.args[1][:-1]
+            first = min(cycle, key=priority)
+            deps[first].remove(cycle[cycle.index(first) - 1])
+            relaxed.add(first)
+    ready = [priority(i) for i in sorter.get_ready()]
+    heapq.heapify(ready)
+    result = []
+    while ready:
+        i = heapq.heappop(ready)[-1]
+        n = by_id[i]
+        reasons = []
+        if i in relaxed:
+            reasons.append("前置关系成环，作为环内复讲起点")
+        if weak.get(i):
+            reasons.append(f"有 {weak[i]} 条未解决薄弱记录")
+        if n["mastery_score"] < 80:
+            reasons.append(
+                "先巩固前置概念，再复讲本节" if parents[i] else "基础尚未掌握，建议优先讲解"
+            )
+        else:
+            reasons.append("已掌握，可用新例子快速复核")
+        result.append(
+            {k: n[k] for k in ("concept_name", "mastery_score", "status")}
+            | {
+                "node_id": i,
+                "prerequisites": [by_id[p]["concept_name"] for p in sorted(parents[i])],
+                "reason": "；".join(reasons),
+            }
+        )
+        sorter.done(i)
+        for item in sorter.get_ready():
+            heapq.heappush(ready, priority(item))
+    return result
+
+
+def compute_learning_path(db, doc_id):
+    nodes = [
+        public(n)
+        for n in db.scalars(
+            select(KnowledgeNode).where(KnowledgeNode.doc_id == doc_id).order_by(KnowledgeNode.id)
+        )
+    ]
+    edges = [
+        public(e) for e in db.scalars(select(KnowledgeEdge).where(KnowledgeEdge.doc_id == doc_id))
+    ]
+    return _learning_path(db, doc_id, nodes, edges)
+
+
+def _recent_lookups(db, session_id, nodes):
+    names = {n["id"]: n["concept_name"] for n in nodes}
+    scope = select(Message).where(
+        Message.session_id == session_id, Message.window_type == "encyclopedia"
+    )
+    questions = db.scalars(
+        scope.where(Message.sender_role == "user").order_by(Message.id.desc()).limit(5)
+    ).all()
+    logs = list(
+        db.scalars(
+            select(WeaknessLog)
+            .where(WeaknessLog.session_id == session_id, WeaknessLog.weakness_type == "need_lookup")
+            .order_by(WeaknessLog.id.desc())
+            .limit(5)
+        )
+    )
+    replies = {}
+    if questions:
+        current = None
+        for m in db.scalars(scope.where(Message.id >= questions[-1].id).order_by(Message.id)):
+            if m.sender_role == "user":
+                current = m.id
+            elif m.sender_role == "assistant" and current is not None:
+                replies[current] = m
+                current = None
+    records = []
+    for q in questions:
+        reply = replies.get(q.id)
+        log = next((w for w in logs if w.detail == q.content), None)
+        ids = list(json.loads(reply.related_node_ids)) if reply else []
+        if log:
+            ids.append(log.node_id)
+            logs.remove(log)
+        concepts = [names[i] for i in dict.fromkeys(ids) if i in names]
+        # SQLite timestamps can tie. For paired lookups use the log sequence
+        # as the tie breaker shared with log-only records, not an unrelated message ID.
+        stamp = max(q.created_at, log.created_at) if log else q.created_at
+        order = (log.id if log else 0, q.id)
+        records.append(
+            (
+                stamp,
+                order,
+                {
+                    "question": q.content,
+                    "related_concepts": concepts
+                    or [name for name in names.values() if name in q.content],
+                    "summary": " ".join(reply.content.split())[:180] if reply else "",
+                },
+            )
+        )
+    for w in logs:
+        records.append(
+            (
+                w.created_at,
+                (w.id, 0),
+                {
+                    "question": w.detail,
+                    "related_concepts": [names[w.node_id]] if w.node_id in names else [],
+                    "summary": w.detail[:180],
+                },
+            )
+        )
+    records.sort(key=lambda item: item[:2], reverse=True)
+    return [record for _, _, record in records[:5]]
+
+
 def get_memory_context(db, doc_id, session_id=None, *, concept=None, query=None):
     def rows(stmt):
         return [public(x) for x in db.scalars(stmt)]
@@ -91,6 +245,11 @@ def get_memory_context(db, doc_id, session_id=None, *, concept=None, query=None)
         ),
         "weaknesses": rows(weaknesses.order_by(WeaknessLog.id)),
     }
+    context["recommended_learning_path"] = _learning_path(
+        db, doc_id, context["nodes"], context["edges"]
+    )
+    if session_id is not None:
+        context["recent_encyclopedia_lookups"] = _recent_lookups(db, session_id, context["nodes"])
 
     if concept is not None or query:
 
@@ -183,6 +342,7 @@ def export_memory_json(db, doc_id):
             "知识点": [n for n in ctx["nodes"] if n["status"] == "weak"],
             "未解决记录": ctx["weaknesses"],
         },
+        "推荐学习与复讲路径": ctx["recommended_learning_path"],
     }
 
 
@@ -204,13 +364,17 @@ def export_memory_markdown(db, doc_id):
         [n["concept_name"] for n in warnings["知识点"]]
         + [w["detail"] for w in warnings["未解决记录"]],
     ]
-    return (
-        "\n\n".join(
-            "## " + title + "\n\n" + "\n".join("- " + item for item in (items or ["暂无"]))
-            for title, items in zip(data, lists)
-        )
-        + "\n"
-    )
+    sections = [
+        "## " + title + "\n\n" + "\n".join("- " + item for item in (items or ["暂无"]))
+        for title, items in zip(data, lists)
+    ]
+    steps = [
+        f"{i}. {n['concept_name']}（{n['mastery_score']} 分）"
+        f" · 前置：{'、'.join(n['prerequisites']) or '无'}。{n['reason']}。"
+        for i, n in enumerate(data["推荐学习与复讲路径"], 1)
+    ]
+    sections.append("## 推荐学习与复讲路径\n\n" + "\n".join(steps or ["暂无"]))
+    return "\n\n".join(sections) + "\n"
 
 
 def _finish_delete(marker, doc_id, filename):

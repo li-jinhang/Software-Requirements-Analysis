@@ -1,4 +1,4 @@
-from app.schemas.responses import DocumentOut, NodeOut, GraphOut, ContextOut
+from app.schemas.responses import DocumentOut, NodeOut, GraphOut, ContextOut, LearningStep
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -130,3 +130,9 @@ def export(
 def graph(id: int, db=Depends(get_db), user=Depends(current_user)):
     ctx = archive(id, db, user)
     return {"nodes": ctx["nodes"], "edges": ctx["edges"]}
+
+
+@router.get("/{doc_id}/learning-path", response_model=list[LearningStep])
+def learning_path(doc_id: int, db=Depends(get_db), user=Depends(current_user)):
+    owned(db, Document, doc_id, user)
+    return memory.compute_learning_path(db, doc_id)

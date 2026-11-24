@@ -55,7 +55,24 @@ class WeaknessOut(BaseModel):
     created_at: datetime
 
 
+class LearningStep(BaseModel):
+    node_id: int
+    concept_name: str
+    mastery_score: int
+    status: str
+    prerequisites: list[str]
+    reason: str
+
+
+class RecentLookup(BaseModel):
+    question: str
+    related_concepts: list[str]
+    summary: str
+
+
 class ContextOut(GraphOut):
+    recommended_learning_path: list[LearningStep] = []
+    recent_encyclopedia_lookups: list[RecentLookup] = []
     matched_node_ids: list[int] = []
     prerequisites: list[NodeOut] = []
     historical_weaknesses: list[WeaknessOut] = []
