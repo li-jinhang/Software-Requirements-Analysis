@@ -14,7 +14,7 @@ npm.cmd --prefix frontend ci
 
 ## 一键联调
 
-Windows 完成首次安装后，双击仓库根目录的 [run.bat](run.bat) 即可同时启动前端和后端。也可以在终端运行：
+Windows 完成首次安装后，双击仓库根目录的 [run.bat](run.bat) 即可同时启动前端和后端。若旧虚拟环境中的 LangGraph 无法导入，启动器会先按 `backend/requirements.txt` 同步后端依赖。也可以在终端运行：
 
 ~~~powershell
 python dev.py
@@ -23,6 +23,8 @@ python dev.py
 打开 [学习工作台](http://127.0.0.1:5173) 和 [Swagger](http://127.0.0.1:18080/docs)。启动器为 Vite 设置 VITE_BACKEND_URL，Ctrl+C 同时结束两个进程。默认前端 5173、后端 18080，可用 `--frontend-port` 和 `--backend-port` 调整。首次启动自动建立演示库；已有数据库会补上知识点要点及会话目标节点字段。开始教学前请先配置模型。
 
 从侧栏的**账号登录**进入服务端空间，用学生 `student / 123456` 或管理员 `admin / admin123` 登录；侧栏的快捷演示入口使用浏览器本地数据。可上传 [课程样例](backend/data/sample_docs/)，选择听众开始讲解，在右窗查证后回到左窗复讲。在线会话、引用、掌握度和报告从服务端恢复，未发送的草稿保存在当前浏览器。[前端联调清单与验收记录](docs/FRONTEND_SYNC_CHECKLIST.md)
+
+双窗输入框按 `Enter` 发送，按 `Shift+Enter` 换行。中文输入法正在选词时，回车只用于确认输入。
 
 需要分开调试时，在两个终端中从仓库根目录执行：
 

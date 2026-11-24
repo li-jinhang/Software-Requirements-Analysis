@@ -554,8 +554,16 @@ export default function Workbench({
                   }}
                   placeholder={i ? "向百科助教提问…" : "用自己的话讲一讲…"}
                   onKeyDown={(e) => {
-                    if ((e.ctrlKey || e.metaKey) && e.key === "Enter")
-                      send(i, session.drafts[i]);
+                    if (
+                      e.key !== "Enter" ||
+                      e.shiftKey ||
+                      e.altKey ||
+                      e.nativeEvent.isComposing ||
+                      e.nativeEvent.keyCode === 229
+                    )
+                      return;
+                    e.preventDefault();
+                    if (!e.repeat) send(i, session.drafts[i]);
                   }}
                 />
                 <button
