@@ -14,6 +14,8 @@ npm.cmd --prefix frontend ci
 
 ## 一键联调
 
+Windows 完成首次安装后，双击仓库根目录的 [run.bat](run.bat) 即可同时启动前端和后端。也可以在终端运行：
+
 ~~~powershell
 python dev.py
 ~~~
