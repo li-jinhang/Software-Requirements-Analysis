@@ -30,7 +30,7 @@ LESSON = [
     (
         "梯度下降",
         92,
-        "梯度下降按参数减去学习率乘梯度的规则迭代。把损失曲面想成山坡，梯度决定下坡方向，学习率控制每一步走多远。",
+        r"梯度下降按 $w_{t+1}=w_t-\eta\nabla L(w_t)$ 更新参数。把损失曲面想成山坡，梯度决定下坡方向，学习率控制每一步走多远。",
     ),
     (
         "学习率",
@@ -73,8 +73,17 @@ EDGES = [
 
 def seed(db):
     db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    path = settings.data_dir / "uploads" / "demo-course.md"
     if db.scalar(select(User.id).limit(1)):
-        db.rollback()
+        demo = db.scalar(select(Document).where(Document.file_path == str(path),
+                                                 Document.parse_status == "completed"))
+        if demo and path.is_file():
+            chunks = split_chunks(path.read_text(encoding="utf-8"))
+            if chunks and demo.chunk_count != len(chunks):
+                rag_store.remove(demo.id)
+                rag_store.index(demo.id, demo.title, chunks)
+                demo.chunk_count = len(chunks)
+        db.commit()
         return
     admin = User(
         username="admin",
@@ -92,7 +101,6 @@ def seed(db):
     db.flush()
     title = "机器学习基础：梯度下降与过拟合"
     text = "# " + title + "\n\n" + "\n\n".join("## " + n + "\n" + s for n, _, s in LESSON)
-    path = settings.data_dir / "uploads" / "demo-course.md"
     path.write_text(text, encoding="utf-8")
     chunks = split_chunks(text)
     doc = Document(

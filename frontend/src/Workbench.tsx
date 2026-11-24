@@ -1,4 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
+import { lookupQuestion } from "./lookup";
 import Markdown from "react-markdown";
 import gfm from "remark-gfm";
 import math from "remark-math";
@@ -14,18 +15,70 @@ import {
   PanelRightClose,
   PanelRightOpen,
 } from "lucide-react";
-import { changePersona, loadSession, openingRemote, stream, remoteReport } from "./api";
-import type { SessionSnapshot } from "./api";
 import {
-  opening,
+  stream,
+  remoteReport,
+  sessionHistory,
+  setPersona,
+  refreshMemory,
+  type TeachingPurpose,
+} from "./api";
+import {
+  CourseCitation,
   Message,
   Session,
   Space,
   mean,
   roles,
   status,
-  uid,
 } from "./model";
+
+type PendingTurn = { question: string; reply: string };
+
+function CourseText({ text }: { text: string }) {
+  return (
+    <Markdown remarkPlugins={[gfm, math]} rehypePlugins={[katex, highlight]}>
+      {text}
+    </Markdown>
+  );
+}
+
+function SourceCard({ hit }: { hit: CourseCitation }) {
+  const [expanded, setExpanded] = useState(false);
+  const long = hit.snippet.length > 200 || hit.snippet.split("\n").length > 7;
+  const preview = hit.snippet
+    .split(/\n\s*\n|(?<=[。！？])\s*/u)
+    .find((part) => part.trim() && !/^\s*#{1,6}\s+[^\n]*$/.test(part));
+  return (
+    <section className="source-card">
+      <header>
+        <strong>
+          {hit.doc_title} · 片段 #{hit.chunk_index}
+        </strong>
+        <small>
+          {hit.score === undefined
+            ? "本地课件"
+            : "相关度 " + hit.score.toFixed(2)}
+        </small>
+      </header>
+      <div className={long && !expanded ? "source-preview" : ""}>
+        <CourseText
+          text={long && !expanded ? preview || hit.snippet : hit.snippet}
+        />
+      </div>
+      {long && (
+        <button
+          type="button"
+          className="quiet"
+          aria-expanded={expanded}
+          onClick={() => setExpanded(!expanded)}
+        >
+          {expanded ? "收起片段" : "展开全文"}
+        </button>
+      )}
+    </section>
+  );
+}
 export default function Workbench({
   online,
   space,
@@ -34,6 +87,8 @@ export default function Workbench({
   choose,
   graph,
   report,
+  canLearn,
+  modelRequired,
 }: {
   online: boolean;
   space: Space;
@@ -42,56 +97,26 @@ export default function Workbench({
   choose: () => void;
   graph: () => void;
   report: (id: string) => void;
+  canLearn: (purpose: TeachingPurpose) => Promise<boolean>;
+  modelRequired: (error: unknown) => boolean;
 }) {
   const c = space.courses.find((x) => x.id === session.doc)!,
     n = c.nodes.find((x) => x.id === session.focus) || c.nodes[0];
+  function displayBadge(message: Message) {
+    const name =
+      !online && c.nodes.find((node) => node.id === message.node)?.name;
+    return name && message.badge && !message.badge.startsWith(name + " · ")
+      ? name + " · " + message.badge
+      : message.badge;
+  }
   const [ratio, setRatio] = useState(55),
     [collapsed, setCollapsed] = useState(false),
     [notice, setNotice] = useState(""),
     [mobile, setMobile] = useState(0);
-  const [pending, setPending] = useState(["", ""]),
-    [finishing, setFinishing] = useState(false),
-    [syncing, setSyncing] = useState(online),
-    [changing, setChanging] = useState(false),
-    [needsRecovery, setNeedsRecovery] = useState(false);
-  const current = useRef(session);
-  current.current = session;
-  const synchronizer = useRef<AbortController | null>(null);
-  const roleRequest = useRef<AbortController | null>(null);
+  const [pending, setPending] = useState<(PendingTurn | null)[]>([null, null]),
+    [finishing, setFinishing] = useState(false);
   const streams = useRef<(AbortController | null)[]>([null, null]);
-  useEffect(() => () => {
-    streams.current.forEach((ctrl) => ctrl?.abort());
-    synchronizer.current?.abort();
-    roleRequest.current?.abort();
-  }, []);
-  useEffect(() => {
-    if (!online) return;
-    const ctrl = new AbortController();
-    synchronizer.current = ctrl;
-    setSyncing(true);
-    async function restore() {
-      try {
-        let snapshot = await loadSession(current.current, c, ctrl.signal);
-        if (!snapshot.session.left.length && !snapshot.session.closed) {
-          let text = "";
-          await openingRemote(session.id, ctrl.signal, (event) => {
-            if (event.type === "token" && !ctrl.signal.aborted) {
-              text += event.delta;
-              setPending([text, ""]);
-            }
-          });
-          snapshot = await loadSession(current.current, c, ctrl.signal);
-        }
-        if (!ctrl.signal.aborted) applySnapshot(snapshot);
-      } catch (e) {
-        if (!ctrl.signal.aborted) { setNotice((e as Error).message); setNeedsRecovery(true); }
-      } finally {
-        if (!ctrl.signal.aborted) { setPending(["", ""]); setSyncing(false); }
-      }
-    }
-    void restore();
-    return () => ctrl.abort();
-  }, [online, session.id]);
+  useEffect(() => () => streams.current.forEach((ctrl) => ctrl?.abort()), []);
   const wrap = useRef<HTMLDivElement>(null),
     fields = useRef<(HTMLTextAreaElement | null)[]>([]),
     feeds = useRef<(HTMLDivElement | null)[]>([]);
@@ -111,273 +136,166 @@ export default function Workbench({
     setMobile(side);
     requestAnimationFrame(() => fields.current[side]?.focus());
   }
-  function applySnapshot(snapshot: SessionSnapshot, sent?: { side: number; text: string; after: number }) {
-    save((s) => ({
-      ...s,
-      courses: s.courses.map((d) => d.id === snapshot.course.id ? snapshot.course : d),
-      logs: [...s.logs.filter((w) => w.doc !== snapshot.course.id), ...snapshot.logs],
-      sessions: s.sessions.map((v) => {
-        if (v.id !== snapshot.session.id) return v;
-        const drafts: [string, string] = [...v.drafts];
-        if (sent) {
-          const rows = sent.side ? snapshot.session.right : snapshot.session.left;
-          const saved = rows.some((m) => m.who === "我" && Number(m.id) > sent.after && m.text === sent.text);
-          if (saved && drafts[sent.side].trim() === sent.text) drafts[sent.side] = "";
+  const [loadingHistory, setLoadingHistory] = useState(online),
+    [historyError, setHistoryError] = useState(false),
+    [changingRole, setChangingRole] = useState(false),
+    [reload, setReload] = useState(0);
+  useEffect(() => {
+    if (!online) return;
+    const ctrl = new AbortController();
+    setLoadingHistory(true);
+    setHistoryError(false);
+    sessionHistory(session.id, ctrl.signal)
+      .then(async (history) => {
+        if (ctrl.signal.aborted) return;
+        if (!history.left.length && !history.closed) {
+          const { reply } = await stream(session.id, 0, "", ctrl.signal, () => {}, true);
+          history.left.push(reply);
         }
-        return { ...snapshot.session, drafts };
-      }),
-    }));
-  }
-  async function recover() {
-    synchronizer.current?.abort();
-    const ctrl = new AbortController();
-    synchronizer.current = ctrl;
-    setSyncing(true);
+        if (!ctrl.signal.aborted) patch(history);
+      })
+      .catch((e) => {
+        if (!ctrl.signal.aborted) {
+          setNotice(e.message);
+          setHistoryError(true);
+        }
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) setLoadingHistory(false);
+      });
+    return () => ctrl.abort();
+  }, [online, session.id, reload]);
+  const locked =
+    session.closed ||
+    changingRole ||
+    finishing ||
+    loadingHistory ||
+    historyError;
+  async function changeRole(role: string) {
+    if (!online || locked || pending.some(Boolean)) return;
+    setChangingRole(true);
     try {
-      let snapshot = await loadSession(current.current, c, ctrl.signal);
-      if (!snapshot.session.left.length && !snapshot.session.closed) {
-        await openingRemote(session.id, ctrl.signal, () => {});
-        snapshot = await loadSession(current.current, c, ctrl.signal);
-      }
-      if (!ctrl.signal.aborted) { applySnapshot(snapshot); setNotice(""); setNeedsRecovery(false); }
+      await setPersona(session.id, role);
+      patch({ role, ...await sessionHistory(session.id) });
     } catch (e) {
-      if (!ctrl.signal.aborted) { setNotice((e as Error).message); setNeedsRecovery(true); }
+      setNotice((e as Error).message);
     } finally {
-      if (!ctrl.signal.aborted) setSyncing(false);
+      setChangingRole(false);
     }
   }
-  async function switchRole(role: string) {
-    if (!online) {
-      patch({ role, left: [...session.left, { who: "系统", text: "听众已切换为" + role }] });
-      return;
-    }
-    const ctrl = new AbortController();
-    roleRequest.current = ctrl;
-    setChanging(true);
-    try {
-      await changePersona(session.id, role, ctrl.signal);
-      const snapshot = await loadSession(current.current, c, ctrl.signal);
-      if (!ctrl.signal.aborted) { applySnapshot(snapshot); setNotice(""); }
-    } catch (e) {
-      if (!ctrl.signal.aborted) { setNotice((e as Error).message); setNeedsRecovery(true); }
-    } finally {
-      if (!ctrl.signal.aborted) setChanging(false);
-    }
-  }
-  async function onlineSend(side: number, text: string, sourceId?: string) {
-    if (streams.current[side] || syncing || changing || needsRecovery) return;
+  async function onlineSend(side: number, text: string) {
+    if (locked || streams.current[side]) return;
     const ctrl = new AbortController();
     streams.current[side] = ctrl;
-    const before = Math.max(0, ...(side ? session.right : session.left).map((m) => Number(m.id) || 0));
-    const sent = { side, text, after: before };
-    let answer = "";
-    const show = (value: string) =>
-      setPending((v) => v.map((old, i) => (i === side ? value : old)));
-    show("正在回复…");
+    const key = side ? "right" : "left";
+    const show = (turn: PendingTurn | null) =>
+      setPending((v) => v.map((old, i) => (side === i ? turn : old)));
+    show({ question: text, reply: "" });
     setNotice("");
     try {
-      await stream(session.id, side, text, ctrl.signal, (event) => {
-          if (event.type === "token") {
-            answer += event.delta;
-            show(answer || "正在回复…");
-          }
-          if (event.type === "memory_update") {
-            save((s) => ({ ...s, courses: s.courses.map((d) => d.id !== c.id ? d : {
-              ...d, nodes: d.nodes.map((n) => {
-                const update = event.updates.find((u) => String(u.node_id) === n.id);
-                return update ? { ...n, score: update.mastery_score, state: update.status } : n;
-              }),
-            }) }));
-          }
-        });
+      const { reply, scores } = await stream(
+        session.id,
+        side,
+        text,
+        ctrl.signal,
+        (reply) => show({ question: text, reply }),
+      );
       if (ctrl.signal.aborted) return;
-      const snapshot = await loadSession(current.current, c, ctrl.signal);
-      if (!ctrl.signal.aborted) applySnapshot(snapshot, sent);
+      save((s) => ({
+        ...s,
+        courses: s.courses.map((d) =>
+          d.id !== c.id
+            ? d
+            : {
+                ...d,
+                nodes: d.nodes.map((n) => ({ ...n, ...scores.get(n.id) })),
+              },
+        ),
+        sessions: s.sessions.map((v) => {
+          if (v.id !== session.id) return v;
+          const drafts: [string, string] = [...v.drafts];
+          if (drafts[side].trim() === text) drafts[side] = "";
+          return {
+            ...v,
+            drafts,
+            [key]: [...v[key], { who: "我", text }, reply],
+          };
+        }),
+      }));
     } catch (e) {
-      if (!ctrl.signal.aborted) {
-        save((s) => ({ ...s, sessions: s.sessions.map((v) => {
-          if (v.id !== session.id || v.drafts[side]) return v;
-          const drafts: [string, string] = [...v.drafts]; drafts[side] = text;
-          return { ...v, drafts };
-        }) }));
-        try {
-          const snapshot = await loadSession(current.current, c, ctrl.signal);
-          if (!ctrl.signal.aborted) { applySnapshot(snapshot, sent); setNeedsRecovery(false); }
-        } catch {
-          if (!ctrl.signal.aborted) setNeedsRecovery(true);
+      if (ctrl.signal.aborted || modelRequired(e)) return;
+      const reason = (e as Error).message;
+      try {
+        const [history, memory] = await Promise.all([
+          sessionHistory(session.id, ctrl.signal),
+          refreshMemory(c, ctrl.signal),
+        ]);
+        if (ctrl.signal.aborted) return;
+        const baseline =
+          session[key]
+            .filter((m) => m.who === "听众" || m.who === "百科")
+            .at(-1)?.id || 0;
+        const accepted = history[key].some(
+          (m) => m.id && m.id > baseline && m.who === "我" && m.text === text,
+        );
+        save((s) => ({
+          ...s,
+          courses: s.courses.map((d) =>
+            d.id === memory.course.id ? memory.course : d,
+          ),
+          logs: [
+            ...s.logs.filter((w) => w.doc !== memory.course.id),
+            ...memory.logs,
+          ],
+          sessions: s.sessions.map((v) => {
+            if (v.id !== session.id) return v;
+            const drafts: [string, string] = [...v.drafts];
+            if (accepted && drafts[side].trim() === text) drafts[side] = "";
+            else if (!accepted && !drafts[side]) drafts[side] = text;
+            return { ...v, [key]: history[key], drafts };
+          }),
+        }));
+        setNotice(
+          accepted
+            ? "已从服务端恢复本轮回复。"
+            : reason + " 已核对历史，请确认后再发送。",
+        );
+      } catch {
+        if (!ctrl.signal.aborted) {
+          setNotice(reason + " 请先刷新会话历史。");
+          setHistoryError(true);
         }
-        if (!ctrl.signal.aborted) setNotice((e as Error).message);
       }
     } finally {
       streams.current[side] = null;
-      if (!ctrl.signal.aborted) show("");
+      if (!ctrl.signal.aborted) show(null);
     }
   }
-  function send(side: number, text: string, sourceId?: string) {
+  function send(side: number, text: string) {
     text = text.trim();
-    if (!text || session.closed || syncing || changing || finishing || needsRecovery) return;
-    if (online) {
-      void onlineSend(side, text, sourceId);
-      return;
-    }
-    setNotice("");
-    const match =
-      c.nodes.find((x) => x.id === sourceId) ||
-      c.nodes.find((x) => text.includes(x.name));
-    const topic = match || n;
-    let reply: Message;
-    let updated = topic;
-    let logs = space.logs;
-    if (side === 1) {
-      reply = match
-        ? {
-            who: "百科",
-            text: topic.summary,
-            node: topic.id,
-            citation: c.title + " · 片段 #" + (c.nodes.indexOf(topic) + 1),
-          }
-        : {
-            who: "百科",
-            text:
-              "当前资料中未定位到直接对应的概念。可尝试输入知识点名称，例如「" +
-              n.name +
-              "」。",
-          };
-      if (match)
-        logs = [
-          ...logs,
-          {
-            id: uid(),
-            doc: c.id,
-            node: topic.id,
-            detail: "查证「" + topic.name + "」：" + text,
-            resolved: false,
-            session: session.id,
-          },
-        ];
-    } else {
-      const good = text.length >= 22 && !/不会|卡壳|不懂/.test(text) && !!match;
-      const streak = good ? topic.streak + 1 : 0,
-        score = good
-          ? Math.min(100, Math.max(streak >= 2 ? 80 : 0, topic.score + 12))
-          : topic.score;
-      updated = { ...topic, streak, score };
-      reply = {
-        who: "听众",
-        node: topic.id,
-        text: good
-          ? opening(topic.name, session.role) +
-            " 如果改变一个条件，结果还一样吗？"
-          : /不会|卡壳/.test(text)
-            ? "我们先看一段原文。查证「" +
-              topic.name +
-              "」后，试着用自己的话再讲一次。"
-            : "回到「" + topic.name + "」，你能具体说明它在什么条件下成立吗？",
-        badge: good
-          ? "演示评估 · +" + (score - topic.score)
-          : "待补漏 · 适用条件",
-      };
-      if (streak >= 2)
-        logs = logs.map((w) =>
-          w.node === topic.id ? { ...w, resolved: true } : w,
-        );
-      if (!good)
-        logs = [
-          ...logs,
-          {
-            id: uid(),
-            doc: c.id,
-            node: topic.id,
-            detail: topic.name + " · 需补充解释或适用条件",
-            resolved: false,
-            session: session.id,
-          },
-        ];
-    }
-    const key = side === 0 ? "left" : "right",
-      drafts: [string, string] = [...session.drafts];
-    drafts[side] = "";
-    save((s) => ({
-      ...s,
-      logs,
-      courses: s.courses.map((d) =>
-        d.id === c.id
-          ? {
-              ...d,
-              nodes: d.nodes.map((x) => (x.id === updated.id ? updated : x)),
-            }
-          : d,
-      ),
-      sessions: s.sessions.map((v) =>
-        v.id === session.id
-          ? {
-              ...v,
-              focus: topic.id,
-              drafts,
-              [key]: [...v[key], { who: "我", text }, reply],
-            }
-          : v,
-      ),
-    }));
+    if (!text || locked) return;
+    if (online) void onlineSend(side, text);
+    else void canLearn(side ? "encyclopedia" : "feynman");
   }
   async function finish() {
-    const turns = session.left.filter((m) => m.who === "我");
-    if (turns.length < 2) {
-      setNotice("至少完成两轮讲解后即可生成报告。");
-      return;
-    }
-    const weaknesses = [
-      ...new Set(
-        space.logs
-          .filter((w) => w.session === session.id && !w.resolved)
-          .map((w) => w.detail),
-      ),
-    ];
-    const answers = session.left.filter((m) => m.badge);
-    const scores = [
-      Math.round(
-        (new Set(answers.map((m) => m.node)).size / c.nodes.length) * 100,
-      ),
-      Math.round(
-        (answers.filter((m) => m.badge?.includes("+")).length / turns.length) *
-          100,
-      ),
-      Math.round(
-        (turns.filter((m) => /例如|比如|就像|好比/.test(m.text)).length /
-          turns.length) *
-          100,
-      ),
-      Math.round(
-        (turns.filter((m) => /因为|所以|如果|因此|条件/.test(m.text)).length /
-          turns.length) *
-          100,
-      ),
-    ];
     setFinishing(true);
     try {
-      const r = online
-        ? await remoteReport(session.id, c.id, c.title)
-        : {
-            id: session.id,
-            doc: c.id,
-            title: c.title,
-            date: new Date().toISOString(),
-            scores,
-            weaknesses,
-            plan: weaknesses.length
-              ? weaknesses.map((t) => "结合原文重新讲解：" + t)
-              : ["用一个新的例子复讲本轮知识点。"],
-          };
+      if (!(await canLearn("report"))) return;
+      if (session.left.filter((m) => m.who === "我").length < 2) {
+        setNotice("至少完成两轮讲解后即可生成报告。");
+        return;
+      }
+      const r = await remoteReport(session.id, c.id, c.title);
       save((s) => ({
         ...s,
         sessions: s.sessions.map((v) =>
           v.id === session.id ? { ...v, closed: true } : v,
         ),
-        reports: [r, ...s.reports.filter((v) => v.id !== r.id)],
+        reports: [r, ...s.reports],
       }));
       report(r.id);
     } catch (e) {
-      setNotice((e as Error).message);
+      if (!modelRequired(e)) setNotice((e as Error).message);
     } finally {
       setFinishing(false);
     }
@@ -397,16 +315,21 @@ export default function Workbench({
           </button>
           <button
             className="primary"
-            disabled={finishing || syncing || changing || needsRecovery || pending.some(Boolean) || session.closed}
+            disabled={locked || pending.some(Boolean)}
             onClick={finish}
           >
-            {finishing ? "生成报告中…" : "结束并生成报告"}
+            {session.closed
+              ? "教学已结束"
+              : finishing
+                ? "生成报告中…"
+                : "结束并生成报告"}
           </button>
         </div>
       </div>
-      {syncing && <p role="status">正在恢复服务端对话…</p>}
-      {online && session.left.some((m) => m.mode === "offline") && <p className="meta">服务端规则演示 · 对话与学习记录会保存到账号</p>}
-      {notice && <p role="alert">{notice} {online && <button disabled={syncing || pending.some(Boolean)} onClick={() => void recover()}>重新加载对话</button>}</p>}
+      {notice && <p role="status">{notice}</p>}
+      {historyError && (
+        <button onClick={() => setReload((v) => v + 1)}>刷新会话历史</button>
+      )}
       <div className="mobiletabs">
         {["费曼讲解", "百科查证"].map((t, i) => (
           <button aria-pressed={mobile === i} onClick={() => focus(i)} key={t}>
@@ -470,8 +393,8 @@ export default function Workbench({
                     <select
                       aria-label="听众角色"
                       value={session.role}
-                      disabled={syncing || changing || finishing || pending.some(Boolean) || session.closed}
-                      onChange={(e) => void switchRole(e.target.value)}
+                      disabled={!online || locked || pending.some(Boolean)}
+                      onChange={(e) => void changeRole(e.target.value)}
                     >
                       {roles.map((r) => (
                         <option key={r}>{r}</option>
@@ -490,7 +413,10 @@ export default function Workbench({
                 <small>
                   {i
                     ? "优先查证当前资料"
-                    : ["已掌握", "巩固中", "待补漏"]
+                    : (online
+                        ? ["未学习", "已掌握", "巩固中", "待补漏"]
+                        : ["已掌握", "巩固中", "待补漏"]
+                      )
                         .map(
                           (v) =>
                             v +
@@ -510,37 +436,56 @@ export default function Workbench({
                 {!(i ? session.right : session.left).length && (
                   <div className="empty">
                     <BookOpen />
-                    <h3>查证课程原文</h3>
-                    <p>输入概念名称，或从左窗带入一个追问。</p>
+                    <h3>
+                      {i
+                        ? "查证课程原文"
+                        : loadingHistory
+                          ? "正在恢复会话"
+                          : "开始讲解"}
+                    </h3>
+                    <p>
+                      {i
+                        ? "输入概念名称，或从左窗带入一个追问。"
+                        : n
+                          ? "用自己的话讲解「" + n.name + "」。"
+                          : "围绕当前资料进行讲解。"}
+                    </p>
                   </div>
                 )}
                 {(i ? session.right : session.left).map((m, j) => (
                   <article
                     className={"msg " + (m.who === "我" ? "mine" : "")}
-                    key={m.id || j}
+                    key={j}
                   >
                     <small>{m.who}</small>
-                    <Markdown
-                      remarkPlugins={[gfm, math]}
-                      rehypePlugins={[katex, highlight]}
-                    >
-                      {m.text}
-                    </Markdown>
-                    {m.badge && <small className="pill">{m.badge}</small>}
-                    {m.sources?.map((source, index) => (
-                      <details key={source.doc_title + source.chunk_index + index}>
-                        <summary>{source.doc_title} · 片段 #{source.chunk_index}</summary>
-                        <p style={{ whiteSpace: "pre-wrap" }}>{source.snippet}</p>
+                    <CourseText text={m.text} />
+                    {m.badge && (
+                      <small className="pill">{displayBadge(m)}</small>
+                    )}
+                    {m.citations?.length ? (
+                      <details className="source-list">
+                        <summary>
+                          参考资料片段（共 {m.citations.length} 条）
+                        </summary>
+                        {m.citations.map((hit) => (
+                          <SourceCard key={hit.chunk_index} hit={hit} />
+                        ))}
                       </details>
-                    ))}
-                    {!m.sources?.length && m.citation && (
-                      <details>
-                        <summary>{m.citation}</summary>
-                        {m.excerpt ||
-                          (online
-                            ? "服务端仅返回了出处位置。"
-                            : c.nodes.find((x) => x.id === m.node)?.summary)}
-                      </details>
+                    ) : (
+                      m.citation && (
+                        <details>
+                          <summary>{m.citation}</summary>
+                          <CourseText
+                            text={
+                              m.excerpt ||
+                              (online
+                                ? "服务端仅返回了出处位置。"
+                                : c.nodes.find((x) => x.id === m.node)
+                                    ?.summary || "")
+                            }
+                          />
+                        </details>
+                      )
                     )}
                     {i === 1 && m.node && (
                       <small>
@@ -560,9 +505,9 @@ export default function Workbench({
                     {m.who === "听众" && (
                       <button
                         className="quiet"
-                        disabled={syncing || changing || finishing || needsRecovery || !!pending[1] || session.closed}
+                        disabled={locked || !!pending[1]}
                         onClick={() => {
-                          send(1, m.text, m.node);
+                          send(1, lookupQuestion(session.left, j, c));
                           focus(1);
                         }}
                       >
@@ -578,9 +523,16 @@ export default function Workbench({
                   </article>
                 ))}
                 {pending[i] && (
-                  <article className="msg" role="status">
-                    {pending[i]}
-                  </article>
+                  <>
+                    <article className="msg mine">
+                      <small>我</small>
+                      <CourseText text={pending[i].question} />
+                    </article>
+                    <article className="msg" aria-busy="true">
+                      <small>{i ? "百科" : "听众"}</small>
+                      <CourseText text={pending[i].reply || "正在回复…"} />
+                    </article>
+                  </>
                 )}
               </div>
               <div className="composer">
@@ -589,8 +541,12 @@ export default function Workbench({
                   ref={(el) => {
                     fields.current[i] = el;
                   }}
-                  value={session.drafts[i]}
-                  disabled={session.closed}
+                  readOnly={session.closed || !!pending[i]}
+                  value={
+                    pending[i]?.question === session.drafts[i].trim()
+                      ? ""
+                      : session.drafts[i]
+                  }
                   onChange={(e) => {
                     const drafts: [string, string] = [...session.drafts];
                     drafts[i] = e.target.value;
@@ -605,9 +561,7 @@ export default function Workbench({
                 <button
                   className="send"
                   aria-label={i ? "提交查证" : "发送讲解"}
-                  disabled={
-                    finishing || syncing || changing || needsRecovery || session.closed || !!pending[i] || !session.drafts[i].trim()
-                  }
+                  disabled={locked || !!pending[i] || !session.drafts[i].trim()}
                   onClick={() => send(i, session.drafts[i])}
                 >
                   <ArrowUp />

@@ -16,6 +16,14 @@ class Token(BaseModel):
     delta: str
 
 
+class Preview(BaseModel):
+    text: str
+
+
+class StreamError(BaseModel):
+    detail: str
+
+
 class CitationItem(BaseModel):
     doc_title: str
     chunk_index: int
@@ -51,17 +59,20 @@ class TurnMetadata(BaseModel):
 
 
 class Report(BaseModel):
-    coverage_score: int
-    accuracy_score: int
-    clarity_score: int
-    logic_score: int
+    coverage_score: int = Field(ge=0, le=100)
+    accuracy_score: int = Field(ge=0, le=100)
+    clarity_score: int = Field(ge=0, le=100)
+    logic_score: int = Field(ge=0, le=100)
     overall_comment: str
     weakness_summary: list[str]
     review_plan: str
 
 
-AgentEvent = Token | Citation | MemoryUpdate | TurnMetadata
-EVENT_NAMES = {Token: "token", Citation: "citation", MemoryUpdate: "memory_update", Done: "done"}
+AgentEvent = Token | Preview | Citation | MemoryUpdate | TurnMetadata
+EVENT_NAMES = {
+    Token: "token", Preview: "preview", Citation: "citation",
+    MemoryUpdate: "memory_update", Done: "done", StreamError: "error",
+}
 
 
 def tokens(text):

@@ -1,5 +1,7 @@
 # 智溯费曼 · Agent 与混合记忆接口
 
+模型应用通过 `model_profiles.require_profile(purpose)` 获取“应用覆盖 → 默认方案 → 环境配置”的有效连接。左窗由 `agents/teaching/` 的 LangGraph 编排，右窗和诊断由 `agents/model_teaching.py` 构建任务与证据，统一复用 `services/model_connection.py`。未配置模型返回 409 `model_required`，生产流程不使用规则模拟教学。模型调用位于业务写事务之外，同一会话的提交和报告生成串行处理。
+
 ## 接入边界
 
 前端发送的会话 ID 由 API 层鉴权。API 加载资料和角色，构造 AgentInput，调用 agents 下的模块，将强类型事件序列化成 SSE 并保存消息。Agent 负责教学推理、引用选择与记忆更新。只需替换以下三个模块中的入口函数，保留签名与事件类型，即可继续运行同一套冒烟测试。
@@ -7,8 +9,8 @@
 | 文件（相对 backend/app） | 保留入口 | 职责 |
 | --- | --- | --- |
 | agents/feynman_agent.py | stream(db, turn: AgentInput) → Iterator[AgentEvent] | 左窗讲解评估、追问、写掌握度/薄弱点、推送更新 |
-| agents/encyclopedia_agent.py | stream(db, turn: AgentInput) → Iterator[AgentEvent] | 右窗检索、引用回答、记录 need_lookup |
-| agents/report_agent.py | generate(db, session) → Report | 用 SQL 记忆汇总四维评估和复习建议 |
+| agents/model_teaching.py | prepare / apply | 右窗真实模型检索、引用回答、记录 need_lookup；原 encyclopedia_agent 仅供确定性回归 |
+| agents/model_teaching.py | diagnose(db, session, profile) → Report | 用模型及 SQL 记忆生成四维评估和复习建议；原 report_agent 仅供确定性回归 |
 
 AgentInput 含 session_id、doc_id、persona_type、content，可选 target_node_id，以及默认为 explain 的 action（opening 用于角色开场）。persona_type 是 child、peer、examiner 之一。db 为同一轮专用的同步 SQLAlchemy Session，不要传给并行图节点或其他线程。Agent 内使用 flush 可拿到新主键，最终 commit/rollback 由 API 负责。路由按会话校验归属，直接从脚本调用服务时由调用者保证访问权限。
 
@@ -33,13 +35,13 @@ AgentInput 含 session_id、doc_id、persona_type、content，可选 target_node
 
 U0003/U0004 已在 `agents/teaching/graph.py` 接入真实 StateGraph，`feynman_agent.stream` 保留入口签名。当前教学图的状态、事务细节与本地验收见 [LANGGRAPH_ACCEPTANCE.md](LANGGRAPH_ACCEPTANCE.md)。API 调用该图前不得预先添加待提交消息：图读取授权上下文后会结束只读事务，以避免远程推理期间占用 SQLite 快照。图使用运行时 context 注入本轮 db，不把连接存入图状态，也不并发共享同一 SQLAlchemy Session。
 
-`TurnMetadata` 是新增的内部结果，API 将其合并到助手消息的 `meta_json`，不作为 SSE 发送。它记录评估证据、实际节点路径和连续达标次数。教学图在流式追问结束后尝试以保存点写入记忆；API 最终同时提交消息和记忆，提交成功才发送 `memory_update` 与 `done`。记忆写入失败可仅保存追问和失败标记；模型或最终提交失败不发 `done`。现有百科与报告保留基线实现。
+`TurnMetadata` 是新增的内部结果，API 将其合并到助手消息的 `meta_json`，不作为 SSE 发送。它记录评估证据、实际节点路径和连续达标次数。教学图在流式追问结束后尝试以保存点写入记忆；API 最终同时提交消息和记忆，提交成功才发送 `memory_update` 与 `done`。记忆写入失败可仅保存追问和失败标记；模型或最终提交失败不发 `done`。百科与报告沿用远端已实现的真实模型服务。
 
-1. 左窗构建和缓存图，通过运行时 context 注入本轮 turn 和 db，读取 SQL 与历史后释放只读事务。图执行输入分流、原文检索、评估、一次结构纠错、记忆方案、流式追问及最终记忆写入。右窗仍为检索 → citation → 原文回答 → 记录查证的基线。
+1. 左窗构建和缓存图，通过运行时 context 注入本轮 turn 和 db，读取 SQL 与历史后释放只读事务。图执行输入分流、原文检索、评估、一次结构纠错、记忆方案、流式追问及最终记忆写入。右窗复用真实模型服务，保留引用范围校验、preview 流及 need_lookup 记录。
 2. 图产生文本增量时 yield Token(delta=...)；百科窗使用 yield Citation(citations=hits)。没有依据时明确说明检索结果为空。记忆写入成功后用 NodeUpdate 组装 MemoryUpdate。只传当前资料中的节点 ID。
 3. API 在工作线程中消费事件，通过队列立即发送 token/citation。memory_update 暂存到事务提交成功后发送。正常结束时，在同一事务保存用户输入、助手完整文本、引用、评估和记忆变化，再发 Done(message_id=...)。Agent 不自行创建 Message、提交事务或发送 done。模型或最终提交失败时回滚本轮写入，不发 done；流已开始时以 error 事件说明原因。连接断开后已接受的轮次继续完成。
 4. SQLite 为单写者。教学图在远程推理结束后才开启短写事务；可选记忆写入使用保存点，失败仍保留追问。单 worker 内按会话串行执行教学、开场、角色切换和报告，其他会话可并行推理。并发容量仍需实测，不要在持锁期间加入无界重试。
-5. 报告函数返回 agents.contracts.Report。四项分数均按 0–100 输出；weakness_summary 为字符串数组，review_plan 为文本。API 负责唯一性、结束时间与幂等返回。基线的覆盖度按提及节点比例、准确度按文档平均掌握度、通俗度按较长输入比例、逻辑性按连接词比例计算，属于联调规则。替换时建议用课程量规与证据评分。
+5. 报告模型读取节点、近期对话及薄弱点，返回 agents.contracts.Report。四项分数均按 0–100 输出；weakness_summary 为字符串数组，review_plan 为文本。API 负责唯一性、结束时间与幂等返回。report_agent 中原有规则仅供回归夹具使用。
 
 ~~~python
 from app.agents.contracts import Citation, Token
@@ -58,10 +60,18 @@ def stream(db, turn):
 
 ## 模型与索引
 
-默认 MOCK_LLM=true、EMBEDDING_PROVIDER=local_lite，无需 Key 或模型下载。离线抽取优先使用章节名、定义前缀和段落；很短的资料会用标明“离线阅读提示”的条目补齐 6 项。真实抽取将 MOCK_LLM 设为 false，填写 OPENAI_BASE_URL、OPENAI_API_KEY 和供应商对应的 OPENAI_MODEL，重启服务后上传新资料。短文直接按 JSON schema 抽取，长文分段压缩并分层合并后综合抽取。每个模型步骤最多额外重试两次，持续失败时记录异常类型并降级离线抽取。文件损坏仍标记为 failed。
+上传解析使用「教学设置」分配的模型。也可设置 OPENAI_BASE_URL、OPENAI_API_KEY 和 OPENAI_MODEL 作为环境默认模型。短文直接按 JSON schema 抽取，长文分段压缩并分层合并后综合抽取。模型请求或解析失败会进入失败状态，可修正配置后重试。默认向量索引使用 EMBEDDING_PROVIDER=local_lite。
 
 本地基础集合 feynman_doc_chunks 使用显式 384 维中英文词元哈希向量；所有 upsert/query 均传入显式向量，不调用 Chroma 默认下载器。若要使用远程嵌入，将 EMBEDDING_PROVIDER 设为 api，设置 EMBEDDING_MODEL，必要时单独提供 EMBEDDING_API_KEY、EMBEDDING_BASE_URL。系统始终保留本地集合，并按供应商与模型标识为远程向量建立独立集合，避免不同维度混写；远程嵌入失败回退本地集合。切换模型后，已有资料仍可使用本地检索；重新导入可建立新模型的向量。
 
 ## 验证
 
 从仓库根目录运行 `backend\.venv\Scripts\python -m pytest backend/tests/test_smoke.py -v`。测试创建临时数据目录，启动真实 Uvicorn 进程，覆盖 Swagger、鉴权、两种窗口的事件与落盘、报告、图谱、四节导出和 SQLite 备份完整性。接入新图后，应继续满足同一协议。
+
+## 增量上下文说明
+
+`get_memory_context(db, doc_id, session_id=None, *, concept=None, query=None)` 保留原有参数和字段，新增以下上下文（旧客户端可忽略）。
+
+- `recommended_learning_path` 为文档级有序数组。每项含 `node_id`、`concept_name`、`mastery_score`、`status`、`prerequisites`（直接前置概念名）和 `reason`。仅 prerequisite 边约束顺序；就绪节点先排未掌握项，再按未解决薄弱记录数、重要度、掌握度和节点 ID 排序。遇环仅在本次计算中放宽环内依赖，理由会提示复讲起点。SQL 图谱保持原样。也可直接调用 `compute_learning_path(db, doc_id)` 或授权读取 `GET /api/v1/documents/{doc_id}/learning-path`。
+- 传入有效 `session_id` 时还返回 `recent_encyclopedia_lookups`，按新到旧最多五项。每项含 `question`、`related_concepts`（概念名列表）、`summary`（至多 180 字）。相同轮次的右窗提问与 need_lookup 日志合并，允许独立日志；没有回复时摘要可为空。未指定会话时省略此字段，不跨会话读取消息。
+- Markdown / JSON 记忆档案在原四节之后追加「推荐学习与复讲路径」。

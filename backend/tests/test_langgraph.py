@@ -72,6 +72,11 @@ def teaching(tmp_path, monkeypatch):
         {"doc_title": "课程", "chunk_index": 0, "snippet": SOURCE, "score": 0.9}
     ])
     monkeypatch.setattr(model.settings, "mock_llm", True)
+    monkeypatch.setattr(model, "offline", lambda: True)
+    monkeypatch.setattr(sessions, "require_profile", lambda purpose: {"mode": "api", "model": "test", "base_url": "http://127.0.0.1:1/v1", "api_key": ""})
+    from app.agents import encyclopedia_agent, model_teaching
+    monkeypatch.setattr(model_teaching, "prepare", lambda *a, **k: None)
+    monkeypatch.setattr(model_teaching, "apply", lambda db, turn, prepared: encyclopedia_agent.stream(db, turn))
     with TestClient(app) as api:
         yield SimpleNamespace(api=api, factory=factory, model=model, memory=memory_service,
                               sessions=sessions, monkeypatch=monkeypatch)
@@ -315,12 +320,9 @@ def test_provider_failure_is_visible_and_does_not_fall_back_to_scores(teaching):
     assert node(t)["mastery_score"] == 0 and history(t) == []
 
 
-def test_actual_sdk_json_repair_and_token_stream_over_local_http(teaching):
-    """Exercise the real OpenAI SDK, graph and SSE without a paid provider."""
+def test_actual_transport_json_repair_and_token_stream_over_local_http(teaching):
+    """Exercise the shared model connection, graph and SSE without a paid provider."""
     from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-    import httpx
-    from openai import OpenAI
-    from pydantic import SecretStr
 
     t = teaching
     calls = []
@@ -362,12 +364,11 @@ def test_actual_sdk_json_repair_and_token_stream_over_local_http(teaching):
     with ThreadingHTTPServer(("127.0.0.1", 0), Handler) as server:
         thread = threading.Thread(target=lambda: server.serve_forever(poll_interval=0.05), daemon=True)
         thread.start()
-        t.monkeypatch.setattr(t.model.settings, "mock_llm", False)
-        t.monkeypatch.setattr(t.model.settings, "openai_api_key", SecretStr("local-test-only"))
-        t.monkeypatch.setattr(t.model, "client", lambda: OpenAI(
-            api_key="local-test-only", base_url=f"http://127.0.0.1:{server.server_port}/v1",
-            max_retries=0, http_client=httpx.Client(trust_env=False),
-        ))
+        t.monkeypatch.setattr(t.model, "offline", lambda: False)
+        t.monkeypatch.setattr(t.model, "require_profile", lambda purpose: {
+            "mode": "api", "model": "test", "api_key": "local-test-only",
+            "base_url": f"http://127.0.0.1:{server.server_port}/v1",
+        })
         try:
             opening(t)
             result = turn(t)
@@ -381,22 +382,18 @@ def test_actual_sdk_json_repair_and_token_stream_over_local_http(teaching):
 
 
 def test_transport_uses_exactly_two_exponential_retries(teaching):
-    from contextlib import nullcontext
-    import httpx
-    from openai import RateLimitError
+    from app.services.model_profiles import ModelError
     from app.agents.teaching.model import TeachingModelError
 
     t = teaching
     calls, sleeps = [], []
 
-    def limited(**kwargs):
-        calls.append(kwargs)
-        raise RateLimitError("limited", response=httpx.Response(
-            429, request=httpx.Request("POST", "http://local.test/v1/chat/completions")
-        ), body={})
+    def limited(*args):
+        calls.append(args)
+        raise ModelError("模型服务返回 HTTP 429")
 
-    sdk = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=limited)))
-    t.monkeypatch.setattr(t.model, "client", lambda: nullcontext(sdk))
+    t.monkeypatch.setattr(t.model, "require_profile", lambda purpose: {})
+    t.monkeypatch.setattr(t.model, "ModelConnection", lambda profile: SimpleNamespace(text=limited))
     t.monkeypatch.setattr(t.model.time, "sleep", sleeps.append)
     with pytest.raises(TeachingModelError, match="429"):
         t.model.request([{"role": "user", "content": "test"}])

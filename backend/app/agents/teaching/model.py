@@ -5,32 +5,26 @@ import logging
 import re
 import time
 
-from openai import APIError, OpenAI
-
 from app.core.config import settings
+from app.services.model_connection import ModelConnection, AuthenticationRejected
+from app.services.model_profiles import ModelError, require_profile
+from .schemas import Assessment
 from .prompts import ASSESS, FOLLOWUP, PERSONAS
 
 log = logging.getLogger(__name__)
 
 
-class TeachingModelError(RuntimeError):
+class TeachingModelError(ModelError):
     pass
 
 
-def client():
-    return OpenAI(
-        api_key=settings.openai_api_key.get_secret_value(),
-        base_url=settings.openai_base_url,
-        timeout=30,
-        max_retries=0,
-    )
+class StreamedText(str):
+    """Complete text whose deltas were already sent through the graph writer."""
 
 
 def offline():
-    if settings.mock_llm:
-        return True
-    if not settings.openai_api_key.get_secret_value():
-        raise TeachingModelError("未配置模型密钥，请配置后重试，或开启 MOCK_LLM 本地演示。")
+    # Deterministic regression fixtures may replace this hook. Production always
+    # uses the same locally managed connection as the rest of the application.
     return False
 
 
@@ -49,20 +43,28 @@ def recent_history(state):
              "content": m["content"][:1200]} for m in state["history"][-12:]]
 
 
-def request(messages):
-    with client() as sdk:
-        for attempt in range(3):
-            try:
-                return sdk.chat.completions.create(
-                    model=settings.openai_model,
-                    messages=messages,
-                    response_format={"type": "json_object"},
-                ).choices[0].message.content or ""
-            except APIError as exc:
-                if attempt == 2:
-                    raise model_error(exc) from exc
-                log.warning("教学模型调用重试 %d (%s)", attempt + 1, type(exc).__name__)
-                time.sleep(0.25 * 2**attempt)
+def request(messages, schema=Assessment, on_chunk=None):
+    connection = ModelConnection(require_profile("feynman"))
+    emitted = False
+
+    def forward(delta):
+        nonlocal emitted
+        if delta:
+            emitted = True
+            on_chunk(delta)
+
+    for attempt in range(3):
+        try:
+            return connection.text(
+                messages[0]["content"], messages[-1]["content"], schema,
+                forward if on_chunk else None,
+            )
+        except ModelError as exc:
+            # Never replay a partially visible stream or retry rejected credentials.
+            if emitted or attempt == 2 or isinstance(exc, AuthenticationRejected):
+                raise TeachingModelError(str(exc)) from exc
+            log.warning("教学模型调用重试 %d (%s)", attempt + 1, type(exc).__name__)
+            time.sleep(0.25 * 2**attempt)
 
 
 def local_assessment(state):
@@ -119,23 +121,14 @@ def followup(state, persona):
         {"role": "system", "content": FOLLOWUP + "\n角色：" + PERSONAS[persona]},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)},
     ]
-    # Once text has reached the client, replaying a failed stream would duplicate it.
-    emitted = False
-    with client() as sdk:
-        for attempt in range(3):
-            try:
-                response = sdk.chat.completions.create(
-                    model=settings.openai_model, messages=messages, stream=True, max_tokens=220,
-                )
-                with response:
-                    for chunk in response:
-                        if chunk.choices and chunk.choices[0].delta.content:
-                            emitted = True
-                            yield chunk.choices[0].delta.content
-                if not emitted:
-                    raise TeachingModelError("教学模型未返回追问，请保留讲解内容后重试。")
-                return
-            except APIError as exc:
-                if emitted or attempt == 2:
-                    raise model_error(exc) from exc
-                time.sleep(0.25 * 2**attempt)
+    from langgraph.config import get_stream_writer
+    from app.agents.contracts import Token
+    writer = get_stream_writer()
+    emitted = []
+
+    def forward(delta):
+        emitted.append(delta)
+        writer(Token(delta=delta))
+
+    text = request(messages, schema=None, on_chunk=forward)
+    yield StreamedText(text) if emitted else text

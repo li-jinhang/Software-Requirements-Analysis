@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from pathlib import Path
 from zipfile import ZipFile
@@ -27,14 +28,15 @@ def _read(path):
     if suffix == ".pdf":
         if not path.read_bytes()[:1024].lstrip().startswith(b"%PDF-"):
             raise ValueError("PDF 文件头无效")
-        text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
+        text = "\n\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
     elif suffix == ".docx":
         with ZipFile(path) as archive:
             if sum(i.file_size for i in archive.infolist()) > 80 * 1024**2:
                 raise ValueError("DOCX 解压后超过 80 MB")
         doc = Document(path)
-        text = "\n".join(
-            [p.text for p in doc.paragraphs]
+        text = "\n\n".join(
+            [("## " if p.style and p.style.name.startswith("Heading") else "") + p.text
+             for p in doc.paragraphs if p.text.strip()]
             + [c.text for t in doc.tables for row in t.rows for c in row.cells]
         )
     elif suffix in {".md", ".txt"}:
@@ -49,9 +51,39 @@ def _read(path):
 
 
 def split_chunks(text):
+    """Keep sections and paragraphs separate; overlap only within a long block."""
     chunks = []
-    for start in range(0, len(text), 370):
-        chunks.append(text[start : start + 450])
-        if start + 450 >= len(text):
-            break
+    heading = ""
+    lines = []
+    fence = ""
+
+    def flush():
+        nonlocal heading
+        if not lines:
+            return
+        block = (heading + "\n" if heading else "") + "\n".join(lines).strip()
+        for start in range(0, len(block), 370):
+            chunks.append(block[start:start + 450])
+            if start + 450 >= len(block):
+                break
+        lines.clear()
+        heading = ""
+
+    for line in text.splitlines():
+        marker = re.match(r"^\s*(`{3,}|~{3,})", line)
+        if marker and not fence:
+            fence = marker[1]
+        elif fence and line.strip().startswith(fence):
+            fence = ""
+        elif not fence and re.match(r"^ {0,3}#{1,6}\s+", line):
+            flush()
+            heading = line.strip()
+            continue
+        elif not fence and not line.strip():
+            flush()
+            continue
+        lines.append(line)
+    flush()
+    if not chunks and heading:
+        chunks.append(heading)
     return chunks

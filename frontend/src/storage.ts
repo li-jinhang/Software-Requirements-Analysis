@@ -8,24 +8,25 @@ export const student: User = {
   admin: User = { id: "demo-admin", name: "演示管理员", admin: true };
 const prefix = "feynman.workspace.v1.";
 export function read(id: string): Space {
-  try {
-    const v = localStorage.getItem(prefix + id);
-    if (v) {
-      const saved = JSON.parse(v);
-      if ([saved.courses, saved.reports, saved.sessions, saved.logs].every(Array.isArray)) return saved;
-    }
-  } catch { /* A damaged cache must not prevent login or server recovery. */ }
-  return id === student.id ? initial() : { courses: [], reports: [], sessions: [], logs: [] };
+  const v = localStorage.getItem(prefix + id);
+  try { if (v) return JSON.parse(v); } catch { /* A broken cache can be rebuilt. */ }
+  return id === student.id
+      ? initial()
+      : { courses: [], reports: [], sessions: [], logs: [] };
 }
 export function write(id: string, s: Space) {
-  const cached = id.startsWith("api:") ? {
-    courses: s.courses.filter((d) => d.nodes.some((n) => n.syncedNote !== undefined && n.note !== n.syncedNote))
-      .map((d) => ({ ...d, links: [], nodes: d.nodes.filter((n) => n.syncedNote !== undefined && n.note !== n.syncedNote)
-        .map((n) => ({ ...n, summary: "", keyPoints: [] })) })),
-    reports: [], logs: [],
-    sessions: s.sessions.filter((v) => v.drafts.some(Boolean)).map((v) => ({ ...v, left: [], right: [] })),
-  } : s;
-  localStorage.setItem(prefix + id, JSON.stringify(cached));
+  // Server records are reloaded on login. Persist only edits that have not been sent.
+  const stored: Space = id.startsWith("api:")
+    ? {
+        courses: s.courses.map((c) => ({ ...c, links: [], nodes: c.nodes.filter((n) => n.syncedNote !== undefined && n.note !== n.syncedNote) })).filter((c) => c.nodes.length),
+        reports: [],
+        logs: [],
+        sessions: s.sessions
+          .filter((session) => session.drafts.some(Boolean))
+          .map((session) => ({ ...session, left: [], right: [] })),
+      }
+    : s;
+  localStorage.setItem(prefix + id, JSON.stringify(stored));
 }
 export function spaces(): Record<string, Space> {
   return Object.fromEntries(

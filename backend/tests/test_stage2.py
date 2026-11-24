@@ -107,9 +107,7 @@ def test_bounded_hierarchical_synthesis_keeps_last_section(monkeypatch):
     assert graph.structured_summary and all(n.key_points for n in graph.nodes)
 
 
-def test_invalid_live_json_retries_twice_then_falls_back(monkeypatch, caplog):
-    from contextlib import nullcontext
-    from pydantic import SecretStr
+def test_invalid_live_json_retries_twice_then_errors(caplog):
     from app.services import llm_client as llm
 
     calls = []
@@ -121,11 +119,9 @@ def test_invalid_live_json_retries_twice_then_falls_back(monkeypatch, caplog):
         )
 
     client = SimpleNamespace(chat=SimpleNamespace(completions=SimpleNamespace(create=invalid)))
-    monkeypatch.setattr(llm, "live_client", lambda: nullcontext(client))
-    monkeypatch.setattr(llm.settings, "mock_llm", False)
-    monkeypatch.setattr(llm.settings, "openai_api_key", SecretStr("unit-test-only"))
-    graph = llm.extract("学习率：控制步长。", "机器学习")
-    assert len(calls) == 3 and "离线" in graph.structured_summary and "离线规则" in caplog.text
+    with pytest.raises(ValueError):
+        llm.structured(client, llm.LIVE_EXTRACTION, "提取概念", "学习率：控制步长。")
+    assert len(calls) == 3 and "准备重试" in caplog.text
 
 
 @pytest.mark.parametrize("port", [5173, 3000, 4173])
@@ -277,6 +273,26 @@ def test_file_read_retries_transient_io_only(monkeypatch):
     assert doc_parser.parse("sample") == "可读正文" and len(attempts) == 3
 
 
+def test_sections_paragraphs_and_overlapping_long_blocks():
+    from app.services.doc_parser import split_chunks
+
+    long = "参数" * 550
+    chunks = split_chunks("# 课名\n\n## 定义\n\n定义正文。\n\n第二段。\n### 演算\n" + long)
+    assert chunks[:2] == ["## 定义\n定义正文。", "第二段。"]
+    windows = chunks[2:]
+    assert all(0 < len(chunk) <= 450 for chunk in windows)
+    assert windows[0] + "".join(chunk[80:] for chunk in windows[1:]) == "### 演算\n" + long
+
+
+def test_low_scoring_unrelated_tail_is_not_cited():
+    from app.services.rag_store import hybrid_rank
+
+    chunks = ["## 损失函数\n预测误差。", "## L1 正则化\n系数稀疏。"]
+    rows = [({"doc_title": "示范课", "chunk_index": i}, s) for i, s in enumerate(chunks)]
+    assert [h["chunk_index"] for h in hybrid_rank("损失函数如何举例？", rows, {0: .7, 1: .14}, 4)] == [0]
+    assert not hybrid_rank("死锁", rows, {0: .1, 1: .14}, 4)
+
+
 def test_existing_sqlite_migrates_without_losing_memory(tmp_path):
     import subprocess
     import os
@@ -285,6 +301,9 @@ def test_existing_sqlite_migrates_without_losing_memory(tmp_path):
     # Boot in a fresh interpreter to exercise the same entry point as Uvicorn.
     backend = Path(__file__).resolve().parents[1]
     code = """
+import sys
+sys.path.insert(0, 'tests')
+from fixture_inference import install
 from fastapi.testclient import TestClient
 from sqlalchemy import text
 from app.main import app
@@ -292,6 +311,7 @@ from app.db.database import engine
 with TestClient(app):
     with engine.begin() as conn:
         conn.exec_driver_sql("UPDATE knowledge_nodes SET user_note='legacy note' WHERE id=1")
+        conn.exec_driver_sql("UPDATE documents SET chunk_count=2 WHERE id=1")
         conn.exec_driver_sql("ALTER TABLE knowledge_nodes DROP COLUMN key_points")
     # SQLite represents the new FK as a table constraint, so DROP COLUMN
     # cannot recreate the old schema. Rebuild this disposable test table with
@@ -317,6 +337,8 @@ with TestClient(app) as api:
     old=api.get('/api/v1/documents/1/graph',headers=headers).json()['nodes'][0]
     assert old['key_points']==[] and old['user_note']=='legacy note'
     assert api.get('/api/v1/sessions',headers=headers).json()[0]['target_node_id'] is None
+    assert api.get('/api/v1/documents/1',headers=headers).json()['chunk_count']==8
+    install()
     response=api.post('/api/v1/documents/upload',headers=headers,files={'file':('notes.md',b'Alpha: first. Beta: second.')})
     assert response.status_code==201,response.text
     doc=response.json()

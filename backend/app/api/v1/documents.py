@@ -1,4 +1,4 @@
-from app.schemas.responses import DocumentOut, NodeOut, GraphOut, ContextOut
+from app.schemas.responses import DocumentOut, NodeOut, GraphOut, ContextOut, LearningStep
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -12,6 +12,7 @@ from app.db.database import get_db
 from app.db.models import Document, KnowledgeNode, public
 from app.schemas import Note
 from app.services import memory_service as memory
+from app.services.model_profiles import require_profile
 
 router = APIRouter(prefix="/documents", tags=["资料"])
 LIMIT = 20 * 1024**2
@@ -35,6 +36,7 @@ def upload(
     ext = Path(name).suffix.lower()
     if ext not in {".txt", ".md", ".docx", ".pdf"}:
         raise HTTPException(415, "支持 PDF、DOCX、MD、TXT")
+    profile = require_profile("extract")
     path = settings.data_dir / "uploads" / (uuid4().hex + ext)
     try:
         with path.open("xb") as f:
@@ -56,12 +58,12 @@ def upload(
     except Exception:
         path.unlink(missing_ok=True)
         raise
-    return run_ingest(db, doc.id)
+    return run_ingest(db, doc.id, profile)
 
 
-def run_ingest(db, id):
+def run_ingest(db, id, profile):
     try:
-        return memory.ingest_document(db, id)
+        return memory.ingest_document(db, id, profile)
     except ValueError as exc:
         raise HTTPException(422, {"doc_id": id, "message": str(exc)})
 
@@ -70,7 +72,7 @@ def run_ingest(db, id):
 def retry(id: int, db=Depends(get_db), user=Depends(current_user)):
     if owned(db, Document, id, user).parse_status != "failed":
         raise HTTPException(409, "仅失败的文档可以重试")
-    return run_ingest(db, id)
+    return run_ingest(db, id, require_profile("extract"))
 
 
 @router.get("", response_model=list[DocumentOut])
@@ -130,3 +132,9 @@ def export(
 def graph(id: int, db=Depends(get_db), user=Depends(current_user)):
     ctx = archive(id, db, user)
     return {"nodes": ctx["nodes"], "edges": ctx["edges"]}
+
+
+@router.get("/{doc_id}/learning-path", response_model=list[LearningStep])
+def learning_path(doc_id: int, db=Depends(get_db), user=Depends(current_user)):
+    owned(db, Document, doc_id, user)
+    return memory.compute_learning_path(db, doc_id)

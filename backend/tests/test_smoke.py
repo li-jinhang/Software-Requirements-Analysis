@@ -16,6 +16,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 @pytest.fixture(scope="module")
 def server(tmp_path_factory):
+    yield from serve(tmp_path_factory)
+
+
+@pytest.fixture(scope="module")
+def fixture_server(tmp_path_factory):
+    yield from serve(tmp_path_factory, fixture_inference=True)
+
+
+def serve(tmp_path_factory, *, fixture_inference=False):
     work = tmp_path_factory.mktemp("backend")
     with socket.socket() as sock:
         sock.bind(("127.0.0.1", 0))
@@ -31,17 +40,17 @@ def server(tmp_path_factory):
             "PYTHONIOENCODING": "utf-8",
             "ANONYMIZED_TELEMETRY": "False",
         }
-        proc = subprocess.Popen(
-            [
-                sys.executable,
-                "-m",
-                "uvicorn",
-                "app.main:app",
-                "--host",
-                "127.0.0.1",
-                "--port",
+        command = ["-m", "uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", str(port)]
+        if fixture_inference:
+            command = [
+                "-c",
+                "import sys, uvicorn; sys.path.insert(0, 'tests'); "
+                "from fixture_inference import install; install(); "
+                "uvicorn.run('app.main:app', host='127.0.0.1', port=int(sys.argv[1]))",
                 str(port),
-            ],
+            ]
+        proc = subprocess.Popen(
+            [sys.executable, *command],
             cwd=ROOT,
             env=env,
             stdout=log,
@@ -93,6 +102,10 @@ def test_demo_and_access(server):
         1,
     ]
     ctx = api.get("/api/v1/documents/1/memory", headers=s).json()
+    path = "/api/v1/documents/1/learning-path"
+    assert api.get(path).status_code == 401
+    assert api.get(path, headers=a).status_code == 404
+    assert api.get(path, headers=s).json() == ctx["recommended_learning_path"]
     assert len(ctx["edges"]) == 9 and len(ctx["weaknesses"]) == 3
     assert {n["status"] for n in ctx["nodes"]} == {"mastered", "learning", "weak"}
     assert api.get("/api/v1/sessions/1/report", headers=s).json()["clarity_score"] == 91
@@ -112,8 +125,26 @@ def events(resp):
     return pairs
 
 
-def test_upload_teach_lookup_report_export(server, tmp_path):
-    api = server
+def test_fixture_evaluation_preserves_focus_without_certifying_mastery(fixture_server):
+    server = fixture_server
+    h = login(server, "student", "123456")
+    sid = server.post("/api/v1/sessions", headers=h, json={"doc_id": 1}).json()["id"]
+    url = f"/api/v1/sessions/{sid}/feynman/stream"
+    questions = []
+    for topic in ["梯度下降", "过拟合", "过拟合"]:
+        frames = events(server.post(url, headers=h, json={"content": topic}))
+        questions.append("".join(d["delta"] for k, d in frames if k == "token"))
+        if topic == "梯度下降":
+            update = next(d["updates"][0] for k, d in frames if k == "memory_update")
+            assert update["concept_name"] == topic and update["mastery_score"] < 80
+    assert "「梯度下降」" in questions[0]
+    assert all("「过拟合」" in q for q in questions[1:])
+    history = server.get(f"/api/v1/sessions/{sid}/messages", headers=h).json()
+    assert all(m["meta_json"]["mode"] == "offline" for m in history if m["sender_role"] == "assistant")
+
+
+def test_upload_teach_lookup_report_export(fixture_server, tmp_path):
+    api = fixture_server
     base = "/api/v1"
     account = {"username": "smoke-user", "password": "smoke-123", "nickname": "联调"}
     assert api.post(base + "/auth/register", json=account).status_code == 201
@@ -145,7 +176,13 @@ def test_upload_teach_lookup_report_export(server, tmp_path):
         == "复习例题"
     )
     archive = api.get(url + "/memory/export?format=json", headers=h).json()
-    assert list(archive) == ["核心概念树", "概念关联说明", "已掌握清单", "薄弱点警示"]
+    assert list(archive) == [
+        "核心概念树",
+        "概念关联说明",
+        "已掌握清单",
+        "薄弱点警示",
+        "推荐学习与复讲路径",
+    ]
     md = api.get(url + "/memory/export?format=md", headers=h).text
     assert all("## " + key in md for key in archive) and "复习例题" in md
 
@@ -226,8 +263,10 @@ def test_retry_and_cross_store_cleanup(tmp_path, monkeypatch):
     from app.db.models import Document
     from app.services import rag_store
     from app.services.memory_service import update_mastery
+    from fixture_inference import install
 
     with TestClient(app) as api:
+        install(monkeypatch.setattr)
         h = login(api, "student", "123456")
         response = api.post(
             "/api/v1/documents/upload", headers=h, files={"file": ("empty.md", b" ", "text/plain")}

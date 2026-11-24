@@ -100,6 +100,8 @@ def assess(state: TeachingState):
         if not any(assessment.source_evidence in h["snippet"] for h in state["citations"]):
             raise ValueError("原文证据不属于召回片段")
         return {"trace": ["assess"], "assessment": assessment.model_dump(), "assessment_error": ""}
+    except model.ModelError:
+        raise
     except (ValueError, IndexError) as exc:
         log.warning("教学评估校验失败 (%s)，纠错次数 %s", type(exc).__name__, state["repair_count"])
         return {"trace": ["assess"], "assessment": None,
@@ -159,7 +161,9 @@ def respond(state: TeachingState, runtime: Runtime[TeachingRuntime]):
     response = []
     for text in chunks:
         response.append(text)
-        writer(Token(delta=text))
+        # The shared transport forwards provider deltas during its blocking call.
+        if not isinstance(text, model.StreamedText):
+            writer(Token(delta=text))
     return {"trace": ["respond"], "response": "".join(response), "question_kind": question_kind}
 
 

@@ -3,3 +3,4 @@ dist/
 *.local
 __pycache__/
 *.pyc
+/dist_submission_data/

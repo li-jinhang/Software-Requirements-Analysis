@@ -7,9 +7,8 @@ export type Concept = {
   note: string;
   syncedNote?: string;
   streak: number;
-  state?: "unlearned" | "weak" | "learning" | "mastered";
-  keyPoints?: string[];
-  lookupCount?: number;
+  mastery?: "weak" | "unlearned" | "learning" | "mastered";
+  points?: string[];
 };
 export type Link = { from: string; to: string; label: string };
 export type Course = {
@@ -18,25 +17,26 @@ export type Course = {
   subject: string;
   format: string;
   cover: number;
+  parseStatus?: string;
+  error?: string;
   nodes: Concept[];
   links: Link[];
 };
 export type Message = {
-  id?: string;
+  id?: number;
   who: "我" | "听众" | "百科" | "系统";
   text: string;
   node?: string;
   badge?: string;
   citation?: string;
   excerpt?: string;
-  sources?: SourceQuote[];
-  mode?: "offline" | "live";
+  citations?: CourseCitation[];
 };
-export type SourceQuote = {
+export type CourseCitation = {
   doc_title: string;
   chunk_index: number;
   snippet: string;
-  score: number;
+  score?: number;
 };
 export type Session = {
   id: string;
@@ -57,6 +57,7 @@ export type Weak = {
   session: string;
 };
 export type Report = {
+  sessionId?: string;
   id: string;
   doc: string;
   title: string;
@@ -198,11 +199,20 @@ export function initial(): Space {
   };
 }
 export const status = (n: Concept, logs: Weak[]) =>
-  logs.some((w) => w.node === n.id && !w.resolved) || n.score < 40
-    ? "待补漏"
-    : n.score < 80
-      ? "巩固中"
-      : "已掌握";
+  n.mastery
+    ? (
+        {
+          weak: "待补漏",
+          unlearned: "未学习",
+          learning: "巩固中",
+          mastered: "已掌握",
+        } as const
+      )[n.mastery]
+    : logs.some((w) => w.node === n.id && !w.resolved) || n.score < 40
+      ? "待补漏"
+      : n.score < 80
+        ? "巩固中"
+        : "已掌握";
 export function download(name: string, body: BlobPart, type = "text/plain") {
   const url = URL.createObjectURL(new Blob([body], { type }));
   const a = document.createElement("a");
@@ -262,81 +272,22 @@ export function archive(c: Course, logs: Weak[], json: boolean) {
             .join("\n\n"),
   );
 }
-export async function parseFile(file: File, subject: string) {
-  const ext = file.name.split(".").pop()?.toLowerCase() || "";
-  if (
-    !["md", "txt", "pdf", "docx"].includes(ext) ||
-    file.size > 20 * 1024 * 1024
-  )
-    throw Error("请选择 20 MB 以内的 PDF、DOCX、MD 或 TXT 文件。");
-  let content = "";
-  if (ext === "pdf") {
-    const pdf = await import("pdfjs-dist");
-    pdf.GlobalWorkerOptions.workerSrc = (
-      await import("pdfjs-dist/build/pdf.worker.min.mjs?url")
-    ).default;
-    const doc = await pdf.getDocument({
-      data: await file.arrayBuffer(),
-      isEvalSupported: false,
-    }).promise;
-    try {
-      for (let i = 1; i <= doc.numPages; i++) {
-        const page = await doc.getPage(i);
-        content +=
-          (await page.getTextContent()).items
-            .map((v) => ("str" in v ? v.str : ""))
-            .join(" ") + "\n";
-      }
-    } finally {
-      await doc.destroy();
-    }
-  } else if (ext === "docx") {
-    const m = await import("mammoth");
-    content = (
-      await m.extractRawText({ arrayBuffer: await file.arrayBuffer() })
-    ).value;
-  } else content = await file.text();
-  const chunks = content
-    .split(/\r?\n\s*\n|(?<=。)\s*|\r?\n/)
-    .map((v) => v.trim())
-    .filter(Boolean);
-  if (!chunks.length) throw Error("未读取到正文，请上传文字版文档。");
-  if (content.length > 1000000)
-    throw Error("正文超过本地演示容量，请按章节拆分后重试。");
-  return course(
-    file.name.replace(/\.[^.]+$/, ""),
-    subject.trim() || "未分类",
-    ext.toUpperCase(),
-    3,
-    chunks.map((s) => [
-      s
-        .replace(/^#+\s*/, "")
-        .split(/[：:，。]/)[0]
-        .slice(0, 18),
-      s,
-      0,
-    ]),
-  );
-}
-
-export function newSession(c: Course, n: Concept, role: string): Session {
+export function newSession(
+  id: string,
+  c: Course,
+  n: Concept,
+  role: string,
+): Session {
   return {
-    id: uid(),
+    id,
     doc: c.id,
     focus: n.id,
     role,
-    left: [{ who: "听众", text: opening(n.name, role), node: n.id }],
+    left: [],
     right: [],
     drafts: ["", ""],
     closed: false,
   };
-}
-export function opening(name: string, role: string) {
-  return role === roles[0]
-    ? "能用生活里的例子给我讲讲「" + name + "」吗？"
-    : role === roles[2]
-      ? "请说明「" + name + "」的定义、成立条件和一个反例。"
-      : "我们来聊聊「" + name + "」。如果由你来教我，你会从哪里开始？";
 }
 const dimensions = ["知识覆盖度", "概念准确度", "表达通俗度", "逻辑严密性"];
 export { dimensions };

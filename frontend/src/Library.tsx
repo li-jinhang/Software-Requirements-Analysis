@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import {
   ArrowUpRight,
   BookOpen,
@@ -10,16 +10,33 @@ import {
   LibraryBig,
   UploadCloud,
 } from "lucide-react";
-import { Course, Space, archive, download, mean, parseFile, status } from "./model";
-import { ApiError, memoryExport, retryRemote, uploadRemote, syncNote } from "./api";
+import { Course, Space, archive, mean, status } from "./model";
+import {
+  uploadRemote,
+  syncNote,
+  ApiError,
+  retryRemote,
+  exportMemory,
+  refreshMemory,
+  type TeachingPurpose,
+} from "./api";
 import { Dialog, Diagram } from "./ui";
 type Props = {
   online: boolean;
   space: Space;
   save: (fn: (s: Space) => Space) => void;
   start: (c: Course) => void;
+  canLearn: (purpose: TeachingPurpose) => Promise<boolean>;
+  modelRequired: (error: unknown) => boolean;
 };
-export default function Library({ online, space, save, start }: Props) {
+export default function Library({
+  online,
+  space,
+  save,
+  start,
+  canLearn,
+  modelRequired,
+}: Props) {
   const [query, setQuery] = useState(""),
     [subject, setSubject] = useState(""),
     [upload, setUpload] = useState(false),
@@ -27,9 +44,8 @@ export default function Library({ online, space, save, start }: Props) {
     [file, setFile] = useState<File>(),
     [tag, setTag] = useState(""),
     [error, setError] = useState(""),
-    [busy, setBusy] = useState(false),
-    [exporting, setExporting] = useState(false),
-    [failedDoc, setFailedDoc] = useState<number>();
+    [failedId, setFailedId] = useState<number>(),
+    [busy, setBusy] = useState(false);
   const courses = space.courses,
     nodes = courses.flatMap((c) => c.nodes),
     doc = courses.find((c) => c.id === detail),
@@ -38,8 +54,25 @@ export default function Library({ online, space, save, start }: Props) {
         c.title.toLowerCase().includes(query.toLowerCase()) &&
         (!subject || c.subject === subject),
     );
+  useEffect(() => {
+    if (!online || !doc) return;
+    const ctrl = new AbortController();
+    refreshMemory(doc, ctrl.signal)
+      .then(({ course, logs }) => {
+        if (!ctrl.signal.aborted)
+          save((s) => ({
+            ...s,
+            courses: s.courses.map((c) => (c.id === course.id ? course : c)),
+            logs: [...s.logs.filter((w) => w.doc !== course.id), ...logs],
+          }));
+      })
+      .catch((e) => {
+        if (!ctrl.signal.aborted) setError(e.message);
+      });
+    return () => ctrl.abort();
+  }, [online, detail]);
   async function submit() {
-    if (!file || busy) return;
+    if (!online || !file || busy) return;
     setBusy(true);
     setError("");
     try {
@@ -48,28 +81,22 @@ export default function Library({ online, space, save, start }: Props) {
         file.size > 20 * 1024 * 1024
       )
         throw Error("请选择 20 MB 以内的 PDF、DOCX、MD 或 TXT 文件。");
-      const c = online && failedDoc !== undefined ? await retryRemote(failedDoc) : await (online ? uploadRemote : parseFile)(file, tag);
+      const c = failedId
+        ? await retryRemote(failedId)
+        : await uploadRemote(file, tag);
+      setFailedId(undefined);
       save((s) => ({ ...s, courses: [c, ...s.courses] }));
       setUpload(false);
       setDetail(c.id);
       setFile(undefined);
       setTag("");
-      setFailedDoc(undefined);
     } catch (e) {
-      if (e instanceof ApiError && e.docId !== undefined) setFailedDoc(e.docId);
+      if (modelRequired(e)) return;
+      if (e instanceof ApiError) setFailedId(e.docId);
       setError((e as Error).message);
     } finally {
       setBusy(false);
     }
-  }
-  async function exportArchive(course: Course, format: "md" | "json") {
-    if (!online) { archive(course, space.logs, format === "json"); return; }
-    setExporting(true);
-    try {
-      download(`${course.title}-记忆档案.${format}`, await memoryExport(course.id, format));
-      setError("");
-    } catch (e) { setError((e as Error).message); }
-    finally { setExporting(false); }
   }
   return (
     <>
@@ -80,9 +107,9 @@ export default function Library({ online, space, save, start }: Props) {
         </div>
         <button
           className="primary"
-          onClick={() => {
+          onClick={async () => {
+            if (!(await canLearn("extract"))) return;
             setError("");
-            setFailedDoc(undefined);
             setUpload(true);
           }}
         >
@@ -137,6 +164,7 @@ export default function Library({ online, space, save, start }: Props) {
           </select>
         </div>
       </div>
+      {!upload && !doc && error && <p role="alert">{error}</p>}
       <div className="cards">
         {visible.map((c) => {
           const avg = mean(c.nodes.map((n) => n.score));
@@ -149,18 +177,56 @@ export default function Library({ online, space, save, start }: Props) {
                   <code>{c.format}</code>
                 </div>
                 <h2>{c.title}</h2>
-                <p className="meta">{c.nodes.length} 个知识点 · 已解析</p>
+                <p className="meta">
+                  {c.nodes.length} 个知识点 ·{" "}
+                  {c.parseStatus === "failed"
+                    ? c.error || "解析失败"
+                    : !c.parseStatus || c.parseStatus === "completed"
+                      ? "已解析"
+                      : "解析中"}
+                </p>
                 <div className="row between meta">
                   <span>掌握度</span>
                   <b>{avg}%</b>
                 </div>
                 <progress value={avg} max="100" />
                 <footer>
-                  <button onClick={() => start(c)}>
-                    <BookOpen />
-                    开讲
-                  </button>
-                  <button className="quiet" onClick={() => setDetail(c.id)}>
+                  {c.parseStatus === "failed" ? (
+                    <button
+                      disabled={busy}
+                      onClick={async () => {
+                        setBusy(true);
+                        try {
+                          const course = await retryRemote(c.id);
+                          save((s) => ({
+                            ...s,
+                            courses: s.courses.map((d) =>
+                              d.id === course.id ? course : d,
+                            ),
+                          }));
+                        } catch (e) {
+                          if (!modelRequired(e)) setError((e as Error).message);
+                        } finally {
+                          setBusy(false);
+                        }
+                      }}
+                    >
+                      重新解析
+                    </button>
+                  ) : (
+                    <button disabled={!c.nodes.length} onClick={() => start(c)}>
+                      <BookOpen />
+                      开讲
+                    </button>
+                  )}
+                  <button
+                    disabled={!c.nodes.length}
+                    className="quiet"
+                    onClick={() => {
+                      setError("");
+                      setDetail(c.id);
+                    }}
+                  >
                     记忆档案
                     <ArrowUpRight />
                   </button>
@@ -192,7 +258,11 @@ export default function Library({ online, space, save, start }: Props) {
                 type="file"
                 required={!file}
                 accept=".pdf,.docx,.md,.txt"
-                onChange={(e) => { setFile(e.target.files?.[0]); setFailedDoc(undefined); }}
+                onChange={(e) => {
+                  setFile(e.target.files?.[0]);
+                  setFailedId(undefined);
+                  setError("");
+                }}
               />
             </label>
             <label>
@@ -203,11 +273,7 @@ export default function Library({ online, space, save, start }: Props) {
                 placeholder="选填，如数据结构"
               />
             </label>
-            <p className="meta">
-              {online
-                ? "上传后将等待服务端完成解析。"
-                : "本地演示按原文分段建立记忆档案。"}
-            </p>
+            <p className="meta">上传后由模型解析资料。</p>
             <p role="alert">{error}</p>
             <button className="primary" disabled={!file || busy}>
               {busy ? "正在解析…" : error ? "重新解析" : "解析资料"}
@@ -221,7 +287,17 @@ export default function Library({ online, space, save, start }: Props) {
           <h2>{doc.title}</h2>
           <div className="tools">
             {["Markdown", "JSON"].map((v, i) => (
-              <button key={v} disabled={exporting} onClick={() => void exportArchive(doc, i ? "json" : "md")}>
+              <button
+                key={v}
+                onClick={async () => {
+                  try {
+                    if (online) await exportMemory(doc, i ? "json" : "md");
+                    else archive(doc, space.logs, !!i);
+                  } catch (e) {
+                    setError((e as Error).message);
+                  }
+                }}
+              >
                 导出 {v}
               </button>
             ))}
@@ -237,27 +313,33 @@ export default function Library({ online, space, save, start }: Props) {
                 </small>
               </summary>
               <p>{n.summary}</p>
-              {!!n.keyPoints?.length && <ul>{n.keyPoints.map((point, i) => <li key={i}>{point}</li>)}</ul>}
+              {n.points?.length ? (
+                <ul>
+                  {n.points.map((p, i) => (
+                    <li key={i}>{p}</li>
+                  ))}
+                </ul>
+              ) : null}
               <label>
                 个人笔记
                 <textarea
                   value={n.note}
                   onChange={(e) =>
                     save((s) => ({
-                      ...s,
-                      courses: s.courses.map((c) =>
-                        c.id !== doc.id
-                          ? c
-                          : {
-                              ...c,
-                              nodes: c.nodes.map((x) =>
-                                x.id !== n.id
-                                  ? x
-                                  : { ...x, note: e.target.value },
-                              ),
-                            },
-                      ),
-                    }))
+                          ...s,
+                          courses: s.courses.map((c) =>
+                            c.id !== doc.id
+                              ? c
+                              : {
+                                  ...c,
+                                  nodes: c.nodes.map((x) =>
+                                    x.id !== n.id
+                                      ? x
+                                      : { ...x, note: e.target.value },
+                                  ),
+                                },
+                          ),
+                        }))
                   }
                 />
               </label>
@@ -265,20 +347,32 @@ export default function Library({ online, space, save, start }: Props) {
                 <button
                   onClick={async () => {
                     try {
-                      await syncNote(doc.id, n.id, n.note);
-                      save((s) => ({ ...s, courses: s.courses.map((c) => c.id !== doc.id ? c : {
-                        ...c, nodes: c.nodes.map((v) => v.id === n.id ? { ...v, syncedNote: n.note } : v),
-                      }) }));
+                      const value = n.note;
+                      await syncNote(doc.id, n.id, value);
+                      save((s) => ({
+                        ...s,
+                        courses: s.courses.map((d) =>
+                          d.id !== doc.id
+                            ? d
+                            : {
+                                ...d,
+                                nodes: d.nodes.map((x) =>
+                                  x.id !== n.id ? x : { ...x, syncedNote: value },
+                                ),
+                              },
+                        ),
+                      }));
                       setError("笔记已同步。");
                     } catch (e) {
                       setError((e as Error).message);
                     }
                   }}
                 >
-                  同步笔记
+                  {n.syncedNote !== undefined && n.note !== n.syncedNote
+                    ? "同步笔记（未保存）"
+                    : "同步笔记"}
                 </button>
               )}
-              {online && <small>{n.note === n.syncedNote ? "笔记已同步" : "笔记尚未同步"}</small>}
             </details>
           ))}
           <h3>概念关联</h3>

@@ -1,0 +1,396 @@
+/* LJHAgent's neutral settings layout and model profile cards. */
+dialog.settings-dialog {
+  width: min(960px, calc(100% - 48px));
+  height: min(840px, 90dvh);
+  max-height: 90dvh;
+  overflow: hidden;
+}
+
+.settings-dialog > .dialog-content {
+  height: 100%;
+  display: flex;
+  flex-direction: column;
+  padding: 0;
+}
+
+.settings-dialog > .dialog-content > header {
+  flex-shrink: 0;
+  min-height: 64px;
+  padding: 8px 24px;
+  margin: 0;
+  border-bottom: 1px solid var(--line);
+}
+
+.settings-dialog > .dialog-content > header > button,
+.model-editor > .dialog-content > header > button {
+  flex-shrink: 0;
+  width: 40px;
+  padding: 0;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+}
+
+.settings-dialog > .dialog-content > header > button:hover,
+.model-editor > .dialog-content > header > button:hover {
+  background: var(--surface);
+  color: var(--ink);
+}
+
+.settings-layout {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: 180px minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr);
+}
+
+.settings-nav {
+  padding: 24px 14px;
+  overflow-y: auto;
+  background: var(--surface);
+}
+
+.settings-nav button {
+  width: 100%;
+  justify-content: start;
+  min-height: 44px;
+  margin-bottom: 6px;
+  padding: 10px 16px;
+  color: var(--muted);
+  font-weight: 600;
+  background: transparent;
+  border-color: transparent;
+}
+
+.settings-nav button:hover,
+.settings-nav button[aria-current="page"] {
+  color: var(--ink);
+  background: var(--selected);
+}
+
+.settings-panel {
+  min-width: 0;
+  min-height: 0;
+  padding: 30px 32px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-width: thin;
+  scrollbar-gutter: stable;
+}
+
+.settings-panel-heading {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px 12px;
+  margin-bottom: 18px;
+}
+
+.settings-panel-heading h3 {
+  margin: 0;
+  font-size: 24px;
+  letter-spacing: -0.025em;
+}
+
+.settings-subtitle {
+  margin: 0;
+  font-size: 15px;
+}
+
+.settings-empty,
+.model-account {
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+}
+
+.settings-empty p,
+.model-account p {
+  margin: 4px 0 10px;
+}
+
+.settings-archive-hint {
+  margin: 0 0 12px;
+}
+
+.settings-bindings {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+
+.settings-panel .settings-binding {
+  display: grid;
+  align-items: center;
+  grid-template-columns: minmax(104px, 1fr) minmax(0, 2fr);
+  gap: 12px;
+  margin: 0;
+  padding: 10px 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+
+.settings-binding select {
+  min-width: 0;
+  width: 100%;
+}
+
+.settings-binding label {
+  margin: 0;
+  font-weight: 600;
+}
+
+.model-group-heading {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  border-radius: 12px;
+  background: var(--surface);
+}
+
+.model-group-heading h4 {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+}
+
+.model-group-heading button {
+  min-height: 44px;
+  font-weight: 600;
+}
+
+.model-group-heading > button {
+  white-space: nowrap;
+}
+
+.model-group-heading h4 > button {
+  width: 100%;
+  justify-content: start;
+  padding-inline: 8px;
+  text-align: start;
+}
+
+.model-group-heading h4 svg:first-child {
+  width: 12px;
+}
+
+.model-group-heading h4 svg {
+  color: var(--muted);
+}
+
+.model-group-items:not([hidden]) {
+  display: grid;
+  gap: 12px;
+  margin: 8px 0 0 16px;
+  padding-inline-start: 12px;
+  border-inline-start: 1px solid var(--line);
+}
+
+.model-group-items > .meta {
+  padding-inline-start: 8px;
+}
+
+.model-card,
+.model-identity,
+.model-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.model-card {
+  justify-content: space-between;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 20px;
+}
+
+.model-card[data-active="true"] {
+  border-color: #686868;
+  background: #f1f1f1;
+}
+
+.model-identity,
+.model-info {
+  min-width: 0;
+}
+
+.model-info {
+  display: grid;
+  gap: 2px;
+}
+
+.model-info small {
+  font-size: 12px;
+}
+
+.model-icon {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 40px;
+  height: 40px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: white;
+  font-size: 12px;
+}
+
+.model-actions {
+  flex-shrink: 0;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.model-actions button {
+  min-height: 34px;
+  padding: 5px 9px;
+  font-size: 13px;
+}
+
+.model-actions button:not(.quiet) {
+  border-color: var(--control-line);
+}
+
+.model-actions .quiet,
+.model-active {
+  color: var(--muted);
+}
+
+.model-active {
+  font-size: 12px;
+}
+
+dialog.model-editor {
+  width: min(620px, calc(100% - 32px));
+  max-height: calc(100dvh - 48px);
+}
+
+.model-editor .dialog-content > header {
+  padding-bottom: 12px;
+  border-bottom: 1px solid var(--line);
+}
+
+.model-editor-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.model-editor-modes button {
+  flex: 1 1 auto;
+  min-height: 44px;
+}
+
+.model-editor-modes [aria-pressed="true"] {
+  border-color: var(--control-line);
+  background: var(--selected);
+}
+
+.model-editor .model-key-clear {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.model-editor .model-key-clear input {
+  accent-color: var(--ink);
+}
+
+.model-account {
+  margin-block: 16px;
+}
+
+.model-account a {
+  color: var(--ink);
+  text-underline-offset: 3px;
+}
+
+.model-editor-actions {
+  justify-content: flex-end;
+}
+
+@media (max-width: 820px) {
+  .settings-layout {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: auto minmax(0, 1fr);
+  }
+
+  .settings-nav {
+    display: flex;
+    gap: 4px;
+    padding: 8px;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .settings-nav button {
+    width: auto;
+    margin: 0;
+  }
+
+  .settings-panel {
+    padding: 20px 24px;
+  }
+
+  .model-card {
+    flex-wrap: wrap;
+  }
+
+  .model-actions {
+    flex-basis: 100%;
+    padding-inline-start: 52px;
+  }
+
+  .model-actions button {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 480px) {
+  dialog.settings-dialog {
+    width: calc(100% - 16px);
+    height: 94dvh;
+    max-height: 94dvh;
+    border-radius: 20px;
+  }
+
+  .settings-dialog > .dialog-content > header {
+    padding-inline: 16px;
+  }
+
+  .settings-dialog > .dialog-content > header > button {
+    width: 44px;
+  }
+
+  .settings-panel {
+    padding: 16px;
+  }
+
+  .model-group-items:not([hidden]) {
+    margin-inline-start: 8px;
+    padding-inline-start: 8px;
+  }
+
+  .model-actions {
+    padding-inline-start: 0;
+  }
+
+  .settings-panel .settings-binding {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 4px;
+  }
+
+  .model-editor > .dialog-content {
+    padding: 16px;
+  }
+}
+
+@media (max-height: 560px) {
+  .settings-dialog > .dialog-content > header {
+    min-height: 50px;
+    padding-block: 4px;
+  }
+}

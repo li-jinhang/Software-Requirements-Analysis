@@ -9,10 +9,10 @@ cd backend
 python -m venv .venv
 .\.venv\Scripts\python -m pip install -r requirements.txt
 Copy-Item .env.example .env   # 首次配置时执行
-.\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python -m uvicorn app.main:app --host 127.0.0.1 --port 18080
 ~~~
 
-Swagger UI 位于 http://127.0.0.1:8000/docs，完整字段定义可从 /openapi.json 读取。下文路径均相对于 **/api/v1**。默认允许 localhost 和 127.0.0.1 上的 5173、3000、4173 端口。更换前端端口时修改 CORS_ORIGINS 后重启。教学演示使用单个 Uvicorn worker。
+Swagger UI 位于 http://127.0.0.1:18080/docs，完整字段定义可从 /openapi.json 读取。下文路径均相对于 **/api/v1**。默认允许 localhost 和 127.0.0.1 上的 5173、3000、4173 端口。更换前端端口时修改 CORS_ORIGINS 后重启。教学演示使用单个 Uvicorn worker。
 
 | 角色 | 用户名 | 密码 | 首次登录可见内容 |
 | --- | --- | --- | --- |
@@ -98,7 +98,7 @@ data: {"message_id":123}
 
 ~~~
 
-chunk_index 从 0 开始。score 为文档内混合排序分数（0 到 1），可用于比较本次命中。左窗按 token 拼接文本并消费 memory_update；右窗展示 citation 和文本，可将左窗的问题直接作为右窗 content 提交。done 表示本轮消息和关联记忆已提交；若连接提前结束，先刷新历史再决定是否重发，避免重复计分。
+chunk_index 从 0 开始。score 为文档内混合排序分数（0 到 1），可用于比较本次命中。支持流式输出的模型可在 token 前发送 preview 事件，其 data 为 `{"text":"正在生成的可读正文"}`。每个 preview 替换上一条预览，空字符串清除预览。按 token 拼接最终文本，消费 memory_update 或 citation 更新页面。done 表示本轮消息和关联记忆已提交，并可用最终文本替换预览。流开始后若推理失败，会发送 error 事件，其 data 为 `{"detail":"错误说明"}`。若流中断，先刷新历史再决定是否重发，避免重复计分。
 
 ~~~javascript
 async function streamTurn(url, accessToken, content, onEvent) {
@@ -145,3 +145,23 @@ async function streamTurn(url, accessToken, content, onEvent) {
 
 错误使用 FastAPI 的 detail 字段。401 为令牌过期、未登录或凭据错误；403 为权限不足；404 为记录不存在、非本人资源或报告尚未生成；409 为重名、状态冲突或会话已结束；413 为文件过大；415 为不支持的后缀；422 为字段校验或文件解析错误。解析失败时示例：`{"detail":{"doc_id":4,"message":"无可解析文字；扫描件请上传文字版"}}`。字段校验的 detail 为错误数组。流开始后的故障表现为流中断，客户端应检查 done。
 
+
+### 模型连接和应用绑定
+
+以下路径相对 `/api/v1/model-settings`。本机回环连接可直接使用模型管理接口。来自浏览器的跨端口请求须使用受信任的本机 Origin。普通服务端账号可读取 `GET /active` 查看各教学环节的实际模型名称。浏览器接收方案 ID、模型名、连接方式及是否已保存密钥。
+
+| 方法与路径 | 行为 |
+| --- | --- |
+| GET 根路径 | 返回 profiles、bindings、environment_live 和 ChatGPT 授权状态 |
+| GET /availability | 返回 extract、feynman、encyclopedia、report 各环节是否有可用配置 |
+| GET /export | 返回版本为 1 的 JSON，包含 profiles 和 bindings。API Key 与 ChatGPT 授权保存在本机 |
+| POST /import | 校验并合并导出的 JSON。保留已有 ID 和绑定，返回 added、skipped、bindings_added |
+| POST /profiles，PUT /profiles/{id} | 保存 name、mode（api / chatgpt）、model、base_url、可选 api_key。编辑时省略 api_key 沿用原地址的密钥，空字符串清除密钥 |
+| POST /catalog，GET /profiles/{id}/models | 从草稿连接或已保存方案获取模型 ID 列表；草稿可带原方案 id |
+| POST /profiles/{id}/test | 实际请求模型，返回 latency_ms |
+| PUT /bindings/{purpose} | 传 `{"profile_id":"方案ID"}` 或 null。purpose 为 default、extract、feynman、encyclopedia、report |
+| DELETE /profiles/{id} | 删除未绑定方案 |
+| POST /chatgpt/login | 建立限时 PKCE 授权，返回 url；本机浏览器完成授权后查询根路径获取结果 |
+| DELETE /chatgpt/login，DELETE /chatgpt/account | 取消待完成授权，或退出服务端 ChatGPT 账号 |
+
+缺少操作所需模型时返回 409，detail 对象包含 code（model_required）、purpose 和 message。

@@ -3,7 +3,6 @@ import { test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { build } from "esbuild";
 
-// Vite's existing esbuild dependency bundles the actual adapter for Node tests.
 const { outputFiles } = await build({
   entryPoints: [fileURLToPath(new URL("../src/api.ts", import.meta.url))],
   bundle: true, write: false, format: "esm", platform: "browser", packages: "external",
@@ -13,100 +12,113 @@ globalThis.sessionStorage = { values: new Map(), setItem(k, v) { this.values.set
 globalThis.window = new EventTarget();
 const api = await import("data:text/javascript;base64," + Buffer.from(outputFiles[0].text).toString("base64"));
 const response = (data, status = 200) => new Response(JSON.stringify(data), { status, headers: { "content-type": "application/json" } });
-function eventStream(frames, slice = 7) {
+const frame = (kind, data) => `event: ${kind}\r\ndata: ${JSON.stringify(data)}\r\n\r\n`;
+function eventStream(frames) {
   const bytes = new TextEncoder().encode(frames);
   return new Response(new ReadableStream({ start(controller) {
-    for (let offset = 0; offset < bytes.length; offset += slice) controller.enqueue(bytes.slice(offset, offset + slice));
+    // One-byte chunks deliberately split multi-byte Chinese characters.
+    for (const byte of bytes) controller.enqueue(new Uint8Array([byte]));
     controller.close();
-  } }), { headers: { "content-type": "text/event-stream; charset=utf-8" } });
+  } }), { headers: { "content-type": "text/event-stream" } });
 }
+const send = (callback = () => {}) => api.stream("2", 0, "我的讲解", new AbortController().signal, callback);
 
-test("SSE decodes split UTF-8, CRLF, citations, memory updates and final message ID", async () => {
-  const received = [];
-  await api.consumeStream(eventStream(
-    'event: token\r\ndata: {"delta":"中文追问？"}\r\n\r\n' +
-    'event: citation\ndata: {"citations":[{"doc_title":"课件","chunk_index":0,"snippet":"原文","score":0.8}]}\n\n' +
-    'event: memory_update\ndata: {"updates":[{"node_id":1,"mastery_score":60,"status":"learning","tag":"继续深入 +8"}]}\n\n' +
-    'event: done\ndata: {"message_id":23}\n\n', 1), (event) => received.push(event));
-  assert.equal(received[0].delta, "中文追问？");
-  assert.equal(received[1].citations[0].snippet, "原文");
-  assert.equal(received[2].updates[0].mastery_score, 60);
-  assert.deepEqual(received[3], { type: "done", message_id: 23 });
+test("split UTF-8 and CRLF preserve citations, committed scores and final ID", async () => {
+  globalThis.fetch = async () => eventStream(
+    frame("citation", { citations: [{ doc_title: "课件", chunk_index: 0, snippet: "原文", score: 0.8 }] }) +
+    frame("token", { delta: "中文追问？" }) +
+    frame("memory_update", { updates: [{ node_id: 1, concept_name: "梯度", delta: 8, mastery_score: 60, status: "learning", tag: "继续深入 +8" }] }) +
+    frame("done", { message_id: 23 }));
+  const parts = [];
+  const result = await send(text => parts.push(text));
+  assert.deepEqual(parts, ["中文追问？"]);
+  assert.equal(result.reply.id, 23);
+  assert.equal(result.reply.citations[0].snippet, "原文");
+  assert.equal(result.scores.get("1").score, 60);
 });
 
-test("missing done and explicit error never become a successful turn", async () => {
-  await assert.rejects(api.consumeStream(eventStream('event: token\ndata: {"delta":"半段回复"}\n\n'), () => {}), /回复中断/);
-  await assert.rejects(api.consumeStream(eventStream('event: error\ndata: {"detail":"模型超时"}\n\n'), () => {}), /模型超时/);
-  await assert.rejects(api.consumeStream(eventStream('event: done\ndata: {}\n\n'), () => {}), /格式有误/);
-  await assert.rejects(api.consumeStream(eventStream('event: memory_update\ndata: {"updates":[{"node_id":1,"mastery_score":999}]}\n\n'), () => {}), /格式有误/);
+test("provider previews remain provisional until a committed done event", async () => {
+  globalThis.fetch = async () => eventStream(frame("preview", { text: "正在生成" }) + frame("token", { delta: "最终回复" }) + frame("done", { message_id: 3 }));
+  const parts = [];
+  assert.equal((await send(text => parts.push(text))).reply.text, "最终回复");
+  assert.deepEqual(parts, ["正在生成"]);
 });
 
-test("message, persona and note requests match the backend contract", async () => {
+test("early EOF, provider errors and invalid memory never become successful turns", async () => {
+  for (const [events, message] of [
+    [frame("token", { delta: "半段" }), /回复中断/],
+    [frame("error", { detail: "模型超时" }), /模型超时/],
+    [frame("done", {}), /缺少消息编号/],
+    [frame("memory_update", { updates: [{ node_id: 1, mastery_score: 999 }] }), /格式有误/],
+  ]) {
+    globalThis.fetch = async () => eventStream(events);
+    await assert.rejects(send(), message);
+  }
+});
+
+test("opening, focus, persona and notes match backend contracts", async () => {
   const requests = [];
   globalThis.fetch = async (url, options) => {
     requests.push({ url, ...options });
-    return url.endsWith("/stream") ? eventStream('event: done\ndata: {"message_id":1}\n\n') : response({});
+    return url.endsWith("/stream") ? eventStream(frame("done", { message_id: 1 })) : response({ id: 2 });
   };
   api.token("test-token");
-  await api.stream("2", 0, "我的讲解", new AbortController().signal, () => {});
-  await api.changePersona("2", "严苛考官");
+  await api.createRemote("3", "严苛考官", "4");
+  await api.stream("2", 0, "", new AbortController().signal, () => {}, true);
+  await api.setPersona("2", "互助同窗");
   await api.syncNote("3", "4", "复习边界");
-  assert.deepEqual(JSON.parse(requests[0].body), { content: "我的讲解" });
-  assert.equal(requests[0].headers.get("Authorization"), "Bearer test-token");
-  assert.deepEqual(JSON.parse(requests[1].body), { persona_type: "examiner" });
-  assert.equal(requests[2].url, "http://backend.test/api/v1/documents/3/nodes/4/note");
-  assert.deepEqual(JSON.parse(requests[2].body), { user_note: "复习边界" });
+  assert.deepEqual(JSON.parse(requests[0].body), { doc_id: 3, persona_type: "examiner", node_id: 4 });
+  assert.match(requests[1].url, /2\/opening\/stream$/);
+  assert.equal(requests[1].headers.get("Authorization"), "Bearer test-token");
+  assert.deepEqual(JSON.parse(requests[2].body), { persona_type: "peer" });
+  assert.match(requests[3].url, /documents\/3\/nodes\/4\/note$/);
+  assert.deepEqual(JSON.parse(requests[3].body), { user_note: "复习边界" });
 });
 
-test("exports use authenticated server downloads", async () => {
-  const paths = [];
-  globalThis.fetch = async (url) => { paths.push(url); return response({}); };
-  await api.serverExport("sqlite");
-  await api.serverExport("json");
-  await api.memoryExport("3", "md");
-  assert.deepEqual(paths, [
-    "http://backend.test/api/v1/admin/export/db", "http://backend.test/api/v1/admin/export/json",
-    "http://backend.test/api/v1/documents/3/memory/export?format=md",
-  ]);
-});
-
-test("401 clears the service token and notifies authentication recovery", async () => {
+test("401 expires a session while wrong login credentials retain the old token", async () => {
   let expired = false;
-  window.addEventListener("fm:auth-expired", () => { expired = true; }, { once: true });
-  api.token("expired-token");
+  window.addEventListener("fm:expired", () => { expired = true; }, { once: true });
+  api.token("old-token");
   globalThis.fetch = async () => response({ detail: "请重新登录" }, 401);
-  await assert.rejects(api.currentUser(), /请重新登录/);
+  await assert.rejects(api.signIn("admin", "incorrect"), /请重新登录/);
+  assert.equal(api.token(), "old-token");
+  await assert.rejects(api.serverStats(), /请重新登录/);
   assert.equal(api.token(), "");
   assert.equal(expired, true);
 });
 
-test("mistyped login credentials do not invalidate an existing signed-in account", async () => {
-  api.token("still-valid-token");
-  globalThis.fetch = async () => response({ detail: "用户名或密码错误" }, 401);
-  await assert.rejects(api.signIn("admin", "incorrect"), /用户名或密码错误/);
-  assert.equal(api.token(), "still-valid-token");
+test("server workspace restores focus and system messages with authoritative role", async () => {
+  const rows = [{ id: 2, doc_id: 3, persona_type: "examiner", status: "active", target_node_id: 5 }];
+  globalThis.fetch = async url => {
+    if (url.endsWith("/auth/me")) return response({ username: "student" });
+    if (url.endsWith("/documents")) return response([{ id: 3, title: "课程", file_type: "md", parse_status: "completed" }]);
+    if (url.endsWith("/memory")) return response({ nodes: [{ id: 5, concept_name: "梯度", mastery_score: 30, user_note: "原笔记", status: "learning" }], edges: [] });
+    if (url.endsWith("/messages")) return response([{ id: 1, window_type: "feynman", sender_role: "system", content: "听众已切换为严苛考官" }]);
+    if (url.endsWith("/sessions")) return response(rows);
+    throw Error(url);
+  };
+  const space = await api.restoreSpace("api:http://backend.test:student", new AbortController().signal);
+  assert.equal(space.sessions[0].focus, "5");
+  assert.equal(space.courses[0].nodes[0].syncedNote, "原笔记");
+  const history = await api.sessionHistory("2");
+  assert.equal(history.left[0].who, "系统");
+  assert.equal(history.role, "严苛考官");
 });
 
-test("workspace restores server records, unsent drafts and report session IDs", async () => {
-  const node = { id: 1, concept_name: "学习率", summary: "原文", importance: 4, mastery_score: 35,
-    user_note: "已同步笔记", status: "weak", key_points: ["边界"], lookup_count: 1 };
-  globalThis.fetch = async (url) => {
-    if (url.endsWith("/documents")) return response([{ id: 3, title: "课程", subject: "算法", file_type: "md", parse_status: "completed" }]);
-    if (url.endsWith("/sessions")) return response([{ id: 2, doc_id: 3, persona_type: "peer", status: "completed", target_node_id: 1 }]);
-    if (url.endsWith("/memory")) return response({ nodes: [node], edges: [], weaknesses: [] });
-    if (url.endsWith("/report")) return response({ id: 99, session_id: 2, created_at: "2026-11-24T00:00:00", coverage_score: 80,
-      accuracy_score: 70, clarity_score: 60, logic_score: 50, overall_comment: "继续复讲", weakness_summary: [], review_plan: "举例" });
-    throw Error("Unexpected request: " + url);
-  };
-  const restored = await api.loadWorkspace({ courses: [], reports: [], logs: [], sessions: [{ id: "2", drafts: ["还没发出的讲解", ""] }] });
-  assert.equal(restored.courses[0].nodes[0].note, "已同步笔记");
-  assert.equal(restored.courses[0].nodes[0].keyPoints[0], "边界");
-  assert.equal(restored.sessions[0].drafts[0], "还没发出的讲解");
-  assert.equal(restored.reports[0].id, "2");
-  assert.equal(restored.reports[0].date, "2026-11-24T00:00:00Z");
-  const pendingNote = await api.loadWorkspace({ ...restored, courses: [{ ...restored.courses[0], nodes: [
-    { ...restored.courses[0].nodes[0], note: "尚未同步的笔记", syncedNote: "旧笔记" },
-  ] }] });
-  assert.equal(pendingNote.courses[0].nodes[0].note, "尚未同步的笔记");
-  assert.equal(pendingNote.courses[0].nodes[0].syncedNote, "已同步笔记");
+test("memory refresh preserves unsynced notes and exports use real server paths", async () => {
+  const remote = { nodes: [{ id: "5", note: "服务器", syncedNote: "服务器" }] };
+  assert.equal(api.preserveNotes(remote, { nodes: [{ id: "5", note: "未同步", syncedNote: "旧笔记" }] }).nodes[0].note, "未同步");
+  const paths = [];
+  globalThis.fetch = async url => { paths.push(url); return response({}); };
+  await api.serverExport("sqlite");
+  await api.serverExport("json");
+  assert.deepEqual(paths, ["http://backend.test/api/v1/admin/export/db", "http://backend.test/api/v1/admin/export/json"]);
+});
+
+test("report ID and session ID remain distinct when restoring reports", async () => {
+  globalThis.fetch = async () => response({ id: 18, created_at: "2026-11-24T00:00:00", coverage_score: 80, accuracy_score: 81, clarity_score: 82, logic_score: 83, weakness_summary: ["边界"], review_plan: "1. 复讲" });
+  const report = await api.remoteReport("2", "3", "课程", "GET");
+  assert.equal(report.id, "18");
+  assert.equal(report.sessionId, "2");
+  assert.deepEqual(report.scores, [80, 81, 82, 83]);
 });

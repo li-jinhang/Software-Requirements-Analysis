@@ -14,8 +14,9 @@ workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="feynman-turn")
 from app.db.models import Session, Document, KnowledgeNode, Message, DiagnosticReport, now, public
 from app.api.v1.documents import owned
 from app.schemas import SessionCreate, PersonaChange, Turn
-from app.agents import feynman_agent, encyclopedia_agent, report_agent
-from app.agents.contracts import AgentInput, MemoryUpdate, Citation, Token, Done, TurnMetadata, EVENT_NAMES
+from app.agents import feynman_agent, model_teaching
+from app.services.model_profiles import ModelError, require_profile
+from app.agents.contracts import AgentInput, MemoryUpdate, Citation, Token, Done, TurnMetadata, Preview, EVENT_NAMES
 from app.agents.teaching.model import TeachingModelError
 
 router = APIRouter(prefix="/sessions", tags=["会话"])
@@ -48,6 +49,7 @@ def create(body: SessionCreate, db=Depends(get_db), user=Depends(current_user)):
         node = db.get(KnowledgeNode, body.node_id)
         if node is None or node.doc_id != body.doc_id:
             raise HTTPException(422, "目标知识点不属于当前资料")
+    require_profile("feynman")
     row = Session(user_id=user.id, target_node_id=body.node_id,
                   **body.model_dump(exclude={"node_id"}))
     db.add(row)
@@ -117,12 +119,20 @@ def produce(id, content, window, user_id, events, action="explain"):
                 session_id=id, doc_id=s.doc_id, persona_type=s.persona_type, content=content,
                 target_node_id=s.target_node_id, action=action,
             )
-            agent = feynman_agent if window == "feynman" else encyclopedia_agent
+            if window == "feynman":
+                require_profile(window)
+                stream = feynman_agent.stream(db, turn)
+            else:
+                prepared = model_teaching.prepare(
+                    db, turn, window, require_profile(window),
+                    emit_preview=lambda text: events.put(frame(Preview(text=text))),
+                )
+                stream = model_teaching.apply(db, turn, prepared)
             text = []
             meta = {}
             node_ids = []
             pending_updates = []
-            for event in agent.stream(db, turn):
+            for event in stream:
                 if isinstance(event, TurnMetadata):
                     details = dict(event.metadata)
                     node_ids.extend(details.pop("related_node_ids", []))
@@ -164,11 +174,12 @@ def conversation(id, body, window, db, user, action="explain"):
     session = owned(db, Session, id, user)
     if session.status != "active":
         raise HTTPException(409, "会话已结束")
+    require_profile(window)
     events = SimpleQueue()
     workers.submit(produce, id, body.content if body else "", window, user.id, events, action)
     first = events.get()
     if isinstance(first, Exception):
-        if isinstance(first, TeachingModelError):
+        if isinstance(first, (TeachingModelError, ModelError)):
             raise HTTPException(502, str(first)) from first
         raise first
 
@@ -176,7 +187,7 @@ def conversation(id, body, window, db, user, action="explain"):
         yield first
         while (item := events.get()) is not None:
             if isinstance(item, Exception):
-                detail = str(item) if isinstance(item, TeachingModelError) else "对话中断，本轮未提交，请刷新历史后重试。"
+                detail = str(item) if isinstance(item, (TeachingModelError, ModelError)) else "对话中断，本轮未提交，请刷新历史后重试。"
                 yield "event: error\ndata: " + json.dumps({"detail": detail}, ensure_ascii=False) + "\n\n"
                 return
             yield item
@@ -212,12 +223,13 @@ def finish(id: int, db=Depends(get_db), user=Depends(current_user)):
 
 def finish_locked(id, db, user):
     s = owned(db, Session, id, user)
-    db.execute(update(Session).where(Session.id == id).values(status="completed"))
     old = db.scalar(select(DiagnosticReport).where(DiagnosticReport.session_id == id))
     if old:
         db.commit()
         return public(old)
-    data = report_agent.generate(db, s).model_dump()
+    data = model_teaching.diagnose(db, s, require_profile("report")).model_dump()
+    lock_active(db, id)
+    s.status = "completed"
     data["weakness_summary"] = json.dumps(data["weakness_summary"], ensure_ascii=False)
     row = DiagnosticReport(session_id=id, **data)
     db.add(row)
