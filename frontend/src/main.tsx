@@ -9,7 +9,7 @@ import {
   Menu,
   BookOpen,
   ChevronRight,
-  Settings2,
+  Settings as SettingsIcon,
   GraduationCap,
   ChevronsUpDown,
 } from "lucide-react";
@@ -28,7 +28,7 @@ import { Concept, Course, Space, initial, roles } from "./model";
 import { User, student, admin, authenticate, read, write } from "./storage";
 import { Dialog } from "./ui";
 import { newSession } from "./model";
-const ModelSettingsPage = lazy(() => import("./ModelSettings"));
+const Settings = lazy(() => import("./ModelSettings"));
 const Workbench = lazy(() => import("./Workbench"));
 import "./style.css";
 const Graph = lazy(() =>
@@ -43,7 +43,6 @@ const pages = [
   ["studio", "双窗工作台", PanelsTopLeft],
   ["graph", "知识图谱", Workflow],
   ["reports", "历史报告", Files],
-  ["models", "模型配置", Settings2],
   ["admin", "后台数据中心", ChartNoAxesColumn],
 ] as const;
 function Auth({
@@ -131,12 +130,18 @@ function Auth({
     </Dialog>
   );
 }
+function workspaceRoute() {
+  return location.hash.slice(1) || "library";
+}
 function App() {
   const [user, setUser] = useState<User>(
       () => JSON.parse(sessionStorage.getItem("fm.user") || "null") || student,
     ),
     [space, setSpace] = useState(() => read(user.id)),
-    [page, setPage] = useState(() => location.hash.slice(1) || "library"),
+    [page, setPage] = useState(() =>
+      workspaceRoute() === "models" ? "library" : workspaceRoute(),
+    ),
+    [settings, setSettings] = useState(() => workspaceRoute() === "models"),
     [auth, setAuth] = useState(false),
     [nav, setNav] = useState(false),
     [setup, setSetup] = useState(false),
@@ -216,9 +221,14 @@ function App() {
   }, [user.id]);
   useEffect(() => {
     const change = () => {
-      setPage(location.hash.slice(1) || "library");
+      if (workspaceRoute() === "models") {
+        setSettings(true);
+        history.replaceState(history.state, "", "#library");
+      }
+      setPage(workspaceRoute());
       setNav(false);
     };
+    if (workspaceRoute() === "models") change();
     window.addEventListener("hashchange", change);
     return () => window.removeEventListener("hashchange", change);
   }, []);
@@ -253,6 +263,7 @@ function App() {
     setSid("");
     setRid("");
     setAuth(false);
+    setSettings(false);
     setSetup(false);
     go(u.admin ? "admin" : "library");
   }
@@ -323,7 +334,6 @@ function App() {
             >
               <Icon />
               {label}
-              {page === key && <ChevronRight className="end" />}
             </button>
           ))}
         </nav>
@@ -347,7 +357,7 @@ function App() {
         </div>
       </aside>
       <main>
-        <div className="topline">
+        <header className="topline">
           <button
             className="hamb"
             onClick={() => setNav(!nav)}
@@ -355,10 +365,21 @@ function App() {
           >
             <Menu />
           </button>
-          <span>个人空间</span>
-          <ChevronRight />
-          {title}
-        </div>
+          <div className="workspace-location">
+            <span>个人空间</span>
+            <ChevronRight aria-hidden="true" />
+            <strong>{title}</strong>
+          </div>
+          <button
+            className="settings-trigger"
+            aria-label="设置"
+            aria-haspopup="dialog"
+            title="设置"
+            onClick={() => setSettings(true)}
+          >
+            <SettingsIcon aria-hidden="true" />
+          </button>
+        </header>
         <div className={"content " + (page === "studio" ? "studio" : "")}>
           {err && <p role="alert">{err}</p>}
           <Suspense fallback={<p>正在载入…</p>}>
@@ -372,13 +393,6 @@ function App() {
                   "正在恢复服务端学习空间…"
                 )}
               </div>
-            ) : page === "models" ? (
-              <ModelSettingsPage
-                key={user.id}
-                online={online}
-                admin={user.admin}
-                login={() => setAuth(true)}
-              />
             ) : page === "admin" ? (
               user.admin ? (
                 <Admin online={online} />
@@ -459,6 +473,20 @@ function App() {
           </Suspense>
         </div>
       </main>
+      {settings && (
+        <Suspense fallback={null}>
+          <Settings
+            key={user.id}
+            online={online}
+            admin={user.admin}
+            close={() => setSettings(false)}
+            login={() => {
+              setSettings(false);
+              setAuth(true);
+            }}
+          />
+        </Suspense>
+      )}
       {auth && <Auth login={login} close={() => setAuth(false)} />}
       {setup && c && (
         <Dialog
