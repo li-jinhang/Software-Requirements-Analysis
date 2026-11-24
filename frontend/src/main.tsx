@@ -462,6 +462,11 @@ function App() {
               <Workbench
                 online={online}
                 key={sess.id}
+                enterReview={(id, course) => {
+                  const review = newSession(id, course, course.nodes[0], sess.role);
+                  save(s => ({...s, sessions: [{...review, review: true}, ...s.sessions]}));
+                  setSid(id);
+                }}
                 space={space}
                 session={sess}
                 save={save}

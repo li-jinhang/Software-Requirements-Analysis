@@ -1,5 +1,5 @@
 import {
-  CognitiveDoc, CognitiveUpdate, Correction,
+  CognitiveDoc, CognitiveUpdate, Correction, ReviewLists,
   CourseCitation,
   Concept,
   Course,
@@ -189,11 +189,17 @@ export async function exportMemory(doc: Course, format: "json" | "md") {
 }
 export const persona = (role: string) =>
   ["child", "peer", "examiner"][roles.indexOf(role)];
-export async function createRemote(doc: string, role: string, node?: string) {
+export const reviews = {
+  get: (doc: string, signal?: AbortSignal) => json<ReviewLists>(`/documents/${doc}/due-reviews`, {signal}),
+  skip: (doc: string, item: number) => json<ReviewLists>(`/documents/${doc}/reviews/${item}/skip`, post({})),
+  advance: (doc: string) => json<ReviewLists>(`/documents/${doc}/simulate-time-advance`, post({days: 1})),
+};
+export async function createRemote(doc: string, role: string, node?: string, reviewIds?: number[]) {
   const s = await (
     await request(
       "/sessions",
-      post({ doc_id: Number(doc), persona_type: persona(role), ...(node ? { node_id: Number(node) } : {}) }),
+      post({ doc_id: Number(doc), persona_type: persona(role), ...(node ? { node_id: Number(node) } : {}),
+        ...(reviewIds ? {mode: "review", target_item_ids: reviewIds} : {}) }),
     )
   ).json();
   if ((s.id ?? s.session_id) == null) throw Error("会话响应缺少编号。");
@@ -475,6 +481,8 @@ export async function serverExport(format: string) {
 }
 
 type SessionRow = {
+  mode?: string;
+  review_completed?: boolean;
   id: number;
   doc_id: number;
   persona_type: string;
@@ -510,6 +518,7 @@ export async function sessionHistory(id: string, signal?: AbortSignal) {
   const session = rows.find((s) => String(s.id) === id);
   return {
     ...history,
+    ...(session?.mode === "review" ? {review: true, reviewCompleted: session.review_completed} : {}),
     ...(session ? { role: roles[["child", "peer", "examiner"].indexOf(session.persona_type)], closed: session.status === "completed" } : {}),
   };
 }
@@ -545,6 +554,7 @@ export async function restoreSpace(
     focus: s.target_node_id ? String(s.target_node_id) : courses.find((c) => c.id === String(s.doc_id))?.nodes[0]?.id || "",
     role: roles[["child", "peer", "examiner"].indexOf(s.persona_type)],
     closed: s.status === "completed",
+    ...(s.mode === "review" ? {review: true, reviewCompleted: s.review_completed} : {}),
     left: [],
     right: [],
     drafts: ["", ""],

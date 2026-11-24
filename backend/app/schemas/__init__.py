@@ -43,7 +43,13 @@ class PersonaChange(Input):
     persona_type: Persona
 
 
+class TimeAdvance(Input):
+    days: int = Field(gt=0, le=3650)
+
+
 class SessionCreate(PersonaChange):
+    mode: Literal["teach", "review"] = "teach"
+    target_item_ids: list[int] = Field(default_factory=list)
     doc_id: int = Field(gt=0)
     title: str = Field(default="费曼练习", min_length=1, max_length=150)
     persona_type: Persona = "peer"

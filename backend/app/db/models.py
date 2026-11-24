@@ -83,6 +83,11 @@ class CognitiveItem(Base):
     status: Mapped[str] = mapped_column(default="untested")
     user_evidence: Mapped[str] = mapped_column(default="")
     issue_note: Mapped[str] = mapped_column(default="")
+    review_stage: Mapped[int] = mapped_column(default=0, server_default="0")
+    review_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    skip_count: Mapped[int] = mapped_column(default=0, server_default="0")
+    next_review_at: Mapped[datetime | None]
+    last_reviewed_at: Mapped[datetime | None]
     updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
 
 
@@ -110,6 +115,10 @@ class Session(Base):
     doc_id: Mapped[int] = fk("documents")
     title: Mapped[str]
     persona_type: Mapped[str]
+    mode: Mapped[str] = mapped_column(default="teach", server_default="teach")
+    target_item_ids: Mapped[list[int]] = mapped_column(JSON, default=list, server_default="[]")
+    review_cursor: Mapped[int] = mapped_column(default=0, server_default="0")
+    review_completed: Mapped[bool] = mapped_column(default=False, server_default="0")
     target_node_id: Mapped[int | None] = mapped_column(
         ForeignKey("knowledge_nodes.id", ondelete="SET NULL"), nullable=True
     )

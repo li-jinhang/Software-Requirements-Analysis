@@ -369,6 +369,9 @@ def export_memory_markdown(db, doc_id):
         for item in group["items"]:
             lines.append(f"- [{cognitive.LABELS[item['status']]}] {item['statement']}\n"
                          f"  - 判定标准：{item['key_criteria']}")
+            if item.get("next_review_at"):
+                lines.append(f"  - 复习阶段 {item['review_stage']} · 已评估 {item['review_count']} 次"
+                             f" · 下次复习 {item['next_review_at']} UTC")
             if item["user_evidence"]:
                 lines.append("  - 回答依据：" + item["user_evidence"])
             if item["issue_note"]:

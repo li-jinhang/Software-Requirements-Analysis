@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { lookupQuestion } from "./lookup";
+import { ReviewTools } from "./ReviewTools";
+import { animateCorrection } from "./correctionFlight";
 import { Dialog } from "./ui";
 import "./cognitive.css";
 import Markdown from "react-markdown";
@@ -22,12 +24,12 @@ import {
   remoteReport,
   sessionHistory,
   setPersona,
-  cognitiveDoc, refreshMemory,
+  cognitiveDoc, refreshMemory, createRemote,
   type TeachingPurpose,
 } from "./api";
 import {
   CognitiveDoc, CognitiveItem, CognitiveUpdate, Correction,
-  CourseCitation,
+  Course, CourseCitation,
   Message,
   Session,
   Space,
@@ -84,7 +86,7 @@ function SourceCard({ hit }: { hit: CourseCitation }) {
 }
 const markLabels = { mastered: "✓ 已掌握", partial: "◐ 待补全", wrong: "× 理解偏差", untested: "○ 待考核" };
 
-function Rubric({ doc, close }: { doc: CognitiveDoc; close: () => void }) {
+function Rubric({ doc, close, review, busy }: { doc: CognitiveDoc; close: () => void; review: (ids: number[]) => void; busy: boolean }) {
   return <Dialog drawer title="Agent 认知文档" close={close}>
     <CourseText text={doc.overview} />
     <p>总体掌握度 <strong>{doc.mastery_score}%</strong> · 已掌握 {doc.mastered_count}/{doc.total}</p>
@@ -93,7 +95,8 @@ function Rubric({ doc, close }: { doc: CognitiveDoc; close: () => void }) {
       <h3>{group.title}</h3>
       {group.items.map(item => <article key={item.id} className={"rubric-item " + item.status} data-item-id={item.id}>
         <header><b>{markLabels[item.status]}</b>
-          {item.id === doc.current_item_id && <small>当前提问</small>}</header>
+          {item.id === doc.current_item_id && <small>当前提问</small>}
+          <button className="quiet" disabled={busy} onClick={() => review([item.id])}>复习此条</button></header>
         <CourseText text={item.statement} />
         <details><summary>判定标准</summary><CourseText text={item.key_criteria} /></details>
         {item.user_evidence && <p>回答依据 · {item.user_evidence}</p>}
@@ -103,8 +106,20 @@ function Rubric({ doc, close }: { doc: CognitiveDoc; close: () => void }) {
   </Dialog>;
 }
 
-function CorrectionCard({ card, back }: { card: Correction; back: () => void }) {
-  return <article className={"msg correction-card " + card.issue_type}>
+function CorrectionCard({ card, back, messageId, arrivals }: {
+  card: Correction;
+  back: () => void;
+  messageId: number;
+  arrivals: Set<number>;
+}) {
+  const target = useRef<HTMLElement>(null);
+  const [justPushed] = useState(() => arrivals.has(messageId));
+  React.useLayoutEffect(() => {
+    if (!justPushed || !target.current) return;
+    arrivals.delete(messageId);
+    return animateCorrection(target.current);
+  }, [justPushed, arrivals, messageId]);
+  return <article ref={target} className={"msg correction-card " + card.issue_type}>
     <header><strong>实时纠偏 · {card.label}</strong><small>{card.concept_name}</small></header>
     <h4>你的表述</h4><blockquote>{card.user_claim}</blockquote>
     <h4>Agent 认知文档标准解读与举例</h4><CourseText text={card.accurate_explanation} />
@@ -125,8 +140,9 @@ export default function Workbench({
   graph,
   report,
   canLearn,
-  modelRequired,
+  modelRequired, enterReview,
 }: {
+  enterReview: (id: string, course: Course) => void;
   online: boolean;
   space: Space;
   save: (fn: (s: Space) => Space) => void;
@@ -137,8 +153,7 @@ export default function Workbench({
   canLearn: (purpose: TeachingPurpose) => Promise<boolean>;
   modelRequired: (error: unknown) => boolean;
 }) {
-  const c = space.courses.find((x) => x.id === session.doc)!,
-    n = c.nodes.find((x) => x.id === session.focus) || c.nodes[0];
+  const c = space.courses.find((x) => x.id === session.doc)!;
   function displayBadge(message: Message) {
     const name =
       !online && c.nodes.find((node) => node.id === message.node)?.name;
@@ -155,6 +170,10 @@ export default function Workbench({
   const streams = useRef<(AbortController | null)[]>([null, null]);
   useEffect(() => () => streams.current.forEach((ctrl) => ctrl?.abort()), []);
   const [rubric, setRubric] = useState<CognitiveDoc | null>(null);
+  const focusNode = session.review && rubric
+    ? rubric.sections.flatMap(section => section.items).find(item => item.id === rubric.current_item_id)?.node_id
+    : undefined;
+  const n = c.nodes.find(node => node.id === String(focusNode ?? session.focus)) || c.nodes[0];
   const [rubricOpen, setRubricOpen] = useState(false);
   const [pushCount, setPushCount] = useState(0);
   useEffect(() => {
@@ -162,13 +181,27 @@ export default function Workbench({
     const timer = setTimeout(() => setPushCount(0), 4500);
     return () => clearTimeout(timer);
   }, [pushCount]);
+  const arrivals = useRef(new Set<number>());
+  const [revision, setRevision] = useState(0);
+  const [startingReview, setStartingReview] = useState(false);
+  async function startReview(ids: number[]) {
+    if (startingReview || pending.some(Boolean)) return;
+    setStartingReview(true);
+    try {
+      if (await canLearn("feynman")) enterReview(await createRemote(c.id, session.role, undefined, ids), c);
+    } catch (e) { if (!modelRequired(e)) setNotice((e as Error).message); }
+    finally { setStartingReview(false); }
+  }
   function applyMarks(update: CognitiveUpdate) {
+    setRevision(n => n + 1);
+    if (update.review_completed) patch({reviewCompleted: true});
     const changes = new Map<number, CognitiveItem>(update.items.map(i => [i.id, i]));
     setRubric(doc => doc && ({ ...doc, current_item_id: update.current_item_id,
       mastery_score: update.mastery_score, mastered_count: update.mastered_count,
       sections: doc.sections.map(g => ({ ...g, items: g.items.map(i => changes.get(i.id) || i) })) }));
   }
   function pushCard(message: Message) {
+    if (message.id) arrivals.current.add(message.id);
     setCollapsed(false);
     setMobile(1);
     setPushCount(n => n + 1);
@@ -335,7 +368,7 @@ export default function Workbench({
   }
   function send(side: number, text: string) {
     text = text.trim();
-    if (!text || locked) return;
+    if (!text || locked || (!side && session.reviewCompleted)) return;
     if (online) void onlineSend(side, text);
     else void canLearn(side ? "encyclopedia" : "feynman");
   }
@@ -372,6 +405,9 @@ export default function Workbench({
           </button>
         </div>
         <div className="tools">
+          <ReviewTools doc={c.id} rubric={rubric} online={online} revision={revision}
+            busy={startingReview || pending.some(Boolean) || finishing || loadingHistory}
+            start={startReview} reportError={setNotice} />
           {online && rubric && <button className="rubric-trigger" onClick={() => setRubricOpen(true)}>
             Agent 认知文档（已掌握 {rubric.mastered_count}/{rubric.total}）
           </button>}
@@ -391,7 +427,8 @@ export default function Workbench({
           </button>
         </div>
       </div>
-      {rubricOpen && rubric && <Rubric doc={rubric} close={() => setRubricOpen(false)} />}
+      {session.review && <p className="review-state">{session.reviewCompleted ? "本轮复习已完成" : "正在复习选定条目"}</p>}
+      {rubricOpen && rubric && <Rubric doc={rubric} review={startReview} busy={startingReview || pending.some(Boolean)} close={() => setRubricOpen(false)} />}
       {notice && <p role="status">{notice}</p>}
       {historyError && (
         <button onClick={() => setReload((v) => v + 1)}>刷新会话历史</button>
@@ -520,7 +557,7 @@ export default function Workbench({
                   </div>
                 )}
                 {(i ? session.right : session.left).map((m, j) => m.correction ? (
-                  <CorrectionCard key={"push-" + m.id} card={m.correction} back={() => focus(0)} />
+                  <CorrectionCard key={"push-" + m.id} card={m.correction} messageId={m.id!} arrivals={arrivals.current} back={() => focus(0)} />
                 ) : (
                   <article
                     className={"msg " + (m.who === "我" ? "mine" : "")}
@@ -610,7 +647,7 @@ export default function Workbench({
                   ref={(el) => {
                     fields.current[i] = el;
                   }}
-                  readOnly={session.closed || !!pending[i]}
+                  readOnly={session.closed || (i === 0 && session.reviewCompleted) || !!pending[i]}
                   value={
                     pending[i]?.question === session.drafts[i].trim()
                       ? ""
@@ -630,7 +667,7 @@ export default function Workbench({
                 <button
                   className="send"
                   aria-label={i ? "提交查证" : "发送讲解"}
-                  disabled={locked || !!pending[i] || !session.drafts[i].trim()}
+                  disabled={locked || (i === 0 && session.reviewCompleted) || !!pending[i] || !session.drafts[i].trim()}
                   onClick={() => send(i, session.drafts[i])}
                 >
                   <ArrowUp />

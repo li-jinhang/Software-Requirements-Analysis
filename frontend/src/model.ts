@@ -22,7 +22,14 @@ export type Course = {
   nodes: Concept[];
   links: Link[];
 };
+export type ReviewLists = { due_items: CognitiveItem[]; all_reviewable_items: CognitiveItem[] };
 export type CognitiveItem = {
+  review_stage: number;
+  review_count: number;
+  skip_count: number;
+  next_review_at: string | null;
+  last_reviewed_at: string | null;
+  node_id: number | null;
   id: number;
   item_order: number;
   section_title: string;
@@ -33,6 +40,7 @@ export type CognitiveItem = {
   issue_note: string;
 };
 export type CognitiveUpdate = {
+  review_completed?: boolean;
   items: CognitiveItem[];
   current_item_id: number | null;
   mastery_score: number;
@@ -73,6 +81,8 @@ export type CourseCitation = {
   score?: number;
 };
 export type Session = {
+  review?: boolean;
+  reviewCompleted?: boolean;
   id: string;
   doc: string;
   focus: string;

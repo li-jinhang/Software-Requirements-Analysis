@@ -9,6 +9,7 @@ from app.api.v1 import auth, documents, sessions, admin
 from app.core.config import settings
 from app.core.security import signing_key
 from app.db.database import Base, engine, SessionLocal
+from app.db.review_migration import migrate_reviews
 from app.db.seed import seed
 from app.services.memory_service import recover_deletions
 from sqlalchemy import select, update
@@ -24,6 +25,7 @@ async def lifespan(app):
     # SQLite create_all does not alter tables created by phase one.
     with engine.begin() as conn:
         conn.exec_driver_sql("BEGIN IMMEDIATE")
+        migrate_reviews(conn.exec_driver_sql)
         columns = conn.exec_driver_sql("PRAGMA table_info(knowledge_nodes)")
         if "key_points" not in {row[1] for row in columns}:
             conn.exec_driver_sql(

@@ -112,6 +112,8 @@ def write_sanitized_db(source, destination):
         ) as copy:
             with closing(readonly(source)) as live:
                 live.backup(copy)
+            from app.db.review_migration import migrate_reviews
+            migrate_reviews(copy.execute)
             secrets = private_values() | {
                 r[0] for r in copy.execute("SELECT password_hash FROM users") if r[0]
             }

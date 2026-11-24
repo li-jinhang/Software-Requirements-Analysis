@@ -175,7 +175,9 @@ def followup(state, persona):
         "citations": state.get("citations", []),
     }
     messages = [
-        {"role": "system", "content": FOLLOWUP + "\n角色：" + PERSONAS[persona]},
+        {"role": "system", "content": FOLLOWUP + "\n角色：" + PERSONAS[persona] +
+         ("\n复测模式：只考 next_item。换用一个具体生活场景、边界或反例发问；参考其上次 issue_note，"
+          "不要照读条目、直接给出答案或重复历史问题。" if state.get("reviewing") else "")},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)},
     ]
     from langgraph.config import get_stream_writer

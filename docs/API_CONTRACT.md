@@ -180,3 +180,16 @@ async function streamTurn(url, accessToken, content, onEvent) {
 - `cognitive_update` 含 items（本轮变化的完整条目）、current_item_id（下一问，完成时为 null）、mastery_score 和 mastered_count。
 - `encyclopedia_push` 含 message_id、proactive、issue_type、label、concept_name、item_id、item_statement、user_claim、accurate_explanation 和 citations。每个独立问题一张卡，引用可为认知条目（kind=cognitive_item）或原文片段。右窗消息的 meta_json 保存同一载荷，消息主键即 message_id。
 - 右窗纠偏在左窗追问前提交。若随后生成追问中断，客户端重新读取两窗历史及认知文档即可恢复。流开始后遇到缺少绑定，error 事件包含 code=model_required 和 purpose。
+
+## 自主复习与到期提醒
+
+下列接口均需登录，仅操作当前用户的资料。时间沿用业务库的 UTC 约定。
+
+| 接口 | 约定 |
+| --- | --- |
+| GET /api/v1/documents/{doc_id}/due-reviews | `due_items` 按到期时间从早到晚排序，`all_reviewable_items` 按薄弱程度、评估次数和课件顺序排列 |
+| POST /api/v1/documents/{doc_id}/reviews/{item_id}/skip | 将当前到期提醒延至点击后 24 小时，同时累计一次跳过。重复点击同一条已处理提醒返回现有队列 |
+| POST /api/v1/documents/{doc_id}/simulate-time-advance | 输入 `{"days":1}`，将本资料已学条目的下次复习时间提前指定天数，返回两个最新队列 |
+| POST /api/v1/sessions | 可加 `{"mode":"review","target_item_ids":[12,9]}`。按指定顺序复测，允许选待考核条目。省略列表时优先使用到期队列，其次使用全部已学条目。默认模式为 `teach` |
+
+每次有效评估更新条目的 `review_count`、`last_reviewed_at` 和 `next_review_at`。答错或部分掌握时阶段归零，分别在 10 分钟、12 小时后到期。连续掌握时阶段最高为 5，间隔依次为 1、3、7、15、15 天。一次复习中每项评估一次，最后一项提交后会话和左窗 `cognitive_update` 均返回 `review_completed=true`。

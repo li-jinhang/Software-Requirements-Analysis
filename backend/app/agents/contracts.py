@@ -50,6 +50,7 @@ class MemoryUpdate(BaseModel):
 
 
 class CognitiveUpdate(BaseModel):
+    review_completed: bool = False
     items: list[CognitiveItemOut]
     current_item_id: int | None
     mastery_score: int

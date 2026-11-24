@@ -180,7 +180,7 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
     db.get(KnowledgeNode, 1).user_note = f"不应导出 {key} 或 {access}"
     db.add(CognitiveItem(doc_id=1, node_id=1, section_title="基础", item_order=1,
                          statement="认识前提", key_criteria="解释前提", user_evidence=key,
-                         status="partial", issue_note=refresh))
+                         status="partial", issue_note=refresh, review_count=3, skip_count=1))
     db.add(
         Message(
             session_id=1,
@@ -223,7 +223,9 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
             assert not copies[-1].parent.exists()
             if fmt == "json":
                 assert "password_hash" not in response.json()["users"][0]
-                assert response.json()["cognitive_items"][0]["user_evidence"] == "[REDACTED]"
+                item = response.json()["cognitive_items"][0]
+                assert item["user_evidence"] == "[REDACTED]"
+                assert (item["review_count"], item["skip_count"]) == (3, 1)
                 assert response.json()["messages"][0]["meta_json"] == {"nested": {}}
             else:
                 exported = tmp_path / "download.db"
@@ -250,6 +252,10 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
         "memory_sample.md",
         "sample_docs",
     }
+    with closing(sqlite3.connect(out / "feynman_sanitized.db")) as copy:
+        assert copy.execute("SELECT review_count,skip_count FROM cognitive_items").fetchone() == (3, 1)
+    snapshot = json.loads((out / "backend_data_snapshot.json").read_bytes())
+    assert {"review_stage", "last_reviewed_at", "next_review_at", "review_count", "skip_count"} <= snapshot["cognitive_items"][0].keys()
     assert len(list((out / "sample_docs").glob("*.md"))) >= 2
     assert "推荐学习与复讲路径" in (out / "memory_sample.md").read_text(encoding="utf8")
     assert (

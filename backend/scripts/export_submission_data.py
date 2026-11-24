@@ -92,8 +92,8 @@ SQLite 与 JSON 来自同一份业务快照，可用 SQLite 查看器打开。�
 | documents | 课程、解析状态与摘要 |
 | knowledge_nodes | 概念、重要度、掌握度与个人笔记 |
 | knowledge_edges | 知识点之间有方向的关系 |
-| cognitive_items | 按课件排列的认知条目、掌握标记、学生回答依据与纠偏备注 |
-| sessions | 用户和课程对应的学习会话 |
+| cognitive_items | 认知条目、掌握标记与纠偏依据，复习阶段、上次及下次复习时间、评估与跳过次数 |
+| sessions | 教学或复习会话，含选定条目顺序、复习进度和完成状态 |
 | messages | 左右窗消息及结构化元数据 |
 | weakness_logs | 薄弱点、查证与解决状态 |
 | diagnostic_reports | 四维诊断、评语与复习计划 |

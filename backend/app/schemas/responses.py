@@ -18,6 +18,11 @@ class DocumentOut(BaseModel):
 
 
 class CognitiveItemOut(BaseModel):
+    review_stage: int = 0
+    review_count: int = 0
+    skip_count: int = 0
+    next_review_at: datetime | None = None
+    last_reviewed_at: datetime | None = None
     id: int
     doc_id: int
     node_id: int | None
@@ -29,6 +34,11 @@ class CognitiveItemOut(BaseModel):
     user_evidence: str
     issue_note: str
     updated_at: datetime
+
+
+class ReviewListsOut(BaseModel):
+    due_items: list[CognitiveItemOut]
+    all_reviewable_items: list[CognitiveItemOut]
 
 
 class CognitiveSection(BaseModel):
@@ -109,6 +119,9 @@ class ContextOut(GraphOut):
 
 
 class SessionOut(BaseModel):
+    mode: Literal["teach", "review"] = "teach"
+    target_item_ids: list[int] = []
+    review_completed: bool = False
     id: int
     user_id: int
     doc_id: int

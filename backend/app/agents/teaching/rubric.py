@@ -51,6 +51,8 @@ def validate_marks(assessment, state):
 
 
 def projected_focus(state):
+    if state.get("reviewing"):
+        return next(iter(state["review_queue"][1:]), None)
     marks = {m["item_id"]: m["status"] for m in state["assessment"]["item_marks"]}
     rows = [{**i, "status": marks.get(i["id"], i["status"])} for i in state["cognitive_items"]]
     return cognitive.focus(rows, state["current_item_id"])
@@ -84,7 +86,14 @@ def save_marks(db, state, turn):
             .values(is_resolved=True)
         )
     current = cognitive.focus(rows, state["current_item_id"])
+    completed = False
+    if state.get("reviewing"):
+        session = db.get(Session, turn.session_id)
+        session.review_cursor = session.target_item_ids.index(state["current_item_id"]) + 1
+        current = projected_focus(state)
+        completed = session.review_completed = current is None
     event = CognitiveUpdate(
+        review_completed=completed,
         items=[by_id[m["item_id"]] for m in marks],
         current_item_id=current["id"] if current else None,
         mastery_score=cognitive.score(rows),

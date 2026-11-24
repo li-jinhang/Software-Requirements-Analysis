@@ -5,8 +5,28 @@
 .rubric-item.mastered { background: #ecfdf5; color: #065f46; }
 .rubric-item.wrong { background: #fff1f2; color: #9f1239; }
 .rubric-item.partial { background: #fffbeb; color: #854d0e; }
-.msg.correction-card { background: #fffbeb; border-left: 4px solid #d97706; }
-.msg.correction-card.wrong { background: #fff1f2; border-color: #dc2626; }
+.msg.correction-card { background: #f2f5f7; border-left: 2px solid #929fa9; }
+.msg.correction-card.wrong { border-left-color: #a78e8e; }
 .correction-card h4 { font-size: .86rem; margin: .85rem 0 .25rem; }
 .correction-card blockquote { margin: .3rem 0; }
-.push-notice { color: #92400e; font-size: .85rem; margin: .25rem 0; }
+.push-notice { color: #596a78; font-size: .85rem; margin: .25rem 0; }
+.p0 .msg.mine { outline: 1px solid transparent; outline-offset: -1px; }
+.correction-flight {
+  position: fixed;
+  top: 0;
+  left: 0;
+  z-index: 9999;
+  width: 46px;
+  height: 7px;
+  pointer-events: none;
+  border-radius: 4px;
+  background: #8796a3;
+  offset-anchor: center;
+  offset-rotate: 0deg;
+}
+.due-reminder { max-width: 23rem; padding: .65rem .9rem; background: #fffbeb; color: #78350f; border-radius: .6rem; }
+.due-reminder span, .review-option small { display: block; font-size: .83rem; }
+.due-reminder button { margin: .3rem .4rem 0 0; }
+label.review-option { display: flex; flex-direction: row; align-items: baseline; gap: .65rem; padding: .45rem 0; }
+.review-option input[type=checkbox] { width: auto; }
+.review-state { color: #3730a3; }
