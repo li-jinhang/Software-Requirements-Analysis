@@ -21,6 +21,7 @@ import {
   restoreSpace,
   reportHistory,
   currentService,
+  localModelSettings,
   refreshMemory,
   preserveNotes,
   ApiError,
@@ -28,6 +29,7 @@ import {
   type TeachingPurpose,
 } from "./api";
 import Library from "./Library";
+import LocalAccounts from "./LocalAccounts";
 import { Concept, Course, Space, initial, roles } from "./model";
 import { User, student, admin, authenticate, read, write } from "./storage";
 import { Dialog } from "./ui";
@@ -268,7 +270,7 @@ function App() {
     latest.current = next;
     setSpace(next);
     setDoc("");
-    setSid("");
+    setSid(sessionStorage.getItem("fm.active:" + u.id) || "");
     setRid("");
     setAuth(false);
     setSettings(false);
@@ -382,7 +384,11 @@ function App() {
               {user.name}
               <small>
                 {user.admin ? "管理员" : "学习者"} ·{" "}
-                {online ? "在线服务" : "本地演示"}
+                {online
+                  ? localModelSettings
+                    ? "本机账号"
+                    : "在线服务"
+                  : "浏览示范"}
               </small>
             </span>
             <ChevronsUpDown />
@@ -423,7 +429,7 @@ function App() {
                     重新加载
                   </button>
                 ) : (
-                  "正在恢复服务端学习空间…"
+                  "正在读取当前账号的学习数据…"
                 )}
               </div>
             ) : page === "admin" ? (
@@ -530,7 +536,12 @@ function App() {
           />
         </Suspense>
       )}
-      {auth && <Auth login={login} close={() => setAuth(false)} />}
+      {auth &&
+        (localModelSettings ? (
+          <LocalAccounts current={user} login={login} close={() => setAuth(false)} />
+        ) : (
+          <Auth login={login} close={() => setAuth(false)} />
+        ))}
       {setup && c && (
         <Dialog
           title="开始费曼教学"
@@ -651,8 +662,8 @@ function App() {
         </Dialog>
       )}
       {learningLogin && (
-        <Dialog title="登录学习账号" close={() => setLearningLogin(false)}>
-          <p>模型已配置。登录学习账号后即可开始教学并保存学习记录。</p>
+        <Dialog title="选择学习账号" close={() => setLearningLogin(false)}>
+          <p>模型已配置。选择账号后即可开始教学并保存学习记录。</p>
           <button
             className="primary"
             onClick={() => {
@@ -660,7 +671,7 @@ function App() {
               setAuth(true);
             }}
           >
-            账号登录
+            选择账号
           </button>
         </Dialog>
       )}

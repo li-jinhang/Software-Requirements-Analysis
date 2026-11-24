@@ -2,6 +2,7 @@
 import os
 
 from playwright.sync_api import expect, sync_playwright
+from online_sync import login
 
 
 def run(browser):
@@ -23,11 +24,7 @@ def run(browser):
         expect(button("新建配置", settings)).to_be_visible()
         button("关闭", settings).click()
 
-    page.locator(".account button").click()
-    page.get_by_label("用户名").fill("student")
-    page.get_by_label("密码", exact=True).fill(os.environ["FM_STUDENT_PASSWORD"])
-    button("登录").click()
-    expect(page.locator(".account")).to_contain_text("在线服务")
+    login(page, "student")
     button("开讲").first.click()
     expect(prompt).to_be_visible()
     button("关闭", prompt).click()

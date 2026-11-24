@@ -1,36 +1,14 @@
-from ipaddress import ip_address
 from time import monotonic
-from urllib.parse import urlsplit
 
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 
-from app.core.config import settings as app_settings
-from app.core.security import current_user
+from app.core.security import current_user, require_local_workbench
 from app.services import chatgpt_login, model_profiles as profiles
 from app.services.model_connection import ModelConnection, catalog
 
-LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
-
-
-def require_local_settings(request: Request):
-    origin = request.headers.get("origin")
-    try:
-        peer_is_local = request.client and ip_address(request.client.host).is_loopback
-        host_is_local = urlsplit("//" + request.headers.get("host", "")).hostname in LOCAL_HOSTS
-        origin_is_local = origin is None or (
-            urlsplit(origin).hostname in LOCAL_HOSTS
-            and (origin == str(request.base_url).rstrip("/") or origin in app_settings.cors_origins)
-        )
-        if peer_is_local and host_is_local and origin_is_local:
-            return
-    except ValueError:
-        pass
-    raise HTTPException(403, "请从运行服务的电脑打开本机工作台管理模型配置。")
-
-
 router = APIRouter(
-    prefix="/model-settings", tags=["模型设置"], dependencies=[Depends(require_local_settings)]
+    prefix="/model-settings", tags=["模型设置"], dependencies=[Depends(require_local_workbench)]
 )
 
 

@@ -68,6 +68,25 @@ const post = (body: unknown) => ({
   method: "POST",
   body: JSON.stringify(body),
 });
+type AccountUser = {
+  id: number;
+  username: string;
+  nickname: string;
+  role: "admin" | "student";
+};
+type AccountSession = { access_token: string; user: AccountUser };
+export type LocalAccount = AccountUser & { protected: boolean };
+export const accountId = (username: string) => "api:" + base + ":" + username;
+function accountSession(a: AccountSession, username: string) {
+  if (!a.access_token) throw Error("登录响应缺少访问令牌。");
+  const u = a.user || a;
+  token(a.access_token);
+  return {
+    id: accountId(username),
+    name: u.nickname || username,
+    admin: u.role === "admin",
+  };
+}
 export async function signIn(
   username: string,
   password: string,
@@ -78,15 +97,32 @@ export async function signIn(
   const a = await (
     await request("/auth/login", post({ username, password }))
   ).json();
-  if (!a.access_token) throw Error("登录响应缺少访问令牌。");
-  const u = a.user || a;
-  token(a.access_token);
-  return {
-    id: "api:" + base + ":" + username,
-    name: u.nickname || username,
-    admin: u.role === "admin",
-  };
+  return accountSession(a, username);
 }
+
+const accountPath = "/local-accounts";
+async function openLocalAccount(path: string, options: RequestInit) {
+  const result: AccountSession = await (
+    await request(accountPath + path, options, false)
+  ).json();
+  return accountSession(result, result.user.username);
+}
+export const localAccountsApi = {
+  list: async (): Promise<LocalAccount[]> =>
+    (await request(accountPath, {}, false)).json(),
+  create: (name: string) => openLocalAccount("", post({ name })),
+  activate: (id: number, password: string) =>
+    openLocalAccount("/" + id + "/activate", post({ password })),
+  importBackup: (file: File) => {
+    const body = new FormData();
+    body.set("file", file);
+    return openLocalAccount("/import", { method: "POST", body });
+  },
+  exportBackup: async (name: string) => {
+    const res = await request(accountPath + "/export");
+    download(name + ".zip", await res.blob(), "application/zip");
+  },
+};
 type RawNode = {
   id: string | number;
   concept_name: string;

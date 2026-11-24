@@ -75,8 +75,8 @@ def remove(doc_id):
             client().get_collection(name, embedding_function=None).delete(where={"doc_id": doc_id})
 
 
-def index(doc_id, title, chunks, *, strict_remote=False):
-    use_api = settings.embedding_provider == "api"
+def index(doc_id, title, chunks, *, strict_remote=False, local_only=False):
+    use_api = not local_only and settings.embedding_provider == "api"
     for start in range(0, len(chunks), 64):
         texts = chunks[start : start + 64]
         indices = range(start, start + len(texts))

@@ -27,7 +27,7 @@ def register(body: Register, db=Depends(get_db)):
 @router.post("/login", response_model=AuthOut)
 def login(body: Login, db=Depends(get_db)):
     u = db.scalar(select(User).where(User.username == body.username))
-    if u is None or not bcrypt.checkpw(body.password.encode(), u.password_hash.encode()):
+    if u is None or not u.password_hash or not bcrypt.checkpw(body.password.encode(), u.password_hash.encode()):
         raise HTTPException(401, "账号或密码错误")
     return {"access_token": token(u), "user": public(u)}
 

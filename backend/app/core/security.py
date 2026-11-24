@@ -1,18 +1,39 @@
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
 from pathlib import Path
+from ipaddress import ip_address
+from urllib.parse import urlsplit
 import os
 import secrets
 import tempfile
 
 import bcrypt
 import jwt
-from fastapi import Depends, HTTPException
+from fastapi import Depends, HTTPException, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models import User
+
+
+def require_local_workbench(request: Request):
+    hosts = {"localhost", "127.0.0.1", "::1"}
+    origin = request.headers.get("origin")
+    try:
+        if (
+            request.client
+            and ip_address(request.client.host).is_loopback
+            and urlsplit("//" + request.headers.get("host", "")).hostname in hosts
+            and (origin is None or (
+                urlsplit(origin).hostname in hosts
+                and (origin == str(request.base_url).rstrip("/") or origin in settings.cors_origins)
+            ))
+        ):
+            return
+    except ValueError:
+        pass
+    raise HTTPException(403, "请从运行程序的电脑打开本机工作台。")
 
 
 @lru_cache

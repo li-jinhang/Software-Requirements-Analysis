@@ -65,11 +65,8 @@ def run():
         page.on("console", lambda msg: errors.append(msg.text) if msg.type == "error" else None)
         page.goto(url)
         button = lambda name: page.get_by_role("button", name=name, exact=True)
-        page.locator(".account button").click()
-        page.get_by_label("用户名").fill("student")
-        page.get_by_label("密码", exact=True).fill("123456")
-        button("登录").click()
-        expect(page.locator(".account")).to_contain_text("在线服务")
+        from online_sync import login
+        login(page, "student", "123456")
         button("输入知识点生成").click()
         page.get_by_label("知识点名称").fill("有序数组上的二分查找")
         page.get_by_label("学科（选填）").fill("数据结构")

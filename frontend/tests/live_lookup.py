@@ -79,12 +79,9 @@ def run():
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(url)
-        page.locator(".account button").click()
-        page.get_by_label("用户名").fill("student")
-        page.get_by_label("密码", exact=True).fill("123456")
+        from online_sync import login
+        login(page, "student", "123456")
         btn = lambda name: page.get_by_role("button", name=name, exact=True)
-        btn("登录").click()
-        expect(page.locator(".account")).to_contain_text("在线服务")
         lectures = [
             ("损失函数度量预测与真值偏差。训练时降低训练损失，判断泛化还要看独立验证数据。", "我用损失函数 MSE 举例：误差分别为 1 和 2，平方后的平均值是 2.5。"),
             ("梯度下降沿负梯度更新。学习率决定步长，太大时会跨过谷底来回震荡，甚至发散。", "我用梯度下降的学习率举例：对平方损失取步长 1.1，从 1 走到 −1.2，再到 1.44，越走越远。"),

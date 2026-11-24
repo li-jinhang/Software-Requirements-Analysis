@@ -244,9 +244,31 @@ select {
 }
 .account span {
   flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 .account small {
   margin-top: 3px;
+}
+.local-accounts {
+  display: grid;
+  gap: 8px;
+  max-height: 48vh;
+  overflow-y: auto;
+  padding: 4px;
+}
+.local-accounts button {
+  justify-content: flex-start;
+  padding: 12px;
+  text-align: start;
+}
+.local-accounts strong {
+  flex: 1;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.local-account-actions {
+  margin-top: 16px;
 }
 main {
   margin-left: 264px;

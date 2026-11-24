@@ -3,6 +3,7 @@
 import os
 
 from playwright.sync_api import expect, sync_playwright
+from online_sync import login
 
 
 def run(browser):
@@ -13,10 +14,7 @@ def run(browser):
         def button(name):
             return page.get_by_role("button", name=name, exact=True)
 
-        page.locator(".account button").click()
-        page.get_by_label("用户名").fill("student")
-        page.get_by_label("密码", exact=True).fill(os.environ["FM_STUDENT_PASSWORD"])
-        button("登录").click()
+        login(page, "student")
         button("开讲").first.click()
         button("开始教学").click()
 

@@ -12,16 +12,16 @@ from uuid import uuid4
 from playwright.sync_api import expect, sync_playwright
 
 
-def submit_login(dialog, username):
-    dialog.get_by_label("用户名").fill(username)
-    dialog.get_by_label("密码", exact=True).fill(os.environ[f"FM_{username.upper()}_PASSWORD"])
-    button(dialog, "登录").click()
-
-
-def login(page, username):
+def login(page, username, password=None):
     page.locator(".account button").click()
-    submit_login(page.get_by_role("dialog"), username)
-    expect(page.locator(".account")).to_contain_text("在线服务")
+    dialog = page.get_by_role("dialog", name="本机账号", exact=True)
+    nickname = {"admin": "教学管理员", "student": "演示学生"}[username]
+    dialog.get_by_text(nickname, exact=True).click()
+    dialog.get_by_label("密码", exact=True).fill(
+        password if password is not None else os.environ[f"FM_{username.upper()}_PASSWORD"]
+    )
+    button(dialog, "切换账号").click()
+    expect(page.locator(".account")).to_contain_text(nickname)
 
 
 def button(page, name):

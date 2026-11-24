@@ -7,6 +7,7 @@ import tempfile
 
 from playwright.sync_api import expect, sync_playwright
 from live_lookup import ROOT, port, serve
+from online_sync import login
 
 
 def run():
@@ -55,11 +56,7 @@ def run():
         """)
         page.goto(url)
         button = lambda name: page.get_by_role("button", name=name, exact=True)
-        page.locator(".account button").click()
-        page.get_by_label("用户名").fill("student")
-        page.get_by_label("密码", exact=True).fill("123456")
-        button("登录").click()
-        expect(page.locator(".account")).to_contain_text("在线服务")
+        login(page, "student", "123456")
         button("开讲").first.click()
         button("开始教学").click()
         rubric = page.get_by_role("button", name="Agent 认知文档", exact=False)
