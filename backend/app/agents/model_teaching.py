@@ -4,11 +4,11 @@ import json
 from typing import Literal
 
 from pydantic import BaseModel, Field, create_model
+from pydantic_core import from_json
 from sqlalchemy import select
 
 from app.agents.contracts import Citation, MemoryUpdate, NodeUpdate, Report, tokens
 from app.agents.encyclopedia_agent import Explanation as LessonExplanation
-from app.agents.feynman_agent import follow_up, previous_question
 from app.db.models import Message
 from app.services import memory_service as memory
 from app.services.model_connection import ModelConnection
@@ -46,7 +46,47 @@ def evidence_nodes(ctx):
     ]
 
 
-def prepare(db, turn, window, profile):
+def reply_preview(window, emit):
+    """Project the human-facing strings of an incomplete structured response."""
+    if emit is None:
+        return None
+    raw = ""
+    shown = ""
+
+    def update(delta):
+        nonlocal raw, shown
+        raw = raw + delta if delta else ""
+        source = raw.lstrip()
+        if source.startswith("```"):
+            source = source.partition("\n")[2]
+        try:
+            fields = from_json(source, allow_partial="trailing-strings") if source else {}
+        except ValueError:
+            return
+        if not isinstance(fields, dict):
+            return
+        if window == "feynman":
+            text = fields.get("follow_up")
+            text = text if isinstance(text, str) else ""
+        else:
+            parts = []
+            for key, title in (
+                ("source", "**课件溯源**\n\n"),
+                ("example", "**学科知识补充与举例**\n\n"),
+                ("retell", ""),
+            ):
+                value = fields.get(key)
+                if isinstance(value, str) and value.strip():
+                    parts.append(title + value)
+            text = "\n\n".join(parts)
+        if text != shown:
+            shown = text
+            emit(text)
+
+    return update
+
+
+def prepare(db, turn, window, profile, emit_preview=None):
     ctx = memory.get_memory_context(db, turn.doc_id, turn.session_id, query=turn.content)
     nodes = evidence_nodes(ctx)
     if not nodes:
@@ -67,6 +107,7 @@ def prepare(db, turn, window, profile):
     )
     db.commit()  # release the read snapshot before waiting on the provider
     model = ModelConnection(profile)
+    on_chunk = reply_preview(window, emit_preview)
     # Constrain structured-output providers to evidence and graph IDs from this turn.
     node_type = Literal[tuple(n["id"] for n in nodes)]
     if window == "feynman":
@@ -75,8 +116,12 @@ def prepare(db, turn, window, profile):
             schema,
             "你是费曼反向教学听众。根据原文、历史和这次学生讲解，评估准确性、通俗度及适用条件。"
             "选一个本资料的 node_id，给有依据的掌握度变化与简短反馈。无漏洞时 weakness_type 为 null。"
+            "把 follow_up 放在 JSON 的首个字段。"
+            "应用 delta 后，若该知识点达到 80 分，优先追问另一个低于 80 分的知识点并点明名称；"
+            "全部掌握时建议复讲或查看诊断报告。避免重复历史中的追问。"
             "用中文追问而不代讲。child 像小学生索要通俗例子，peer 像同窗讨论，examiner 追问边界与反例。",
             payload,
+            on_chunk=on_chunk,
         )
     else:
         index_type = Literal[tuple(range(len(hits)))] if hits else int
@@ -94,6 +139,7 @@ def prepare(db, turn, window, profile):
             "学习率举例用二次函数演算两步。公式用 $...$，说明关键符号与结果。retell 提一个回左窗复述的问题。"
             "选择最相关的本课程 node_id。",
             payload,
+            on_chunk=on_chunk,
         )
         if any(i < 0 or i >= len(hits) for i in result.source_indices):
             raise ModelError("模型返回了本次检索之外的引用")
@@ -120,8 +166,7 @@ def apply(db, turn, prepared):
             result.weakness_type,
             result.weakness_detail or result.feedback,
         )
-    previous = previous_question(db, turn.session_id)
-    yield from tokens(follow_up(node, updated, previous, turn.persona_type, result.follow_up))
+    yield from tokens(result.follow_up)
     yield MemoryUpdate(
         updates=[
             NodeUpdate(

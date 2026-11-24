@@ -14,6 +14,14 @@ class Token(BaseModel):
     delta: str
 
 
+class Preview(BaseModel):
+    text: str
+
+
+class StreamError(BaseModel):
+    detail: str
+
+
 class CitationItem(BaseModel):
     doc_title: str
     chunk_index: int
@@ -53,7 +61,10 @@ class Report(BaseModel):
 
 
 AgentEvent = Token | Citation | MemoryUpdate
-EVENT_NAMES = {Token: "token", Citation: "citation", MemoryUpdate: "memory_update", Done: "done"}
+EVENT_NAMES = {
+    Token: "token", Preview: "preview", Citation: "citation",
+    MemoryUpdate: "memory_update", Done: "done", StreamError: "error",
+}
 
 
 def tokens(text):

@@ -434,7 +434,13 @@ function App() {
                 </div>
               )
             ) : page === "graph" && c ? (
-              <Graph space={space} c={c} setCourse={setDoc} start={begin} />
+              <Graph
+                key={c.id}
+                space={space}
+                c={c}
+                setCourse={setDoc}
+                start={begin}
+              />
             ) : page === "reports" ? (
               <Reports
                 space={space}

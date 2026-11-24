@@ -74,6 +74,35 @@ def check_local_model_settings(browser):
     print("PASS local model settings import and export from demo and student sessions")
 
 
+def check_graph_course_switch(browser):
+    root = os.environ.get("FM_FRONTEND", "http://127.0.0.1:5173")
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    try:
+        page.goto(root + "/#graph")
+        nodes = page.locator(".react-flow__node")
+        search = page.get_by_label("搜索知识点")
+        expect(nodes.first).to_be_visible()
+        search.fill("学习率")
+        expect(nodes).to_have_count(1)
+        page.get_by_label("图谱资料").select_option(index=1)
+        expect(search).to_have_value("")
+        expect(page.locator(".react-flow__edge").first).to_be_visible()
+        search.fill("没有这个知识点")
+        expect(page.get_by_role("status")).to_have_text("没有匹配的知识点。")
+        button(page, "清除搜索").click()
+        expect(nodes.first).to_be_visible()
+        page.set_viewport_size({"width": 390, "height": 844})
+        page.wait_for_function("""() => {
+            const canvas = document.querySelector('.react-flow').getBoundingClientRect();
+            const bounds = [...document.querySelectorAll('.react-flow__node')].map(n => n.getBoundingClientRect());
+            return bounds.length > 0 && bounds.every(b => b.left >= canvas.left - 1
+                && b.right <= canvas.right + 1 && b.top >= canvas.top - 1 && b.bottom <= canvas.bottom + 1);
+        }""")
+    finally:
+        page.close()
+    print("PASS graph search, course switch, clear search and resize")
+
+
 def run(browser):
     root = os.environ.get("FM_FRONTEND", "http://127.0.0.1:5173")
     page = browser.new_page()
@@ -242,6 +271,7 @@ if __name__ == "__main__":
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel=os.environ.get("FM_BROWSER", "msedge"))
         try:
+            check_graph_course_switch(browser)
             check_local_model_settings(browser)
             run(browser)
         finally:

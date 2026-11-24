@@ -6,6 +6,7 @@ import {
   useNodesState,
   useNodesInitialized,
   useReactFlow,
+  useStore,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import * as echarts from "echarts/core";
@@ -25,11 +26,13 @@ const relationNames: Record<string, string> = {
 function FitLoadedGraph({ layout }: { layout: string }) {
   const ready = useNodesInitialized();
   const { fitView } = useReactFlow();
+  const width = useStore((state) => state.width);
+  const height = useStore((state) => state.height);
   useEffect(() => {
-    if (!ready) return;
+    if (!ready || !width || !height) return;
     const frame = requestAnimationFrame(() => void fitView(graphFit));
     return () => cancelAnimationFrame(frame);
-  }, [ready, layout, fitView]);
+  }, [ready, layout, fitView, width, height]);
   return null;
 }
 export function Graph({
@@ -48,7 +51,7 @@ export function Graph({
   const matches = useMemo(
     () =>
       c.nodes
-        .filter((n) => n.name.includes(query))
+        .filter((n) => n.name.includes(query.trim()))
         .sort((a, b) => b.importance - a.importance)
         .slice(0, 40),
     [c, query],
@@ -103,8 +106,17 @@ export function Graph({
       </div>
       <div className="graphlayout">
         <div className="graph">
+          {matches.length === 0 && (
+            <div className="graph-empty">
+              <p role="status">
+                {query.trim() ? "没有匹配的知识点。" : "该资料暂无知识点。"}
+              </p>
+              {query.trim() && (
+                <button onClick={() => setQuery("")}>清除搜索</button>
+              )}
+            </div>
+          )}
           <ReactFlow
-            key={c.id + query}
             nodes={nodes}
             edges={c.links
               .filter(
@@ -159,7 +171,7 @@ export function Graph({
               </button>
             </>
           ) : (
-            <p>没有匹配的知识点。</p>
+            <p>选择图谱中的知识点查看详情。</p>
           )}
         </aside>
       </div>

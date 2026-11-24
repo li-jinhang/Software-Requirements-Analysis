@@ -2,7 +2,7 @@ from app.schemas.responses import SessionOut, MessageOut, ReportOut
 import json
 from threading import Lock
 from app.agents import model_teaching
-from app.services.model_profiles import require_profile
+from app.services.model_profiles import ModelError, require_profile
 from fastapi import APIRouter, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 from sqlalchemy import select, update
@@ -18,7 +18,9 @@ workers = ThreadPoolExecutor(max_workers=4, thread_name_prefix="feynman-turn")
 from app.db.models import Session, Document, Message, DiagnosticReport, now, public
 from app.api.v1.documents import owned
 from app.schemas import SessionCreate, PersonaChange, Turn
-from app.agents.contracts import AgentInput, MemoryUpdate, Citation, Token, Done, EVENT_NAMES
+from app.agents.contracts import (
+    AgentInput, MemoryUpdate, Citation, Token, Done, Preview, StreamError, EVENT_NAMES,
+)
 
 router = APIRouter(prefix="/sessions", tags=["会话"])
 
@@ -85,7 +87,10 @@ def produce(id, content, window, user_id, events):
             )
             if s.status != "active":
                 raise HTTPException(409, "会话已结束")
-            prepared = model_teaching.prepare(db, turn, window, require_profile(window))
+            prepared = model_teaching.prepare(
+                db, turn, window, require_profile(window),
+                emit_preview=lambda text: events.put(frame(Preview(text=text))),
+            )
             lock_active(db, id)
             db.add(Message(session_id=id, window_type=window, sender_role="user", content=content))
             text = []
@@ -131,7 +136,9 @@ def conversation(id, body, window, db, user):
         yield first
         while (item := events.get()) is not None:
             if isinstance(item, Exception):
-                raise RuntimeError("对话中断，未提交本轮记忆") from item
+                detail = str(item) if isinstance(item, ModelError) else "对话中断，未提交本轮记忆"
+                yield frame(StreamError(detail=detail))
+                break
             yield item
 
     return StreamingResponse(

@@ -209,6 +209,7 @@ type Update = {
 type Meta = { citations?: Citation[]; updates?: Update[] };
 type StreamPayloads = {
   token: { delta: string };
+  preview: { text: string };
   citation: { citations: Citation[] };
   memory_update: { updates: Update[] };
   done: { message_id: number };
@@ -258,7 +259,8 @@ export async function stream(
     throw Error("服务未返回 SSE 消息流。");
   const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
   let buffer = "",
-    text = "";
+    text = "",
+    previewing = false;
   const meta: Meta = {};
   try {
     while (true) {
@@ -281,9 +283,15 @@ export async function stream(
         if (!body) continue;
         const data = JSON.parse(body);
         switch (kind) {
+          case "preview": {
+            const preview = (data as StreamPayloads["preview"]).text;
+            previewing = !!preview;
+            onText(preview);
+            break;
+          }
           case "token":
             text += (data as StreamPayloads["token"]).delta;
-            onText(text);
+            if (!previewing) onText(text);
             break;
           case "citation":
             meta.citations = (meta.citations || []).concat(
@@ -315,7 +323,7 @@ export async function stream(
       if (done) throw Error("回复中断，请重试。");
     }
   } finally {
-    await reader.cancel();
+    await reader.cancel().catch(() => {});
   }
 }
 export async function remoteReport(

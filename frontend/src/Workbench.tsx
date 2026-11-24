@@ -33,6 +33,8 @@ import {
   status,
 } from "./model";
 
+type PendingTurn = { question: string; reply: string };
+
 function CourseText({ text }: { text: string }) {
   return (
     <Markdown remarkPlugins={[gfm, math]} rehypePlugins={[katex, highlight]}>
@@ -111,7 +113,7 @@ export default function Workbench({
     [collapsed, setCollapsed] = useState(false),
     [notice, setNotice] = useState(""),
     [mobile, setMobile] = useState(0);
-  const [pending, setPending] = useState(["", ""]),
+  const [pending, setPending] = useState<(PendingTurn | null)[]>([null, null]),
     [finishing, setFinishing] = useState(false);
   const streams = useRef<(AbortController | null)[]>([null, null]);
   useEffect(() => () => streams.current.forEach((ctrl) => ctrl?.abort()), []);
@@ -181,9 +183,9 @@ export default function Workbench({
     const ctrl = new AbortController();
     streams.current[side] = ctrl;
     const key = side ? "right" : "left";
-    const show = (text: string) =>
-      setPending((v) => v.map((old, i) => (side === i ? text : old)));
-    show("正在回复…");
+    const show = (turn: PendingTurn | null) =>
+      setPending((v) => v.map((old, i) => (side === i ? turn : old)));
+    show({ question: text, reply: "" });
     setNotice("");
     try {
       const { reply, scores } = await stream(
@@ -191,7 +193,7 @@ export default function Workbench({
         side,
         text,
         ctrl.signal,
-        show,
+        (reply) => show({ question: text, reply }),
       );
       if (ctrl.signal.aborted) return;
       save((s) => ({
@@ -261,7 +263,7 @@ export default function Workbench({
       }
     } finally {
       streams.current[side] = null;
-      if (!ctrl.signal.aborted) show("");
+      if (!ctrl.signal.aborted) show(null);
     }
   }
   function send(side: number, text: string) {
@@ -516,9 +518,16 @@ export default function Workbench({
                   </article>
                 ))}
                 {pending[i] && (
-                  <article className="msg" role="status">
-                    <CourseText text={pending[i]} />
-                  </article>
+                  <>
+                    <article className="msg mine">
+                      <small>我</small>
+                      <CourseText text={pending[i].question} />
+                    </article>
+                    <article className="msg" aria-busy="true">
+                      <small>{i ? "百科" : "听众"}</small>
+                      <CourseText text={pending[i].reply || "正在回复…"} />
+                    </article>
+                  </>
                 )}
               </div>
               <div className="composer">
@@ -527,8 +536,12 @@ export default function Workbench({
                   ref={(el) => {
                     fields.current[i] = el;
                   }}
-                  readOnly={session.closed}
-                  value={session.drafts[i]}
+                  readOnly={session.closed || !!pending[i]}
+                  value={
+                    pending[i]?.question === session.drafts[i].trim()
+                      ? ""
+                      : session.drafts[i]
+                  }
                   onChange={(e) => {
                     const drafts: [string, string] = [...session.drafts];
                     drafts[i] = e.target.value;

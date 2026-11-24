@@ -2,7 +2,7 @@
 
 import json
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
-from threading import Thread
+from threading import Event, Thread
 
 from test_smoke import login, server
 
@@ -35,6 +35,7 @@ def test_model_processing_and_binding_isolation(server):
     assert api.get(root, headers={"Host": "outside.example"}).status_code == 403
     assert api.get(root + "/active", headers=student).status_code == 200
     calls = []
+    release_reply = Event()
 
     class Provider(BaseHTTPRequestHandler):
         def log_message(self, *args):
@@ -99,14 +100,32 @@ def test_model_processing_and_binding_isolation(server):
                         "weakness_summary": ["复习边界"],
                         "review_plan": "完成反例练习",
                     }
-            data = json.dumps(
-                {"choices": [{"message": {"content": json.dumps(value, ensure_ascii=False)}}]}
-            ).encode()
+            reply = json.dumps(value, ensure_ascii=False)
+            if schema in ("Assessment", "Explanation"):
+                assert body["stream"] is True
+                self.send_response(200)
+                self.send_header("Content-Type", "text/event-stream")
+                self.end_headers()
+                cut = reply.index("模型") + 2
+                self.chunk(reply[:cut])
+                if context["content"] == "中断测试":
+                    return
+                assert release_reply.wait(timeout=10), "reply preview was not forwarded"
+                self.chunk(reply[cut:])
+                self.wfile.write(b"data: [DONE]\n\n")
+                self.wfile.flush()
+                return
+            data = json.dumps({"choices": [{"message": {"content": reply}}]}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(data)))
             self.end_headers()
             self.wfile.write(data)
+
+        def chunk(self, text):
+            data = json.dumps({"choices": [{"delta": {"content": text}}]})
+            self.wfile.write(f"data: {data}\n\n".encode())
+            self.wfile.flush()
 
     provider = ThreadingHTTPServer(("127.0.0.1", 0), Provider)
     Thread(target=provider.serve_forever, daemon=True).start()
@@ -156,12 +175,22 @@ def test_model_processing_and_binding_isolation(server):
         assert api.put(root + "/bindings/default", json={"profile_id": first}).status_code == 204
         assert api.put(root + "/bindings/report", json={"profile_id": second}).status_code == 204
         for window in ["feynman", "encyclopedia"]:
-            r = api.post(
+            release_reply.clear()
+            with api.stream(
+                "POST",
                 path + "/" + window + "/stream",
                 headers=student,
                 json={"content": "损失函数度量预测误差，细节是什么？"},
-            )
-            assert r.is_success and "event: done" in r.text, r.text
+            ) as r:
+                assert r.is_success
+                lines = r.iter_lines()
+                try:
+                    assert next(lines) == "event: preview"
+                    assert json.loads(next(lines).removeprefix("data: "))["text"].endswith("模型")
+                finally:
+                    release_reply.set()
+                tail = list(lines)
+                assert "event: token" in tail and "event: done" in tail
         messages = api.get(path + "/messages", headers=student).json()
         assert (
             messages[1]["content"].startswith("模型追问")
@@ -180,6 +209,14 @@ def test_model_processing_and_binding_isolation(server):
             ("Explanation", "test-a"),
             ("Report", "test-b"),
         ]
+        broken = api.post("/api/v1/sessions", headers=student, json={"doc_id": doc.json()["id"]}).json()["id"]
+        broken_path = f"/api/v1/sessions/{broken}"
+        interrupted = api.post(
+            broken_path + "/feynman/stream", headers=student, json={"content": "中断测试"},
+        )
+        assert "event: preview" in interrupted.text and "event: error" in interrupted.text
+        assert "event: done" not in interrupted.text
+        assert api.get(broken_path + "/messages", headers=student).json() == []
         for endpoint in [root, "/api/v1/admin/export/json", "/api/v1/admin/export/db"]:
             assert b"sentinel-test-value" not in api.get(endpoint, headers=admin).content
     finally:

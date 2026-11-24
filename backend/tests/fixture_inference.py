@@ -16,7 +16,7 @@ def install(replace=setattr):
         agent = feynman_agent if window == "feynman" else encyclopedia_agent
         return agent.stream(db, turn)
 
-    replace(model_teaching, "prepare", lambda db, turn, window, profile: window)
+    replace(model_teaching, "prepare", lambda db, turn, window, profile, emit_preview=None: window)
     replace(model_teaching, "apply", apply)
     replace(model_teaching, "diagnose", lambda db, session, profile: report_agent.generate(db, session))
     replace(llm_client, "extract", lambda text, title, profile: llm_client.local_extract(text, title))

@@ -193,7 +193,11 @@ def test_browser_login_refresh_and_codex_transport(profiles, monkeypatch):
         monkeypatch.setattr(
             httpx, "Client", lambda **kw: original(transport=httpx.MockTransport(handler), **kw)
         )
-        assert ModelConnection({"mode": "chatgpt", "model": "demo"}).text("test", "test") == "OK"
+        chunks = []
+        assert ModelConnection({"mode": "chatgpt", "model": "demo"}).text(
+            "test", "test", on_chunk=chunks.append,
+        ) == "OK"
+        assert chunks == ["OK"]
         assert exchanges[-1]["grant_type"] == "refresh_token"
     finally:
         login.end_login(logout=True)

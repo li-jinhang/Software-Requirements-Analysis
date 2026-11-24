@@ -95,7 +95,7 @@ data: {"message_id":123}
 
 ~~~
 
-chunk_index 从 0 开始。score 为文档内混合排序分数（0 到 1），可用于比较本次命中。左窗按 token 拼接文本并消费 memory_update；右窗展示 citation 和文本，可将左窗的问题直接作为右窗 content 提交。done 表示本轮消息和关联记忆已提交；若连接提前结束，先刷新历史再决定是否重发，避免重复计分。
+chunk_index 从 0 开始。score 为文档内混合排序分数（0 到 1），可用于比较本次命中。支持流式输出的模型可在 token 前发送 preview 事件，其 data 为 `{"text":"正在生成的可读正文"}`。每个 preview 替换上一条预览，空字符串清除预览。按 token 拼接最终文本，消费 memory_update 或 citation 更新页面。done 表示本轮消息和关联记忆已提交，并可用最终文本替换预览。流开始后若推理失败，会发送 error 事件，其 data 为 `{"detail":"错误说明"}`。若流中断，先刷新历史再决定是否重发，避免重复计分。
 
 ~~~javascript
 async function streamTurn(url, accessToken, content, onEvent) {
