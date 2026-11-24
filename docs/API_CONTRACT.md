@@ -61,9 +61,10 @@ JWT 有效期 24 小时。注册密码至少 6 字符且 UTF-8 编码至多 72 �
 
 | 方法和路径 | 请求 | 成功响应 |
 | --- | --- | --- |
-| POST /sessions | {"doc_id":1,"title":"梯度下降复述","persona_type":"peer"} | 201，Session；标题和角色可省略 |
+| POST /sessions | {"doc_id":1,"title":"梯度下降复述","persona_type":"peer","node_id":3} | 201，Session；标题、角色和目标知识点可省略；node_id 须属于当前资料 |
+| POST /sessions/{id}/opening/stream | 无 | text/event-stream；U0003 角色开场，重复调用重放已保存的开场 |
 | GET /sessions | 无 | Session[]，最新优先 |
-| PATCH /sessions/{id}/persona | {"persona_type":"examiner"} | 更新后的 Session |
+| PATCH /sessions/{id}/persona | {"persona_type":"examiner"} | 更新后的 Session；实际切换时追加 system 分隔消息，保留上下文 |
 | GET /sessions/{id}/messages | 无 | 按 id 升序的 Message[]，按 window_type 分窗 |
 | POST /sessions/{id}/feynman/stream | {"content":"梯度决定下降方向。"} | text/event-stream |
 | POST /sessions/{id}/encyclopedia/stream | {"content":"学习率过大会怎样？"} | text/event-stream |
@@ -71,6 +72,8 @@ JWT 有效期 24 小时。注册密码至少 6 字符且 UTF-8 编码至多 72 �
 | GET /sessions/{id}/report | 无 | Report；尚未生成返回 404 |
 
 Session 示例：`{"id":2,"user_id":2,"doc_id":1,"title":"梯度下降复述","persona_type":"peer","status":"active","created_at":"2026-11-23T03:15:00","ended_at":null}`。角色为 child、peer、examiner。已结束的 completed 会话可以浏览历史或报告。
+
+LangGraph 版本的 Session 另含可空的 target_node_id，映射创建请求中的 node_id。教学消息的 meta_json 新增 graph_nodes、assessment（含原文证据与连续达标次数）、memory_synced 等字段，供本地验收与历史恢复；它们不单独作为 SSE 事件。左右窗消息请求仍只接受 content。memory_update 与 done 在最终提交成功后才发送；失败的流可返回 error 事件，客户端不得将缺少 done 的轮次视为已保存。
 
 Message 示例：`{"id":5,"session_id":2,"window_type":"feynman","sender_role":"user","content":"梯度沿哪个方向？","related_node_ids":[],"meta_json":{},"created_at":"2026-11-23T03:16:00"}`。助手消息的 meta_json 保留 citations 或 updates，供刷新页面后恢复引用卡片与分数标签。
 

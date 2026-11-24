@@ -293,11 +293,30 @@ with TestClient(app):
     with engine.begin() as conn:
         conn.exec_driver_sql("UPDATE knowledge_nodes SET user_note='legacy note' WHERE id=1")
         conn.exec_driver_sql("ALTER TABLE knowledge_nodes DROP COLUMN key_points")
+    # SQLite represents the new FK as a table constraint, so DROP COLUMN
+    # cannot recreate the old schema. Rebuild this disposable test table with
+    # FK checks off on a separate connection, keeping every original record.
+    import sqlite3
+    with sqlite3.connect(engine.url.database) as legacy:
+        legacy.executescript('''
+BEGIN;
+CREATE TABLE sessions_legacy (
+    id INTEGER PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    doc_id INTEGER NOT NULL REFERENCES documents(id) ON DELETE CASCADE,
+    title VARCHAR NOT NULL, persona_type VARCHAR NOT NULL, status VARCHAR NOT NULL,
+    created_at DATETIME NOT NULL, ended_at DATETIME
+);
+INSERT INTO sessions_legacy SELECT id,user_id,doc_id,title,persona_type,status,created_at,ended_at FROM sessions;
+DROP TABLE sessions;
+ALTER TABLE sessions_legacy RENAME TO sessions;
+COMMIT;
+''')
 with TestClient(app) as api:
     token=api.post('/api/v1/auth/login',json={'username':'student','password':'123456'}).json()['access_token']
     headers={'Authorization':'Bearer '+token}
     old=api.get('/api/v1/documents/1/graph',headers=headers).json()['nodes'][0]
     assert old['key_points']==[] and old['user_note']=='legacy note'
+    assert api.get('/api/v1/sessions',headers=headers).json()[0]['target_node_id'] is None
     response=api.post('/api/v1/documents/upload',headers=headers,files={'file':('notes.md',b'Alpha: first. Beta: second.')})
     assert response.status_code==201,response.text
     doc=response.json()

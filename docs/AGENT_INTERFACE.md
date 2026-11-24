@@ -10,7 +10,7 @@
 | agents/encyclopedia_agent.py | stream(db, turn: AgentInput) → Iterator[AgentEvent] | 右窗检索、引用回答、记录 need_lookup |
 | agents/report_agent.py | generate(db, session) → Report | 用 SQL 记忆汇总四维评估和复习建议 |
 
-AgentInput 含 session_id、doc_id、persona_type、content。persona_type 是 child、peer、examiner 之一。db 为同一轮专用的同步 SQLAlchemy Session，不要传给并行图节点或其他线程。Agent 内使用 flush 可拿到新主键，最终 commit/rollback 由 API 负责。路由按会话校验归属，直接从脚本调用服务时由调用者保证访问权限。
+AgentInput 含 session_id、doc_id、persona_type、content，可选 target_node_id，以及默认为 explain 的 action（opening 用于角色开场）。persona_type 是 child、peer、examiner 之一。db 为同一轮专用的同步 SQLAlchemy Session，不要传给并行图节点或其他线程。Agent 内使用 flush 可拿到新主键，最终 commit/rollback 由 API 负责。路由按会话校验归属，直接从脚本调用服务时由调用者保证访问权限。
 
 ## memory_service 的函数
 
@@ -31,10 +31,14 @@ AgentInput 含 session_id、doc_id、persona_type、content。persona_type 是 c
 
 ## 替换为 LangGraph
 
-1. 保留同步生成器入口，在本模块构建和缓存图。把 turn 及经授权的记忆字典传入图。左窗建议读取 context → 对齐原文 → 校验评分结构 → 更新 SQL → 发出追问。右窗建议检索 → 发 citation → 根据原文作答 → 记录查证。
+U0003/U0004 已在 `agents/teaching/graph.py` 接入真实 StateGraph，`feynman_agent.stream` 保留入口签名。当前教学图的状态、事务细节与本地验收见 [LANGGRAPH_ACCEPTANCE.md](LANGGRAPH_ACCEPTANCE.md)。API 调用该图前不得预先添加待提交消息：图读取授权上下文后会结束只读事务，以避免远程推理期间占用 SQLite 快照。图使用运行时 context 注入本轮 db，不把连接存入图状态，也不并发共享同一 SQLAlchemy Session。
+
+`TurnMetadata` 是新增的内部结果，API 将其合并到助手消息的 `meta_json`，不作为 SSE 发送。它记录评估证据、实际节点路径和连续达标次数。教学图在流式追问结束后尝试以保存点写入记忆；API 最终同时提交消息和记忆，提交成功才发送 `memory_update` 与 `done`。记忆写入失败可仅保存追问和失败标记；模型或最终提交失败不发 `done`。现有百科与报告保留基线实现。
+
+1. 左窗构建和缓存图，通过运行时 context 注入本轮 turn 和 db，读取 SQL 与历史后释放只读事务。图执行输入分流、原文检索、评估、一次结构纠错、记忆方案、流式追问及最终记忆写入。右窗仍为检索 → citation → 原文回答 → 记录查证的基线。
 2. 图产生文本增量时 yield Token(delta=...)；百科窗使用 yield Citation(citations=hits)。没有依据时明确说明检索结果为空。记忆写入成功后用 NodeUpdate 组装 MemoryUpdate。只传当前资料中的节点 ID。
-3. API 在工作线程中消费事件并通过队列立即发帧。正常结束时，它在同一事务保存用户输入、助手完整文本、引用和记忆变化，提交后发 Done(message_id=...)。Agent 无需自行创建 Message、提交事务或发送 done。中途异常会回滚本轮写入，客户端不会收到 done。连接断开后已接受的轮次继续完成。
-4. SQLite 为单写者；当前基线把一轮更新放在同一写事务中。接入高延迟远程推理后，连续流式内容可直接联调；并发容量评估需重点测量写锁等待（busy_timeout=10s），不要在持锁期间加入无界重试。
+3. API 在工作线程中消费事件，通过队列立即发送 token/citation。memory_update 暂存到事务提交成功后发送。正常结束时，在同一事务保存用户输入、助手完整文本、引用、评估和记忆变化，再发 Done(message_id=...)。Agent 不自行创建 Message、提交事务或发送 done。模型或最终提交失败时回滚本轮写入，不发 done；流已开始时以 error 事件说明原因。连接断开后已接受的轮次继续完成。
+4. SQLite 为单写者。教学图在远程推理结束后才开启短写事务；可选记忆写入使用保存点，失败仍保留追问。单 worker 内按会话串行执行教学、开场、角色切换和报告，其他会话可并行推理。并发容量仍需实测，不要在持锁期间加入无界重试。
 5. 报告函数返回 agents.contracts.Report。四项分数均按 0–100 输出；weakness_summary 为字符串数组，review_plan 为文本。API 负责唯一性、结束时间与幂等返回。基线的覆盖度按提及节点比例、准确度按文档平均掌握度、通俗度按较长输入比例、逻辑性按连接词比例计算，属于联调规则。替换时建议用课程量规与证据评分。
 
 ~~~python

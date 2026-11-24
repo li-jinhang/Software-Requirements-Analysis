@@ -24,6 +24,12 @@ async def lifespan(app):
             conn.exec_driver_sql(
                 "ALTER TABLE knowledge_nodes ADD COLUMN key_points JSON NOT NULL DEFAULT '[]'"
             )
+        session_columns = conn.exec_driver_sql("PRAGMA table_info(sessions)")
+        if "target_node_id" not in {row[1] for row in session_columns}:
+            conn.exec_driver_sql(
+                "ALTER TABLE sessions ADD COLUMN target_node_id INTEGER "
+                "REFERENCES knowledge_nodes(id) ON DELETE SET NULL"
+            )
     # With the single-worker deployment a processing row at startup is an interrupted ingest.
     with SessionLocal.begin() as db:
         recover_deletions(db)

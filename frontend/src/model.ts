@@ -5,7 +5,11 @@ export type Concept = {
   score: number;
   importance: number;
   note: string;
+  syncedNote?: string;
   streak: number;
+  state?: "unlearned" | "weak" | "learning" | "mastered";
+  keyPoints?: string[];
+  lookupCount?: number;
 };
 export type Link = { from: string; to: string; label: string };
 export type Course = {
@@ -18,12 +22,21 @@ export type Course = {
   links: Link[];
 };
 export type Message = {
+  id?: string;
   who: "我" | "听众" | "百科" | "系统";
   text: string;
   node?: string;
   badge?: string;
   citation?: string;
   excerpt?: string;
+  sources?: SourceQuote[];
+  mode?: "offline" | "live";
+};
+export type SourceQuote = {
+  doc_title: string;
+  chunk_index: number;
+  snippet: string;
+  score: number;
 };
 export type Session = {
   id: string;

@@ -12,7 +12,7 @@ import {
   GraduationCap,
   ChevronsUpDown,
 } from "lucide-react";
-import { connected, createRemote, signIn, token } from "./api";
+import { backendUrl, connected, createRemote, currentUser, loadWorkspace, signIn, token } from "./api";
 import Library from "./Library";
 import { Concept, Course, Space, initial, roles } from "./model";
 import { User, student, admin, authenticate, read, write } from "./storage";
@@ -42,6 +42,7 @@ function Auth({
   close: () => void;
 }) {
   const [reg, setReg] = useState(false),
+    [busy, setBusy] = useState(false),
     [name, setName] = useState(""),
     [pass, setPass] = useState(""),
     [nick, setNick] = useState(""),
@@ -54,6 +55,9 @@ function Auth({
       <form
         onSubmit={async (e) => {
           e.preventDefault();
+          if (busy) return;
+          setBusy(true);
+          setErr("");
           try {
             login(
               await (connected ? signIn : authenticate)(
@@ -64,6 +68,8 @@ function Auth({
             );
           } catch (e) {
             setErr((e as Error).message);
+          } finally {
+            setBusy(false);
           }
         }}
       >
@@ -99,9 +105,10 @@ function Auth({
         </label>
         <p role="alert">{err}</p>
         <div className="tools">
-          <button className="primary">{reg ? "注册并登录" : "登录"}</button>
+          <button className="primary" disabled={busy}>{busy ? "正在登录…" : reg ? "注册并登录" : "登录"}</button>
           <button
             type="button"
+            disabled={busy}
             onClick={() => {
               setReg(!reg);
               setErr("");
@@ -111,6 +118,7 @@ function Auth({
           </button>
         </div>
       </form>
+      {connected && <p className="meta">服务端演示账号：学生 student / 123456，管理员 admin / admin123。</p>}
       <h3>本地演示账号</h3>
       <div className="tools">
         <button onClick={() => login(student)}>学生演示</button>
@@ -119,22 +127,32 @@ function Auth({
     </Dialog>
   );
 }
+function savedIdentity(): User | null {
+  try {
+    const saved = JSON.parse(sessionStorage.getItem("fm.user") || "null");
+    if (!saved || typeof saved.id !== "string" || typeof saved.name !== "string") return null;
+    if (saved.id.startsWith("api:") && (!connected || !saved.id.startsWith(`api:${backendUrl}:`) || !token())) return null;
+    return saved;
+  } catch { return null; }
+}
 function App() {
   const [user, setUser] = useState<User>(
-      () => JSON.parse(sessionStorage.getItem("fm.user") || "null") || student,
+      () => savedIdentity() || student,
     ),
     [space, setSpace] = useState(() => read(user.id)),
     [page, setPage] = useState(() => location.hash.slice(1) || "library"),
-    [auth, setAuth] = useState(false),
+    [auth, setAuth] = useState(() => connected && !savedIdentity()),
     [nav, setNav] = useState(false),
     [setup, setSetup] = useState(false),
     [doc, setDoc] = useState(""),
     [node, setNode] = useState(""),
     [role, setRole] = useState(roles[1]),
-    [sid, setSid] = useState(""),
+    [sid, setSid] = useState(() => sessionStorage.getItem(`fm.session:${user.id}`) || ""),
     [rid, setRid] = useState(""),
     [err, setErr] = useState(""),
-    [starting, setStarting] = useState(false);
+    [starting, setStarting] = useState(false),
+    [loading, setLoading] = useState(false),
+    [revision, setRevision] = useState(0);
   const online = user.id.startsWith("api:");
   const latest = useRef(space);
   const c = space.courses.find((x) => x.id === doc) || space.courses[0],
@@ -142,12 +160,40 @@ function App() {
       space.sessions.find((s) => s.id === sid && !s.closed) ||
       space.sessions.find((s) => !s.closed);
   useEffect(() => {
-    try {
-      write(user.id, latest.current);
-    } catch {
-      setErr("浏览器空间不足，无法保存工作区。");
-    }
-  }, [user.id]);
+    if (!online) { setLoading(false); return; }
+    const ctrl = new AbortController();
+    setLoading(true);
+    setErr("");
+    Promise.all([currentUser(ctrl.signal), loadWorkspace(read(user.id), ctrl.signal)])
+      .then(([verified, loaded]) => {
+        if (ctrl.signal.aborted) return;
+        if (verified.id !== user.id) throw Error("登录身份已改变，请重新登录。");
+        latest.current = loaded;
+        setSpace(loaded);
+        setUser(verified);
+      })
+      .catch((e) => { if (!ctrl.signal.aborted) setErr(e.message); })
+      .finally(() => { if (!ctrl.signal.aborted) setLoading(false); });
+    return () => ctrl.abort();
+  }, [user.id, online, revision]);
+  useEffect(() => {
+    if (sid) sessionStorage.setItem(`fm.session:${user.id}`, sid);
+  }, [sid, user.id]);
+  useEffect(() => {
+    const expired = () => {
+      if (!online) return;
+      sessionStorage.removeItem("fm.user");
+      const local = read(student.id);
+      latest.current = local;
+      setSpace(local);
+      setUser(student);
+      setSid("");
+      setAuth(true);
+      setErr("登录已过期，请重新登录；未发送的草稿已保留。");
+    };
+    window.addEventListener("fm:auth-expired", expired);
+    return () => window.removeEventListener("fm:auth-expired", expired);
+  }, [online]);
   useEffect(() => {
     const change = () => {
       setPage(location.hash.slice(1) || "library");
@@ -161,8 +207,8 @@ function App() {
     try {
       write(user.id, next);
     } catch {
-      setErr("浏览器存储空间不足，请导出并清理部分资料后重试。");
-      throw Error("保存失败：本地空间不足。");
+      setErr(online ? "服务端数据不受影响，但浏览器无法缓存草稿。" : "浏览器存储空间不足，请导出并清理部分资料后重试。");
+      if (!online) throw Error("保存失败：本地空间不足。");
     }
     latest.current = next;
     setSpace(next);
@@ -182,6 +228,7 @@ function App() {
     setDoc("");
     setSid("");
     setRid("");
+    setErr("");
     setAuth(false);
     go(u.admin ? "admin" : "library");
   }
@@ -258,7 +305,8 @@ function App() {
           {title}
         </div>
         <div className={"content " + (page === "studio" ? "studio" : "")}>
-          {err && <p role="alert">{err}</p>}
+          {err && <p role="alert">{err} {online && <button onClick={() => setRevision((v) => v + 1)}>重新同步</button>}</p>}
+          {loading ? <p role="status" aria-live="polite">正在同步服务端学习资料和历史记录…</p> :
           <Suspense fallback={<p>正在载入…</p>}>
             {page === "admin" ? (
               user.admin ? (
@@ -329,7 +377,7 @@ function App() {
                 start={begin}
               />
             )}
-          </Suspense>
+          </Suspense>}
         </div>
       </main>
       {auth && <Auth login={login} close={() => setAuth(false)} />}
@@ -416,8 +464,10 @@ function App() {
                   c.nodes.find((n) => n.id === node) || c.nodes[0],
                   role,
                 );
-                if (online)
+                if (online) {
                   session.id = await createRemote(c.id, session.focus, role);
+                  session.left = [];
+                }
                 save((s) => ({ ...s, sessions: [session, ...s.sessions] }));
                 setSid(session.id);
                 setSetup(false);

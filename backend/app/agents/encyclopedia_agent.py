@@ -1,5 +1,5 @@
 from collections.abc import Iterator
-from app.agents.contracts import AgentInput, AgentEvent, Citation, relevant, tokens
+from app.agents.contracts import AgentInput, AgentEvent, Citation, TurnMetadata, relevant, tokens
 from app.services import memory_service as memory
 
 
@@ -11,6 +11,7 @@ def stream(db, turn: AgentInput) -> Iterator[AgentEvent]:
     if nodes:
         node = relevant(nodes, turn.content)
         memory.log_weakness(db, turn.session_id, node["id"], "need_lookup", turn.content)
+        yield TurnMetadata(metadata={"related_node_ids": [node["id"]]})
     if hits:
         hit = hits[0]
         yield from tokens(

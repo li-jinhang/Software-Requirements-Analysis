@@ -91,6 +91,9 @@ class Session(Base):
     doc_id: Mapped[int] = fk("documents")
     title: Mapped[str]
     persona_type: Mapped[str]
+    target_node_id: Mapped[int | None] = mapped_column(
+        ForeignKey("knowledge_nodes.id", ondelete="SET NULL"), nullable=True
+    )
     status: Mapped[str] = mapped_column(default="active")
     created_at: Mapped[Created]
     ended_at: Mapped[datetime | None]

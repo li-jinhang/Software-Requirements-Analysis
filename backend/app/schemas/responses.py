@@ -68,6 +68,7 @@ class SessionOut(BaseModel):
     doc_id: int
     title: str
     persona_type: Persona
+    target_node_id: int | None = None
     status: Literal["active", "completed"]
     created_at: datetime
     ended_at: datetime | None

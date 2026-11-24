@@ -167,7 +167,11 @@ def test_upload_teach_lookup_report_export(server, tmp_path):
     hits = next(data["citations"] for event, data in right if event == "citation")
     assert hits and all(hit["snippet"] in source and hit["doc_title"] == "课程" for hit in hits)
     history = api.get(chat + "/messages", headers=h).json()
-    assert len(history) == 4 and history[-1]["id"] == right[-1][1]["message_id"]
+    assert len(history) == 5 and history[-1]["id"] == right[-1][1]["message_id"]
+    assert history[0]["sender_role"] == "system" and "听众已切换" in history[0]["content"]
+    assert history[-1]["related_node_ids"] and all(
+        node_id in {n["id"] for n in graph["nodes"]} for node_id in history[-1]["related_node_ids"]
+    )
     assert history[-1]["content"] == "".join(
         data["delta"] for event, data in right if event == "token"
     )
@@ -200,7 +204,7 @@ def test_upload_teach_lookup_report_export(server, tmp_path):
         assert db.execute("pragma integrity_check").fetchone() == ("ok",)
         assert db.execute(
             "select count(*) from messages where session_id=?", (session["id"],)
-        ).fetchone() == (4,)
+        ).fetchone() == (5,)
     assert (
         api.delete(base + f"/admin/tables/documents/{doc['id']}", headers=admin).status_code == 204
     )

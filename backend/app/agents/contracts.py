@@ -1,5 +1,5 @@
 from typing import Literal
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from app.schemas import Persona
 
 
@@ -8,6 +8,8 @@ class AgentInput(BaseModel):
     doc_id: int
     persona_type: Persona
     content: str
+    target_node_id: int | None = None
+    action: Literal["explain", "opening"] = "explain"
 
 
 class Token(BaseModel):
@@ -42,6 +44,12 @@ class Done(BaseModel):
     message_id: int
 
 
+class TurnMetadata(BaseModel):
+    """Internal graph result for message persistence; never an SSE event."""
+
+    metadata: dict = Field(default_factory=dict)
+
+
 class Report(BaseModel):
     coverage_score: int
     accuracy_score: int
@@ -52,7 +60,7 @@ class Report(BaseModel):
     review_plan: str
 
 
-AgentEvent = Token | Citation | MemoryUpdate
+AgentEvent = Token | Citation | MemoryUpdate | TurnMetadata
 EVENT_NAMES = {Token: "token", Citation: "citation", MemoryUpdate: "memory_update", Done: "done"}
 
 

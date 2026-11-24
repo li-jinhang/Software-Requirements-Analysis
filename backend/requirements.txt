@@ -12,3 +12,4 @@ openai==2.54.0
 pytest==9.2.0
 httpx==0.28.1
 pydantic==2.14.4
+langgraph==1.2.24

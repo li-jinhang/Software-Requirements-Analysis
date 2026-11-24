@@ -47,6 +47,7 @@ class SessionCreate(PersonaChange):
     doc_id: int = Field(gt=0)
     title: str = Field(default="费曼练习", min_length=1, max_length=150)
     persona_type: Persona = "peer"
+    node_id: int | None = Field(default=None, gt=0)
 
 
 class Turn(Input):

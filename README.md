@@ -2,6 +2,10 @@
 
 React 学习工作台提供费曼反向讲解和百科溯源双窗，FastAPI 负责认证、SQL 知识图谱、ChromaDB 检索、教学会话和报告。需求规格见 [SRS.md](SRS.md)。
 
+U0003/U0004 的 LangGraph 教学流程已接入原版 React 双窗工作台，包含角色开场、证据评估、两轮掌握规则和异常分支。优先使用 [原版工作台本地验收](docs/FRONTEND_LOCAL_ACCEPTANCE.md)；单独检查后端的命令行方式及模型范围见 [LangGraph 本地验收](docs/LANGGRAPH_ACCEPTANCE.md)。
+
+本次功能、需求对应、接口变化和验证结果汇总见 [2026 年 11 月 24 日更新报告](docs/UPDATE_REPORT_2026-11-24.md)。
+
 ## 首次安装
 
 在仓库根目录运行以下 PowerShell 命令，需要 Python 3.12 和 Node.js 20 或以上版本。若已完成第一阶段安装，可复用 backend/.venv。首次需要网络下载依赖。
@@ -15,25 +19,25 @@ npm.cmd --prefix frontend ci
 ## 一键联调
 
 ~~~powershell
-python dev.py
+.\backend\.venv\Scripts\python.exe dev.py
 ~~~
 
-打开 [学习工作台](http://127.0.0.1:5173) 和 [Swagger](http://127.0.0.1:8000/docs)。启动器为 Vite 设置 VITE_BACKEND_URL，Ctrl+C 同时结束两个进程。它固定使用 5173 和 8000；若先前的服务还在运行，请在原终端停止它再启动，以便载入本次更新。首次启动自动建立演示库；已有一期数据库会补上知识点要点字段。默认无需 API Key。
+打开 [原版学习工作台](http://127.0.0.1:5173)；[Swagger](http://127.0.0.1:18080/docs) 用于接口调试。启动器为 Vite 设置 VITE_BACKEND_URL，Ctrl+C 同时结束两个进程。默认使用前端 5173、后端 18080，可通过 --frontend-port/--backend-port 调整。已有后端时加 --frontend-only，仅启动前端。若服务已在运行，请先停止旧进程再完整启动。首次启动自动建立演示库，已有数据库会兼容补上新增字段。默认无需 API Key。
 
-从侧栏的**账号登录**进入服务端空间，用学生 `student / 123456` 或管理员 `admin / admin123` 登录；侧栏的快捷演示入口使用浏览器本地数据。先试登录、上传 [课程样例](backend/data/sample_docs/) 和打开图谱，再按 [联调体检清单](docs/FRONTEND_SYNC_CHECKLIST.md) 核对双窗、笔记和导出。前端第一版有已知协议差异，完整后端流程可直接在 Swagger 中验证。
+配置后端地址后，首次打开会显示账号登录。用学生 `student / 123456` 或管理员 `admin / admin123` 进入服务端空间；“学生演示”“管理员演示”快捷入口使用浏览器本地数据。可以在原页面上传 [课程样例](backend/data/sample_docs/)、开讲、右窗查证、切换角色、恢复历史、查看图谱与报告，并同步笔记和导出。已完成的协议适配见 [本地验收说明](docs/FRONTEND_LOCAL_ACCEPTANCE.md)。
 
 需要分开调试时，在两个终端中从仓库根目录执行：
 
 ~~~powershell
 # 终端一
 cd backend
-.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 8000
+.\.venv\Scripts\python.exe -m uvicorn app.main:app --host 127.0.0.1 --port 18080
 ~~~
 
 ~~~powershell
 # 终端二
 cd frontend
-$env:VITE_BACKEND_URL = "http://127.0.0.1:8000"
+$env:VITE_BACKEND_URL = "http://127.0.0.1:18080"
 npm.cmd run dev -- --host 127.0.0.1 --port 5173 --strictPort
 ~~~
 
