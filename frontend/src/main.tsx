@@ -48,9 +48,11 @@ const pages = [
 function Auth({
   login,
   close,
+  modelAccess,
 }: {
   login: (u: User) => void;
   close: () => void;
+  modelAccess: boolean;
 }) {
   const [reg, setReg] = useState(false),
     [name, setName] = useState(""),
@@ -59,20 +61,28 @@ function Auth({
     [err, setErr] = useState("");
   return (
     <Dialog
-      title={(connected ? "服务端" : "本地") + (reg ? "账号注册" : "账号登录")}
+      title={
+        modelAccess
+          ? "管理员登录"
+          : (connected ? "服务端" : "本地") + (reg ? "账号注册" : "账号登录")
+      }
       close={close}
     >
+      {modelAccess && (
+        <p className="meta">使用服务端管理员账号管理全站模型配置。</p>
+      )}
       <form
         onSubmit={async (e) => {
           e.preventDefault();
           try {
-            login(
-              await (connected ? signIn : authenticate)(
-                name.trim(),
-                pass,
-                reg ? nick : undefined,
-              ),
-            );
+            const nickname = reg ? nick : undefined;
+            const user = connected
+              ? await signIn(name.trim(), pass, {
+                  nickname,
+                  requireAdmin: modelAccess,
+                })
+              : await authenticate(name.trim(), pass, nickname);
+            login(user);
           } catch (e) {
             setErr((e as Error).message);
           }
@@ -111,22 +121,28 @@ function Auth({
         <p role="alert">{err}</p>
         <div className="tools">
           <button className="primary">{reg ? "注册并登录" : "登录"}</button>
-          <button
-            type="button"
-            onClick={() => {
-              setReg(!reg);
-              setErr("");
-            }}
-          >
-            {reg ? "已有账号" : "注册账号"}
-          </button>
+          {!modelAccess && (
+            <button
+              type="button"
+              onClick={() => {
+                setReg(!reg);
+                setErr("");
+              }}
+            >
+              {reg ? "已有账号" : "注册账号"}
+            </button>
+          )}
         </div>
       </form>
-      <h3>本地演示账号</h3>
-      <div className="tools">
-        <button onClick={() => login(student)}>学生演示</button>
-        <button onClick={() => login(admin)}>管理员演示</button>
-      </div>
+      {!modelAccess && (
+        <>
+          <h3>本地演示账号</h3>
+          <div className="tools">
+            <button onClick={() => login(student)}>学生演示</button>
+            <button onClick={() => login(admin)}>管理员演示</button>
+          </div>
+        </>
+      )}
     </Dialog>
   );
 }
@@ -142,7 +158,7 @@ function App() {
       workspaceRoute() === "models" ? "library" : workspaceRoute(),
     ),
     [settings, setSettings] = useState(() => workspaceRoute() === "models"),
-    [auth, setAuth] = useState(false),
+    [auth, setAuth] = useState<"account" | "models">(),
     [nav, setNav] = useState(false),
     [setup, setSetup] = useState(false),
     [doc, setDoc] = useState(""),
@@ -164,7 +180,7 @@ function App() {
     const ctrl = new AbortController();
     const expired = () => {
       login(student);
-      setAuth(true);
+      setAuth("account");
       setErr("登录已失效，请重新登录。");
     };
     window.addEventListener("fm:expired", expired);
@@ -249,7 +265,7 @@ function App() {
     setPage(p);
     setNav(false);
   }
-  function login(u: User) {
+  function login(u: User, openModels = false) {
     if (!u.id.startsWith("api:")) token("");
     const next = read(u.id);
     sessionStorage.setItem("fm.user", JSON.stringify(u));
@@ -262,8 +278,8 @@ function App() {
     setDoc("");
     setSid("");
     setRid("");
-    setAuth(false);
-    setSettings(false);
+    setAuth(undefined);
+    setSettings(openModels);
     setSetup(false);
     go(u.admin ? "admin" : "library");
   }
@@ -341,7 +357,7 @@ function App() {
           <button
             onClick={() => {
               setNav(false);
-              setAuth(true);
+              setAuth("account");
             }}
           >
             <GraduationCap />
@@ -480,14 +496,17 @@ function App() {
             online={online}
             admin={user.admin}
             close={() => setSettings(false)}
-            login={() => {
-              setSettings(false);
-              setAuth(true);
-            }}
+            openAdminLogin={() => setAuth("models")}
           />
         </Suspense>
       )}
-      {auth && <Auth login={login} close={() => setAuth(false)} />}
+      {auth && (
+        <Auth
+          modelAccess={auth === "models"}
+          login={(u) => login(u, auth === "models")}
+          close={() => setAuth(undefined)}
+        />
+      )}
       {setup && c && (
         <Dialog
           title="开始费曼教学"

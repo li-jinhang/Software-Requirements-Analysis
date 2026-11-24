@@ -312,12 +312,12 @@ export default function Settings({
   online,
   admin,
   close,
-  login,
+  openAdminLogin,
 }: {
   online: boolean;
   admin: boolean;
   close: () => void;
-  login: () => void;
+  openAdminLogin: () => void;
 }) {
   const [category, setCategory] = useState<"models" | "teaching">("models");
   const [expanded, setExpanded] = useState(true);
@@ -402,21 +402,24 @@ export default function Settings({
           </h3>
           {message && <p role="status">{message}</p>}
           {error && <p role="alert">{error}</p>}
-          {!online ? (
+          {(!online || !admin) && (
             <div className="settings-empty">
-              <strong>本地演示</strong>
-              <p>登录服务端后可使用模型处理课件与教学对话。</p>
+              <strong>{online ? "需要管理员权限" : "本地演示"}</strong>
+              <p>新增和编辑模型配置需要服务端管理员账号。</p>
               {connected ? (
-                <button type="button" onClick={login}>
-                  账号登录 <ChevronRight aria-hidden="true" />
+                <button type="button" onClick={openAdminLogin}>
+                  {online ? "切换管理员账号" : "管理员登录"}
+                  <ChevronRight aria-hidden="true" />
                 </button>
               ) : (
                 <p>
-                  在项目根目录运行 <code>python dev.py</code> 打开服务端工作台。
+                  双击 <code>run.bat</code> 或运行 <code>python dev.py</code>
+                  ，然后在服务端工作台登录。
                 </p>
               )}
             </div>
-          ) : category === "teaching" && settings ? (
+          )}
+          {!online ? null : category === "teaching" && settings ? (
             <>
               <h4 className="settings-subtitle">应用绑定</h4>
               <p className="meta">

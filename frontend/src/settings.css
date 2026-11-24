@@ -102,6 +102,10 @@ dialog.settings-dialog {
   margin: 4px 0 10px;
 }
 
+.settings-empty + .settings-subtitle {
+  margin-top: 20px;
+}
+
 .settings-bindings {
   display: grid;
   gap: 8px;

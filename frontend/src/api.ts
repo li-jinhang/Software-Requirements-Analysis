@@ -63,7 +63,7 @@ const post = (body: unknown) => ({
 export async function signIn(
   username: string,
   password: string,
-  nickname?: string,
+  { nickname, requireAdmin = false }: { nickname?: string; requireAdmin?: boolean } = {},
 ) {
   if (nickname !== undefined)
     await request("/auth/register", post({ username, password, nickname }));
@@ -72,6 +72,9 @@ export async function signIn(
   ).json();
   if (!a.access_token) throw Error("登录响应缺少访问令牌。");
   const u = a.user || a;
+  if (requireAdmin && u.role !== "admin") {
+    throw Error("请使用服务端管理员账号登录。");
+  }
   token(a.access_token);
   return {
     id: "api:" + base + ":" + username,

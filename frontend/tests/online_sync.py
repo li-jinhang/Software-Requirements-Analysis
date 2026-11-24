@@ -12,16 +12,49 @@ from uuid import uuid4
 from playwright.sync_api import expect, sync_playwright
 
 
+def submit_login(dialog, username):
+    dialog.get_by_label("用户名").fill(username)
+    dialog.get_by_label("密码", exact=True).fill(os.environ[f"FM_{username.upper()}_PASSWORD"])
+    button(dialog, "登录").click()
+
+
 def login(page, username):
     page.locator(".account button").click()
-    page.get_by_label("用户名").fill(username)
-    page.get_by_label("密码", exact=True).fill(os.environ[f"FM_{username.upper()}_PASSWORD"])
-    page.get_by_role("button", name="登录", exact=True).click()
+    submit_login(page.get_by_role("dialog"), username)
     expect(page.locator(".account")).to_contain_text("在线服务")
 
 
 def button(page, name):
     return page.get_by_role("button", name=name, exact=True)
+
+
+def check_model_settings_entry(browser):
+    root = os.environ.get("FM_FRONTEND", "http://127.0.0.1:5173")
+    for online in (False, True):
+        page = browser.new_page()
+        try:
+            page.goto(root)
+            if online:
+                login(page, "student")
+            button(page, "设置").click()
+            settings = page.get_by_role("dialog", name="设置", exact=True)
+            entry = button(settings, "切换管理员账号" if online else "管理员登录")
+            expect(entry).to_be_visible()
+            entry.click()
+            auth = page.get_by_role("dialog", name="管理员登录", exact=True)
+            submit_login(auth, "student")
+            expect(auth.get_by_role("alert")).to_contain_text("服务端管理员账号")
+            button(auth, "关闭").click()
+            expect(entry).to_be_focused()
+            entry.click()
+            submit_login(auth, "admin")
+            expect(auth).to_be_hidden()
+            expect(button(settings, "新建配置")).to_be_visible()
+            button(settings, "新建配置").click()
+            expect(page.get_by_role("dialog", name="新建配置", exact=True)).to_be_visible()
+        finally:
+            page.close()
+    print("PASS model settings entry from demo and student sessions")
 
 
 def run(browser):
@@ -192,6 +225,7 @@ if __name__ == "__main__":
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel=os.environ.get("FM_BROWSER", "msedge"))
         try:
+            check_model_settings_entry(browser)
             run(browser)
         finally:
             browser.close()
