@@ -33,7 +33,16 @@ def serve(stack, args, cwd, env, url, log):
                 process.send_signal(signal.CTRL_BREAK_EVENT)
             else:
                 process.terminate()
-            process.wait(timeout=20)
+            try:
+                process.wait(timeout=20)
+            except subprocess.TimeoutExpired:
+                # Windows venvs launch a second Python process which can retain Chroma's mapped files.
+                if os.name == "nt":
+                    subprocess.run(["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                                   capture_output=True, check=True)
+                else:
+                    process.kill()
+                process.wait(timeout=10)
     stack.callback(stop)
     for _ in range(150):
         if process.poll() is not None:
@@ -76,25 +85,45 @@ def run():
         btn = lambda name: page.get_by_role("button", name=name, exact=True)
         btn("登录").click()
         expect(page.locator(".account")).to_contain_text("在线服务")
-        btn("开讲").first.click()
-        btn("开始教学").click()
-        for i, question in enumerate(["损失函数怎样用 MSE 举一个数值例子？",
-                                      "梯度下降时学习率过大为什么会震荡？请用数值举例？"]):
-            page.get_by_label("讲解内容").fill(question)
+        lectures = [
+            ("损失函数度量预测与真值偏差。训练时降低训练损失，判断泛化还要看独立验证数据。", "我用损失函数 MSE 举例：误差分别为 1 和 2，平方后的平均值是 2.5。"),
+            ("梯度下降沿负梯度更新。学习率决定步长，太大时会跨过谷底来回震荡，甚至发散。", "我用梯度下降的学习率举例：对平方损失取步长 1.1，从 1 走到 −1.2，再到 1.44，越走越远。"),
+        ]
+        for i, (explanation, question) in enumerate(lectures):
+            if i:
+                page.get_by_role("button", name=re.compile("更换资料")).click()
+            else:
+                btn("开讲").first.click()
+            page.get_by_label("目标知识点").select_option(label="梯度下降" if i else "损失函数")
+            btn("开始教学").click()
+            page.get_by_label("讲解内容").fill(explanation + question)
             btn("发送讲解").click()
             listener = page.locator(".p0 .msg:not(.mine)").last
-            expect(page.locator(".p0 .msg:not(.mine) .pill")).to_have_count(i + 1, timeout=150000)
+            expect(page.locator(".p0 .msg:not(.mine) .pill")).to_have_count(1, timeout=150000)
             # Real providers assess each lecture; exact +8 transitions belong to the offline regression.
             expect(listener.locator(".pill")).to_contain_text(re.compile(r".+ · .+[+-]\d+ · \d+%"))
             start = time.monotonic()
-            listener.get_by_role("button", name="去右侧查证").click()
+            lookup = listener.get_by_role("button", name="去右侧查证")
+            for attempt in range(2):
+                with page.expect_response(lambda r: r.url.endswith("/encyclopedia/stream"),
+                                          timeout=150000) as call:
+                    lookup.click()
+                response = call.value
+                if response.ok:
+                    break
+                if attempt or response.status != 502:
+                    raise AssertionError(f"Manual lookup failed: {response.status} {response.text()}")
+                # An HTTP 502 precedes any SSE frames. Wait for the UI's history reconciliation before retry.
+                print("Manual lookup returned HTTP 502; checking history before a single retry.", flush=True)
+                expect(page.get_by_role("status").filter(has_text="已核对历史")).to_be_visible(timeout=15000)
             replies = page.locator(".p1 article:not(.mine):has(.source-list)")
-            expect(replies).to_have_count(i + 1, timeout=150000)
+            expect(replies).to_have_count(1, timeout=150000)
             reply = replies.last
             expect(reply).to_contain_text("课件溯源")
             expect(reply).to_contain_text("学科知识补充与举例")
             expect(reply).to_contain_text(re.compile("均方|MSE" if not i else "震荡|振荡"))
-            expect(reply).to_contain_text(re.compile(r"\d+\.\d+|[0-9]\s*[→=]"))
+            # Match both ordinary text and the visible KaTeX representation of integer examples.
+            expect(reply).to_contain_text(re.compile(r"\d+\.\d+|[0-9]\s*[→=]|[=→]\s*[−-]?\d"))
             expect(reply).not_to_contain_text("这个片段没有直接回答")
             # Require a generated response, independent of the authored offline fallback.
             expect(reply).not_to_contain_text("回到左窗，用自己的话解释例子中哪个条件改变了结果。")
@@ -113,8 +142,8 @@ def run():
                 assert cards.locator(".katex-html").count() > 0
             print(question, round(time.monotonic() - start, 1), "s", titles, flush=True)
             print("公式:", reply.locator("annotation").all_text_contents()[:14], flush=True)
-        page.reload()
-        expect(page.locator(".p1 .source-list")).to_have_count(2)
+            page.reload()
+            expect(page.locator(".p1 .source-list")).to_have_count(1)
         assert page.request.get(url + "/favicon.svg").ok and not errors, errors
 
 

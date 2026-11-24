@@ -73,9 +73,11 @@ def test_model_processing_and_binding_isolation(server):
                 if schema == "Assessment":
                     value = {
                         "node_id": context["node"]["id"],
-                        "student_evidence": context["content"],
+                        "student_evidence": 0,
                         "source_evidence": context["citations"][0]["snippet"],
                         "accuracy": 85, "clarity": 85, "problems": [],
+                        "item_marks": [{"item_id": context["current_item_id"], "status": "mastered",
+                                        "user_evidence": 0, "issues": []}],
                         "followup_focus": "适用条件和反例",
                     }
                 elif schema == "Followup":
@@ -200,7 +202,8 @@ def test_model_processing_and_binding_isolation(server):
         messages = api.get(path + "/messages", headers=student).json()
         assert (
             messages[1]["content"].startswith("模型追问")
-            and messages[1]["meta_json"]["updates"][0]["delta"] == 8
+            and messages[1]["meta_json"]["updates"][0]["delta"] == 100
+            and messages[1]["meta_json"]["assessment"]["item_marks"][0]["user_evidence"] in messages[0]["content"]
             and messages[1]["meta_json"]["graph"] == "feynman_teaching"
         )
         assert (

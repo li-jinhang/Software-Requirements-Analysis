@@ -19,7 +19,7 @@ from app.db.models import (
     WeaknessLog,
     public,
 )
-from app.services import doc_parser, rag_store, llm_client
+from app.services import cognitive, doc_parser, rag_store, llm_client
 
 
 def ingest_document(db, doc_id, profile):
@@ -39,21 +39,8 @@ def ingest_document(db, doc_id, profile):
         extracted = llm_client.extract(text, doc.title, profile)
         rag_store.remove(doc_id)
         rag_store.index(doc_id, doc.title, chunks)
-        nodes = {
-            c.concept_name: KnowledgeNode(doc_id=doc_id, **c.model_dump()) for c in extracted.nodes
-        }
-        db.add_all(nodes.values())
-        db.flush()
-        for e in extracted.edges:
-            db.add(
-                KnowledgeEdge(
-                    doc_id=doc_id,
-                    source_node_id=nodes[e.source].id,
-                    target_node_id=nodes[e.target].id,
-                    relation_type=e.relation_type,
-                    description=e.description,
-                )
-            )
+        cognitive.store_graph(db, doc_id, extracted)
+        cognitive.from_nodes(db, doc_id)
         doc.parse_status = "completed"
         doc.chunk_count = len(chunks)
         doc.structured_summary = extracted.structured_summary
@@ -177,7 +164,7 @@ def _recent_lookups(db, session_id, nodes):
         for m in db.scalars(scope.where(Message.id >= questions[-1].id).order_by(Message.id)):
             if m.sender_role == "user":
                 current = m.id
-            elif m.sender_role == "assistant" and current is not None:
+            elif m.sender_role == "assistant" and current is not None and not json.loads(m.meta_json).get("proactive"):
                 replies[current] = m
                 current = None
     records = []
@@ -343,6 +330,7 @@ def export_memory_json(db, doc_id):
             "未解决记录": ctx["weaknesses"],
         },
         "推荐学习与复讲路径": ctx["recommended_learning_path"],
+        "Agent 认知文档": cognitive.document(db, doc_id),
     }
 
 
@@ -374,6 +362,18 @@ def export_memory_markdown(db, doc_id):
         for i, n in enumerate(data["推荐学习与复讲路径"], 1)
     ]
     sections.append("## 推荐学习与复讲路径\n\n" + "\n".join(steps or ["暂无"]))
+    rubric = data["Agent 认知文档"]
+    sections.append(f"## Agent 认知文档\n\n{rubric['overview']}\n\n总体掌握度 {rubric['mastery_score']}%")
+    for group in rubric["sections"]:
+        lines = [f"### {group['title']}"]
+        for item in group["items"]:
+            lines.append(f"- [{cognitive.LABELS[item['status']]}] {item['statement']}\n"
+                         f"  - 判定标准：{item['key_criteria']}")
+            if item["user_evidence"]:
+                lines.append("  - 回答依据：" + item["user_evidence"])
+            if item["issue_note"]:
+                lines.append("  - 待纠正：" + item["issue_note"])
+        sections.append("\n".join(lines))
     return "\n\n".join(sections) + "\n"
 
 

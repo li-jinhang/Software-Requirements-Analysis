@@ -1,0 +1,12 @@
+.rubric-trigger { color: #3730a3; background: #eef2ff; border-color: #c7d2fe; }
+.rubric-item { padding: .8rem 1rem; margin: .65rem 0; border-radius: .6rem; background: #f1f5f9; }
+.rubric-item header, .correction-card header { display: flex; align-items: baseline; justify-content: space-between; gap: .5rem; }
+.rubric-item header small { background: #dbeafe; color: #1e40af; border-radius: .3rem; padding: .15rem .45rem; }
+.rubric-item.mastered { background: #ecfdf5; color: #065f46; }
+.rubric-item.wrong { background: #fff1f2; color: #9f1239; }
+.rubric-item.partial { background: #fffbeb; color: #854d0e; }
+.msg.correction-card { background: #fffbeb; border-left: 4px solid #d97706; }
+.msg.correction-card.wrong { background: #fff1f2; border-color: #dc2626; }
+.correction-card h4 { font-size: .86rem; margin: .85rem 0 .25rem; }
+.correction-card blockquote { margin: .3rem 0; }
+.push-notice { color: #92400e; font-size: .85rem; margin: .25rem 0; }

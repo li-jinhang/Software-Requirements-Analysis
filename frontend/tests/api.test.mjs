@@ -37,6 +37,21 @@ test("split UTF-8 and CRLF preserve citations, committed scores and final ID", a
   assert.equal(result.scores.get("1").score, 60);
 });
 
+test("left stream dispatches a durable right card and rubric update before done", async () => {
+  const card = {message_id: 42, proactive: true, issue_type: "wrong", label: "理解错误", item_id: 1,
+    concept_name: "梯度", item_statement: "负梯度", user_claim: "正方向", accurate_explanation: "沿负梯度更新。",
+    citations: [{kind: "cognitive_item", item_id: 1, section_title: "梯度"}]};
+  const update = {items: [{id: 1, status: "wrong"}], current_item_id: 1, mastery_score: 15, mastered_count: 0};
+  globalThis.fetch = async () => eventStream(frame("encyclopedia_push", card) + frame("cognitive_update", update)
+    + frame("token", {delta: "请再讲一次。"}) + frame("done", {message_id: 43}));
+  const order = [];
+  const result = await api.stream("2", 0, "正方向", new AbortController().signal,
+    () => order.push("left"), false, data => {assert.deepEqual(data, update); order.push("mark");},
+    message => {assert.equal(message.id, 42); assert.equal(message.correction.item_id, 1); order.push("right");});
+  assert.deepEqual(order, ["right", "mark", "left"]);
+  assert.equal(result.reply.id, 43);
+});
+
 test("provider previews remain provisional until a committed done event", async () => {
   globalThis.fetch = async () => eventStream(frame("preview", { text: "正在生成" }) + frame("token", { delta: "最终回复" }) + frame("done", { message_id: 3 }));
   const parts = [];

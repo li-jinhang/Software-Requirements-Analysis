@@ -333,7 +333,7 @@ function App() {
     }
     if (!(await canLearn("feynman"))) return;
     setDoc(course.id);
-    setNode(n?.id || course.nodes[0]?.id || "");
+    setNode(n?.id || "");
     setSetup(true);
   }
   const title = pages.find((p) => p[0] === page)?.[1] || "学习资料库";
@@ -580,11 +580,12 @@ function App() {
           <label>
             目标知识点
             <select
-              value={node || c.nodes[0].id}
+                value={node}
               onChange={(e) => setNode(e.target.value)}
             >
-              {c.nodes.map((x) => (
-                <option key={x.id} value={x.id}>
+                <option value="">按认知文档推荐顺序</option>
+                {c.nodes.map((x) => (
+                  <option key={x.id} value={x.id}>
                   {x.name}
                 </option>
               ))}

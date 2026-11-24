@@ -1,4 +1,4 @@
-from app.schemas.responses import DocumentOut, NodeOut, GraphOut, ContextOut, LearningStep
+from app.schemas.responses import CognitiveDocOut, DocumentOut, NodeOut, GraphOut, ContextOut, LearningStep
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.db.database import get_db
 from app.db.models import Document, KnowledgeNode, public
 from app.schemas import Note
-from app.services import memory_service as memory
+from app.services import cognitive, memory_service as memory
 from app.services.model_profiles import require_profile
 
 router = APIRouter(prefix="/documents", tags=["资料"])
@@ -23,6 +23,25 @@ def owned(db, model, id, user):
     if not obj or obj.user_id != user.id:
         raise HTTPException(404, "资源不存在")
     return obj
+
+
+@router.post("/generate-from-topic", status_code=201, response_model=DocumentOut)
+def generate_from_topic(body: cognitive.Topic, db=Depends(get_db), user=Depends(current_user)):
+    return cognitive.generate(db, user.id, body, require_profile("extract"))
+
+
+@router.get("/{doc_id}/cognitive-doc", response_model=CognitiveDocOut)
+def cognitive_doc(doc_id: int, session_id: int | None = None, db=Depends(get_db), user=Depends(current_user)):
+    from app.db.models import Session
+    owned(db, Document, doc_id, user)
+    previous = target = None
+    if session_id is not None:
+        session = owned(db, Session, session_id, user)
+        if session.doc_id != doc_id:
+            raise HTTPException(404, "会话不属于该资料")
+        previous = cognitive.last_focus(db, session_id)
+        target = session.target_node_id
+    return cognitive.document(db, doc_id, previous, target)
 
 
 @router.post("/upload", status_code=201, response_model=DocumentOut)

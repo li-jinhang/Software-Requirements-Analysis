@@ -1,5 +1,7 @@
 import React, { useEffect, useRef, useState } from "react";
 import { lookupQuestion } from "./lookup";
+import { Dialog } from "./ui";
+import "./cognitive.css";
 import Markdown from "react-markdown";
 import gfm from "remark-gfm";
 import math from "remark-math";
@@ -20,10 +22,11 @@ import {
   remoteReport,
   sessionHistory,
   setPersona,
-  refreshMemory,
+  cognitiveDoc, refreshMemory,
   type TeachingPurpose,
 } from "./api";
 import {
+  CognitiveDoc, CognitiveItem, CognitiveUpdate, Correction,
   CourseCitation,
   Message,
   Session,
@@ -79,6 +82,40 @@ function SourceCard({ hit }: { hit: CourseCitation }) {
     </section>
   );
 }
+const markLabels = { mastered: "✓ 已掌握", partial: "◐ 待补全", wrong: "× 理解偏差", untested: "○ 待考核" };
+
+function Rubric({ doc, close }: { doc: CognitiveDoc; close: () => void }) {
+  return <Dialog drawer title="Agent 认知文档" close={close}>
+    <CourseText text={doc.overview} />
+    <p>总体掌握度 <strong>{doc.mastery_score}%</strong> · 已掌握 {doc.mastered_count}/{doc.total}</p>
+    <progress max={100} value={doc.mastery_score} aria-label="认知文档掌握度" />
+    {doc.sections.map(group => <section key={group.title}>
+      <h3>{group.title}</h3>
+      {group.items.map(item => <article key={item.id} className={"rubric-item " + item.status} data-item-id={item.id}>
+        <header><b>{markLabels[item.status]}</b>
+          {item.id === doc.current_item_id && <small>当前提问</small>}</header>
+        <CourseText text={item.statement} />
+        <details><summary>判定标准</summary><CourseText text={item.key_criteria} /></details>
+        {item.user_evidence && <p>回答依据 · {item.user_evidence}</p>}
+        {item.issue_note && <p>待纠正 · {item.issue_note}</p>}
+      </article>)}
+    </section>)}
+  </Dialog>;
+}
+
+function CorrectionCard({ card, back }: { card: Correction; back: () => void }) {
+  return <article className={"msg correction-card " + card.issue_type}>
+    <header><strong>实时纠偏 · {card.label}</strong><small>{card.concept_name}</small></header>
+    <h4>你的表述</h4><blockquote>{card.user_claim}</blockquote>
+    <h4>Agent 认知文档标准解读与举例</h4><CourseText text={card.accurate_explanation} />
+    <h4>参考依据</h4><CourseText text={card.item_statement} />
+    {card.citations.map(hit => "kind" in hit
+      ? <small key={"item-" + hit.item_id}>{hit.section_title} · 认知条目 #{hit.item_id}</small>
+      : <SourceCard key={hit.chunk_index} hit={hit} />)}
+    <button className="quiet" onClick={back}>我明白了，回左窗继续讲</button>
+  </article>;
+}
+
 export default function Workbench({
   online,
   space,
@@ -117,6 +154,27 @@ export default function Workbench({
     [finishing, setFinishing] = useState(false);
   const streams = useRef<(AbortController | null)[]>([null, null]);
   useEffect(() => () => streams.current.forEach((ctrl) => ctrl?.abort()), []);
+  const [rubric, setRubric] = useState<CognitiveDoc | null>(null);
+  const [rubricOpen, setRubricOpen] = useState(false);
+  const [pushCount, setPushCount] = useState(0);
+  useEffect(() => {
+    if (!pushCount) return;
+    const timer = setTimeout(() => setPushCount(0), 4500);
+    return () => clearTimeout(timer);
+  }, [pushCount]);
+  function applyMarks(update: CognitiveUpdate) {
+    const changes = new Map<number, CognitiveItem>(update.items.map(i => [i.id, i]));
+    setRubric(doc => doc && ({ ...doc, current_item_id: update.current_item_id,
+      mastery_score: update.mastery_score, mastered_count: update.mastered_count,
+      sections: doc.sections.map(g => ({ ...g, items: g.items.map(i => changes.get(i.id) || i) })) }));
+  }
+  function pushCard(message: Message) {
+    setCollapsed(false);
+    setMobile(1);
+    setPushCount(n => n + 1);
+    save(s => ({ ...s, sessions: s.sessions.map(v => v.id !== session.id || v.right.some(m => m.id === message.id)
+      ? v : { ...v, right: [...v.right, message] }) }));
+  }
   const wrap = useRef<HTMLDivElement>(null),
     fields = useRef<(HTMLTextAreaElement | null)[]>([]),
     feeds = useRef<(HTMLDivElement | null)[]>([]);
@@ -152,7 +210,8 @@ export default function Workbench({
           const { reply } = await stream(session.id, 0, "", ctrl.signal, () => {}, true);
           history.left.push(reply);
         }
-        if (!ctrl.signal.aborted) patch(history);
+        const doc = await cognitiveDoc(c.id, session.id, ctrl.signal);
+        if (!ctrl.signal.aborted) { setRubric(doc); patch(history); }
       })
       .catch((e) => {
         if (!ctrl.signal.aborted) {
@@ -198,7 +257,7 @@ export default function Workbench({
         side,
         text,
         ctrl.signal,
-        (reply) => show({ question: text, reply }),
+        (reply) => show({ question: text, reply }), false, applyMarks, pushCard,
       );
       if (ctrl.signal.aborted) return;
       save((s) => ({
@@ -226,11 +285,12 @@ export default function Workbench({
       if (ctrl.signal.aborted || modelRequired(e)) return;
       const reason = (e as Error).message;
       try {
-        const [history, memory] = await Promise.all([
+        const [history, memory, doc] = await Promise.all([
           sessionHistory(session.id, ctrl.signal),
-          refreshMemory(c, ctrl.signal),
+          refreshMemory(c, ctrl.signal), cognitiveDoc(c.id, session.id, ctrl.signal),
         ]);
         if (ctrl.signal.aborted) return;
+        setRubric(doc);
         const baseline =
           session[key]
             .filter((m) => m.who === "听众" || m.who === "百科")
@@ -252,12 +312,14 @@ export default function Workbench({
             const drafts: [string, string] = [...v.drafts];
             if (accepted && drafts[side].trim() === text) drafts[side] = "";
             else if (!accepted && !drafts[side]) drafts[side] = text;
-            return { ...v, [key]: history[key], drafts };
+            return { ...v, ...history, drafts };
           }),
         }));
         setNotice(
           accepted
-            ? "已从服务端恢复本轮回复。"
+            ? history[key].at(-1)?.who === "我"
+              ? reason + " 回答与纠偏已保存，可继续复讲。"
+              : "已从服务端恢复本轮回复。"
             : reason + " 已核对历史，请确认后再发送。",
         );
       } catch {
@@ -310,6 +372,9 @@ export default function Workbench({
           </button>
         </div>
         <div className="tools">
+          {online && rubric && <button className="rubric-trigger" onClick={() => setRubricOpen(true)}>
+            Agent 认知文档（已掌握 {rubric.mastered_count}/{rubric.total}）
+          </button>}
           <button onClick={graph}>
             知识图谱 · {mean(c.nodes.map((x) => x.score))}%
           </button>
@@ -326,6 +391,7 @@ export default function Workbench({
           </button>
         </div>
       </div>
+      {rubricOpen && rubric && <Rubric doc={rubric} close={() => setRubricOpen(false)} />}
       {notice && <p role="status">{notice}</p>}
       {historyError && (
         <button onClick={() => setReload((v) => v + 1)}>刷新会话历史</button>
@@ -410,6 +476,7 @@ export default function Workbench({
                     </button>
                   )}
                 </div>
+                {i === 1 && pushCount > 0 && <p className="push-notice" role="status">已弹出 {pushCount} 条实时纠偏</p>}
                 <small>
                   {i
                     ? "优先查证当前资料"
@@ -452,7 +519,9 @@ export default function Workbench({
                     </p>
                   </div>
                 )}
-                {(i ? session.right : session.left).map((m, j) => (
+                {(i ? session.right : session.left).map((m, j) => m.correction ? (
+                  <CorrectionCard key={"push-" + m.id} card={m.correction} back={() => focus(0)} />
+                ) : (
                   <article
                     className={"msg " + (m.who === "我" ? "mine" : "")}
                     key={j}

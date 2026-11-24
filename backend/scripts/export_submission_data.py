@@ -60,7 +60,10 @@ def build(source, parent=OUTPUT.parent):
         snapshot = stage / "feynman_sanitized.db"
         secrets = data_export.write_sanitized_db(source, snapshot)
         with data_export.snapshot_session(snapshot) as db:
-            write_json(stage / "backend_data_snapshot.json", data_export.snapshot_json(db))
+            snapshot_rows = data_export.snapshot_json(db)
+            if "cognitive_items" not in snapshot_rows:
+                raise ValueError("交付快照缺少认知文档表")
+            write_json(stage / "backend_data_snapshot.json", snapshot_rows)
             course = db.scalar(
                 select(Document)
                 .where(Document.parse_status == "completed")
@@ -89,6 +92,7 @@ SQLite 与 JSON 来自同一份业务快照，可用 SQLite 查看器打开。�
 | documents | 课程、解析状态与摘要 |
 | knowledge_nodes | 概念、重要度、掌握度与个人笔记 |
 | knowledge_edges | 知识点之间有方向的关系 |
+| cognitive_items | 按课件排列的认知条目、掌握标记、学生回答依据与纠偏备注 |
 | sessions | 用户和课程对应的学习会话 |
 | messages | 左右窗消息及结构化元数据 |
 | weakness_logs | 薄弱点、查证与解决状态 |

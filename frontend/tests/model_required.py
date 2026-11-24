@@ -15,7 +15,7 @@ def run(browser):
         return owner.get_by_role("button", name=name, exact=True)
 
     prompt = page.get_by_role("dialog", name="请配置模型", exact=True)
-    for action in ("开讲", "上传资料"):
+    for action in ("开讲", "上传资料", "输入知识点生成"):
         button(action).first.click()
         expect(prompt).to_be_visible()
         button("前往模型配置", prompt).click()
@@ -56,7 +56,7 @@ def run(browser):
         expect(right).to_have_value("为什么需要学习率？")
         button("结束并生成报告").click()
         expect(prompt).to_be_visible()
-        expect(page.locator(".feed .msg")).to_have_count(0)
+        expect(page.locator(".feed .msg")).to_have_count(1)  # Only the previously accepted opening.
     finally:
         current = page.request.get(api).json()["bindings"].get("default")
         if current == profile_id:

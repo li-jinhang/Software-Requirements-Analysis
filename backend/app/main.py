@@ -11,8 +11,9 @@ from app.core.security import signing_key
 from app.db.database import Base, engine, SessionLocal
 from app.db.seed import seed
 from app.services.memory_service import recover_deletions
-from sqlalchemy import update
-from app.db.models import Document
+from sqlalchemy import select, update
+from app.db.models import CognitiveItem, Document
+from app.services import cognitive
 
 
 @asynccontextmanager
@@ -45,6 +46,12 @@ async def lifespan(app):
     if settings.seed_demo:
         with SessionLocal() as db:
             seed(db)
+    with SessionLocal.begin() as db:
+        db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        missing = select(Document.id).where(Document.parse_status == "completed",
+            ~select(CognitiveItem.id).where(CognitiveItem.doc_id == Document.id).exists())
+        for doc_id in db.scalars(missing).all():
+            cognitive.from_nodes(db, doc_id)
     try:
         yield
     finally:

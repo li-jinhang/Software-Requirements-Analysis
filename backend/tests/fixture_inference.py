@@ -6,6 +6,27 @@ def install(replace=setattr):
     from app.services import llm_client, model_profiles
     from app.agents.teaching import model as teaching_model
 
+    import json
+    from app.agents.teaching import rubric
+    from types import SimpleNamespace
+
+    def assess(state, schema, correction=False):
+        data = json.loads(teaching_model.local_assessment(state))
+        if state.get("current_item_id"):
+            # The fixture assesses exactly the supplied focus. Production uses the bound model.
+            issues = [] if len(state["content"]) > 5 else [
+                dict(issue_type="vague", detail="请补充定义", user_claim=state["content"])
+            ]
+            data["item_marks"] = [dict(item_id=state["current_item_id"],
+                status="partial" if issues else "mastered", user_evidence=state["content"], issues=issues)]
+        return json.dumps(data, ensure_ascii=False)
+
+    def correct(schema, task, material):
+        return schema(explanations=[dict(issue_number=i, accurate_explanation="请结合：" + p["item_statement"],
+                                         source_indices=[0])
+                                    for i, p in enumerate(json.loads(material)["issues"], 1)])
+    replace(rubric, "ModelConnection", lambda profile: SimpleNamespace(structured=correct))
+    replace(teaching_model, "assess", assess)
     replace(teaching_model, "offline", lambda: True)
 
     model_profiles.save_profile(model_profiles.ProfileInput(

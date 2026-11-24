@@ -22,7 +22,41 @@ export type Course = {
   nodes: Concept[];
   links: Link[];
 };
+export type CognitiveItem = {
+  id: number;
+  item_order: number;
+  section_title: string;
+  statement: string;
+  key_criteria: string;
+  status: "untested" | "wrong" | "partial" | "mastered";
+  user_evidence: string;
+  issue_note: string;
+};
+export type CognitiveUpdate = {
+  items: CognitiveItem[];
+  current_item_id: number | null;
+  mastery_score: number;
+  mastered_count: number;
+};
+export type CognitiveDoc = Omit<CognitiveUpdate, "items"> & {
+  doc_id: number;
+  overview: string;
+  total: number;
+  sections: { title: string; items: CognitiveItem[] }[];
+};
+export type Correction = {
+  proactive: true;
+  issue_type: "wrong" | "inaccurate" | "vague";
+  label: string;
+  concept_name: string;
+  item_id: number;
+  item_statement: string;
+  user_claim: string;
+  accurate_explanation: string;
+  citations: (CourseCitation | {kind: "cognitive_item"; item_id: number; section_title: string})[];
+};
 export type Message = {
+  correction?: Correction;
   id?: number;
   who: "我" | "听众" | "百科" | "系统";
   text: string;

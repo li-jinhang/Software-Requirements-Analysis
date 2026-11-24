@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Annotated
-from sqlalchemy import JSON, ForeignKey, CheckConstraint, Text, inspect
+from sqlalchemy import JSON, ForeignKey, CheckConstraint, UniqueConstraint, Text, inspect
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -64,6 +64,25 @@ class KnowledgeNode(Base):
     status: Mapped[str] = mapped_column(default="unlearned")
     lookup_count: Mapped[int] = mapped_column(default=0)
     user_note: Mapped[str] = mapped_column(default="")
+    updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
+
+
+class CognitiveItem(Base):
+    __tablename__ = "cognitive_items"
+    __table_args__ = (
+        CheckConstraint("status in ('untested','mastered','partial','wrong')"),
+        UniqueConstraint("doc_id", "item_order"),
+    )
+    id: Mapped[PK]
+    doc_id: Mapped[int] = fk("documents")
+    node_id: Mapped[int | None] = fk("knowledge_nodes")
+    section_title: Mapped[str]
+    item_order: Mapped[int]
+    statement: Mapped[str]
+    key_criteria: Mapped[str]
+    status: Mapped[str] = mapped_column(default="untested")
+    user_evidence: Mapped[str] = mapped_column(default="")
+    issue_note: Mapped[str] = mapped_column(default="")
     updated_at: Mapped[datetime] = mapped_column(default=now, onupdate=now)
 
 

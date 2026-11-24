@@ -1,4 +1,5 @@
 import {
+  CognitiveDoc, CognitiveUpdate, Correction,
   CourseCitation,
   Concept,
   Course,
@@ -165,6 +166,12 @@ export async function uploadRemote(file: File, subject: string) {
     }),
   );
 }
+export function cognitiveDoc(doc: string, session: string, signal: AbortSignal) {
+  return json<CognitiveDoc>(`/documents/${doc}/cognitive-doc?session_id=${session}`, { signal });
+}
+export async function generateCourse(topic: string, subject: string) {
+  return uploaded(await json<DocumentRow>("/documents/generate-from-topic", post({topic, subject})));
+}
 export async function retryRemote(id: number | string) {
   return uploaded(
     await json<DocumentRow>("/documents/" + id + "/retry", { method: "POST" }),
@@ -207,7 +214,7 @@ type Update = {
   status: Concept["mastery"];
   tag: string;
 };
-type Meta = { citations?: Citation[]; updates?: Update[] };
+type Meta = Partial<Correction> & { updates?: Update[] };
 type StreamPayloads = {
   token: { delta: string };
   preview: { text: string };
@@ -235,7 +242,8 @@ function assistant(
           .join(" · ");
       })
       .join(" / "),
-    citations: meta.citations,
+    citations: meta.citations?.filter((hit): hit is CourseCitation => "chunk_index" in hit),
+    ...(meta.proactive ? {correction: meta as Correction} : {}),
   };
 }
 export async function stream(
@@ -245,6 +253,8 @@ export async function stream(
   signal: AbortSignal,
   onText: (text: string) => void,
   opening = false,
+  onMarks?: (event: CognitiveUpdate) => void,
+  onCorrection?: (message: Message) => void,
 ) {
   const response = await request(
     "/sessions/" + id + "/" + (opening ? "opening" : side ? "encyclopedia" : "feynman") + "/stream",
@@ -303,6 +313,16 @@ export async function stream(
               (data as StreamPayloads["citation"]).citations,
             );
             break;
+          case "cognitive_update":
+            if (!Array.isArray(data.items) || !Number.isInteger(data.mastery_score))
+              throw Error("认知文档更新格式有误。");
+            onMarks?.(data);
+            break;
+          case "encyclopedia_push":
+            if (!data.proactive || !Number.isInteger(data.message_id) || !data.accurate_explanation)
+              throw Error("纠偏消息格式有误。");
+            onCorrection?.(assistant(1, data.accurate_explanation, data, data.message_id));
+            break;
           case "memory_update":
             if (!Array.isArray(data.updates) || data.updates.some((u: Update) => !Number.isInteger(u.node_id) || !Number.isInteger(u.mastery_score) || u.mastery_score < 0 || u.mastery_score > 100 || !["weak", "learning", "mastered", "unlearned"].includes(u.status || ""))) throw Error("流式记忆事件格式有误。");
             meta.updates = (meta.updates || []).concat(
@@ -323,7 +343,7 @@ export async function stream(
             };
           }
           case "error":
-            throw Error(data.detail || "对话中断。");
+            throw new ApiError(data.detail || "对话中断。", undefined, undefined, data.code);
         }
       }
       if (done) throw Error("回复中断，请重试。");

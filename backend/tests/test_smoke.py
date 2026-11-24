@@ -107,7 +107,7 @@ def test_demo_and_access(server):
     assert api.get(path, headers=a).status_code == 404
     assert api.get(path, headers=s).json() == ctx["recommended_learning_path"]
     assert len(ctx["edges"]) == 9 and len(ctx["weaknesses"]) == 3
-    assert {n["status"] for n in ctx["nodes"]} == {"mastered", "learning", "weak"}
+    assert all(n["status"] == "unlearned" and n["mastery_score"] == 0 for n in ctx["nodes"])
     assert api.get("/api/v1/sessions/1/report", headers=s).json()["clarity_score"] == 91
     assert {m["window_type"] for m in api.get("/api/v1/sessions/1/messages", headers=s).json()} == {
         "feynman",
@@ -128,7 +128,9 @@ def events(resp):
 def test_fixture_evaluation_preserves_focus_without_certifying_mastery(fixture_server):
     server = fixture_server
     h = login(server, "student", "123456")
-    sid = server.post("/api/v1/sessions", headers=h, json={"doc_id": 1}).json()["id"]
+    nodes = server.get("/api/v1/documents/1/graph", headers=h).json()["nodes"]
+    target = next(n["id"] for n in nodes if n["concept_name"] == "梯度下降")
+    sid = server.post("/api/v1/sessions", headers=h, json={"doc_id": 1, "node_id": target}).json()["id"]
     url = f"/api/v1/sessions/{sid}/feynman/stream"
     questions = []
     for topic in ["梯度下降", "过拟合", "过拟合"]:
@@ -138,9 +140,10 @@ def test_fixture_evaluation_preserves_focus_without_certifying_mastery(fixture_s
             update = next(d["updates"][0] for k, d in frames if k == "memory_update")
             assert update["concept_name"] == topic and update["mastery_score"] < 80
     assert "「梯度下降」" in questions[0]
-    assert all("「过拟合」" in q for q in questions[1:])
+    assert all("「梯度下降」" in q for q in questions[1:])  # Unresolved criterion stays in focus.
     history = server.get(f"/api/v1/sessions/{sid}/messages", headers=h).json()
-    assert all(m["meta_json"]["mode"] == "offline" for m in history if m["sender_role"] == "assistant")
+    assert all(m["meta_json"]["mode"] == "offline" for m in history
+               if m["sender_role"] == "assistant" and m["window_type"] == "feynman")
 
 
 def test_upload_teach_lookup_report_export(fixture_server, tmp_path):
@@ -182,6 +185,7 @@ def test_upload_teach_lookup_report_export(fixture_server, tmp_path):
         "已掌握清单",
         "薄弱点警示",
         "推荐学习与复讲路径",
+        "Agent 认知文档",
     ]
     md = api.get(url + "/memory/export?format=md", headers=h).text
     assert all("## " + key in md for key in archive) and "复习例题" in md
@@ -234,7 +238,7 @@ def test_upload_teach_lookup_report_export(fixture_server, tmp_path):
     assert records["total"] == 1 and records["items"][0]["id"] == doc["id"]
     assert api.get(base + "/admin/stats", headers=admin).json()["top_weaknesses"]
     snap = api.get(base + "/admin/export/json", headers=admin)
-    assert len(snap.json()) == 8 and "password_hash" not in snap.text
+    assert len(snap.json()) == 9 and snap.json()["cognitive_items"] and "password_hash" not in snap.text
     backup = tmp_path / "restore.db"
     backup.write_bytes(api.get(base + "/admin/export/db", headers=admin).content)
     with sqlite3.connect(backup) as db:

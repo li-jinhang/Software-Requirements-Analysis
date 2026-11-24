@@ -312,6 +312,7 @@ with TestClient(app):
     with engine.begin() as conn:
         conn.exec_driver_sql("UPDATE knowledge_nodes SET user_note='legacy note' WHERE id=1")
         conn.exec_driver_sql("UPDATE documents SET chunk_count=2 WHERE id=1")
+        conn.exec_driver_sql("DROP TABLE cognitive_items")
         conn.exec_driver_sql("ALTER TABLE knowledge_nodes DROP COLUMN key_points")
     # SQLite represents the new FK as a table constraint, so DROP COLUMN
     # cannot recreate the old schema. Rebuild this disposable test table with
@@ -336,6 +337,8 @@ with TestClient(app) as api:
     headers={'Authorization':'Bearer '+token}
     old=api.get('/api/v1/documents/1/graph',headers=headers).json()['nodes'][0]
     assert old['key_points']==[] and old['user_note']=='legacy note'
+    rubric=api.get('/api/v1/documents/1/cognitive-doc',headers=headers).json()
+    assert rubric['total'] >= 8 and rubric['mastery_score'] == 0
     assert api.get('/api/v1/sessions',headers=headers).json()[0]['target_node_id'] is None
     assert api.get('/api/v1/documents/1',headers=headers).json()['chunk_count']==8
     install()

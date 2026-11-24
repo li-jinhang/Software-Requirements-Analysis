@@ -15,8 +15,9 @@ from app.db.models import Session, Document, KnowledgeNode, Message, DiagnosticR
 from app.api.v1.documents import owned
 from app.schemas import SessionCreate, PersonaChange, Turn
 from app.agents import feynman_agent, model_teaching
-from app.services.model_profiles import ModelError, require_profile
+from app.services.model_profiles import ModelError, ModelRequired, require_profile
 from app.agents.contracts import AgentInput, MemoryUpdate, Citation, Token, Done, TurnMetadata, Preview, EVENT_NAMES
+from app.agents.contracts import CognitiveUpdate, EncyclopediaPush
 from app.agents.teaching.model import TeachingModelError
 
 router = APIRouter(prefix="/sessions", tags=["会话"])
@@ -99,12 +100,16 @@ def frame(event):
 def produce(id, content, window, user_id, events, action="explain"):
     """Finish the accepted turn even if the HTTP client disconnects."""
     try:
-        with session_guard(id), SessionLocal() as db:
+        from contextlib import ExitStack
+        with session_guard(id), SessionLocal() as db, ExitStack() as guards:
             s = db.get(Session, id)
             if s is None or s.user_id != user_id:
                 raise HTTPException(404, "会话不存在")
             if s.status != "active":
                 raise HTTPException(409, "会话已结束")
+            if window == "feynman":
+                # Different sessions may teach the same document-wide rubric.
+                guards.enter_context(session_guard(("document", s.doc_id)))
             if action == "opening":
                 old = db.scalar(select(Message).where(
                     Message.session_id == id, Message.sender_role == "assistant",
@@ -132,7 +137,13 @@ def produce(id, content, window, user_id, events, action="explain"):
             meta = {}
             node_ids = []
             pending_updates = []
+            accepted_early = False
             for event in stream:
+                if isinstance(event, EncyclopediaPush):
+                    accepted_early = True
+                if isinstance(event, CognitiveUpdate) and not accepted_early:
+                    pending_updates.append(event)
+                    continue
                 if isinstance(event, TurnMetadata):
                     details = dict(event.metadata)
                     node_ids.extend(details.pop("related_node_ids", []))
@@ -145,11 +156,12 @@ def produce(id, content, window, user_id, events, action="explain"):
                 elif isinstance(event, MemoryUpdate):
                     meta["updates"] = event.model_dump()["updates"]
                     node_ids.extend(n.node_id for n in event.updates)
-                    pending_updates.append(event)
-                    continue
+                    if not accepted_early:
+                        pending_updates.append(event)
+                        continue
                 events.put(frame(event))
             lock_active(db, id)
-            if action != "opening":
+            if action != "opening" and not accepted_early:
                 db.add(Message(session_id=id, window_type=window, sender_role="user", content=content))
             msg = Message(
                 session_id=id,
@@ -179,6 +191,8 @@ def conversation(id, body, window, db, user, action="explain"):
     workers.submit(produce, id, body.content if body else "", window, user.id, events, action)
     first = events.get()
     if isinstance(first, Exception):
+        if isinstance(first, ModelRequired):
+            raise first
         if isinstance(first, (TeachingModelError, ModelError)):
             raise HTTPException(502, str(first)) from first
         raise first
@@ -187,8 +201,11 @@ def conversation(id, body, window, db, user, action="explain"):
         yield first
         while (item := events.get()) is not None:
             if isinstance(item, Exception):
-                detail = str(item) if isinstance(item, (TeachingModelError, ModelError)) else "对话中断，本轮未提交，请刷新历史后重试。"
-                yield "event: error\ndata: " + json.dumps({"detail": detail}, ensure_ascii=False) + "\n\n"
+                detail = str(item) if isinstance(item, (TeachingModelError, ModelError)) else "对话中断，请刷新历史以核对已保存的消息。"
+                payload = {"detail": detail}
+                if isinstance(item, ModelRequired):
+                    payload.update(code="model_required", purpose=item.purpose)
+                yield "event: error\ndata: " + json.dumps(payload, ensure_ascii=False) + "\n\n"
                 return
             yield item
 

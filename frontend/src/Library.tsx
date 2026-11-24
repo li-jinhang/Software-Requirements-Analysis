@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { Course, Space, archive, mean, status } from "./model";
 import {
+  generateCourse,
   uploadRemote,
   syncNote,
   ApiError,
@@ -46,6 +47,25 @@ export default function Library({
     [error, setError] = useState(""),
     [failedId, setFailedId] = useState<number>(),
     [busy, setBusy] = useState(false);
+  const [topicOpen, setTopicOpen] = useState(false);
+  const [topic, setTopic] = useState("");
+  const [topicSubject, setTopicSubject] = useState("");
+  async function generate() {
+    if (!topic.trim() || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const course = await generateCourse(topic.trim(), topicSubject.trim());
+      save(s => ({ ...s, courses: [course, ...s.courses] }));
+      setTopicOpen(false);
+      setTopic("");
+      setTopicSubject("");
+      setQuery("");
+      setSubject("");
+    } catch (e) {
+      if (!modelRequired(e)) setError((e as Error).message);
+    } finally { setBusy(false); }
+  }
   const courses = space.courses,
     nodes = courses.flatMap((c) => c.nodes),
     doc = courses.find((c) => c.id === detail),
@@ -105,6 +125,10 @@ export default function Library({
           <h1>学习资料库</h1>
           <p>整理课程资料，选择一份开始费曼讲解。</p>
         </div>
+        <div className="tools">
+        <button onClick={async () => {
+          if (await canLearn("extract")) { setError(""); setTopicOpen(true); }
+        }}>输入知识点生成</button>
         <button
           className="primary"
           onClick={async () => {
@@ -116,6 +140,7 @@ export default function Library({
           <Plus />
           上传资料
         </button>
+        </div>
       </div>
       <div className="stats">
         {[
@@ -164,7 +189,19 @@ export default function Library({
           </select>
         </div>
       </div>
-      {!upload && !doc && error && <p role="alert">{error}</p>}
+      {!upload && !topicOpen && !doc && error && <p role="alert">{error}</p>}
+      {topicOpen && <Dialog title="按知识点生成认知文档" close={() => { if (!busy) setTopicOpen(false); }}>
+        <form onSubmit={e => { e.preventDefault(); void generate(); }}>
+          <label>知识点名称<input required autoFocus maxLength={150} value={topic}
+            placeholder="例如：二分查找" onChange={e => setTopic(e.target.value)} /></label>
+          <label>学科（选填）<input maxLength={100} value={topicSubject}
+            onChange={e => setTopicSubject(e.target.value)} /></label>
+          {error && <p role="alert">{error}</p>}
+          <button className="primary" disabled={busy || !topic.trim()}>
+            {busy ? "正在生成认知文档…" : "生成认知文档"}
+          </button>
+        </form>
+      </Dialog>}
       <div className="cards">
         {visible.map((c) => {
           const avg = mean(c.nodes.map((n) => n.score));

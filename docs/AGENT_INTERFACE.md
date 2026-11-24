@@ -74,4 +74,8 @@ def stream(db, turn):
 
 - `recommended_learning_path` 为文档级有序数组。每项含 `node_id`、`concept_name`、`mastery_score`、`status`、`prerequisites`（直接前置概念名）和 `reason`。仅 prerequisite 边约束顺序；就绪节点先排未掌握项，再按未解决薄弱记录数、重要度、掌握度和节点 ID 排序。遇环仅在本次计算中放宽环内依赖，理由会提示复讲起点。SQL 图谱保持原样。也可直接调用 `compute_learning_path(db, doc_id)` 或授权读取 `GET /api/v1/documents/{doc_id}/learning-path`。
 - 传入有效 `session_id` 时还返回 `recent_encyclopedia_lookups`，按新到旧最多五项。每项含 `question`、`related_concepts`（概念名列表）、`summary`（至多 180 字）。相同轮次的右窗提问与 need_lookup 日志合并，允许独立日志；没有回复时摘要可为空。未指定会话时省略此字段，不跨会话读取消息。
-- Markdown / JSON 记忆档案在原四节之后追加「推荐学习与复讲路径」。
+- Markdown / JSON 记忆档案包含「推荐学习与复讲路径」和「Agent 认知文档」。
+
+### 条目评估与右窗推送
+
+LangGraph 从课程认知文档恢复 cognitive_items 与 current_item_id。评估模型按条返回 item_marks，逐字核验学生引文与课程依据。存在偏差时进入 correct 节点，使用 encyclopedia 环节绑定生成解释，提交学生回答、条目标记和右窗消息后再推送卡片。此时右窗已经可以显示纠偏，左窗仍可继续流式追问。准确回答的分数与消息一起提交。求助和偏题分支继续保留，只有得到证据支持的讲解才更新掌握度。事件字段见 API_CONTRACT.md 的「认知文档与双窗纠偏」。

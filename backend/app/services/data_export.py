@@ -17,6 +17,7 @@ from app.db.models import (
     Document,
     KnowledgeNode,
     KnowledgeEdge,
+    CognitiveItem,
     Session,
     Message,
     WeaknessLog,
@@ -33,6 +34,7 @@ MODELS = (
     Message,
     WeaknessLog,
     DiagnosticReport,
+    CognitiveItem,
 )
 MASK = "[REDACTED]"
 PRIVATE_FIELD = re.compile(
@@ -116,16 +118,31 @@ def write_sanitized_db(source, destination):
             secrets = sorted(secrets, key=len, reverse=True)
             with snapshot_session(destination) as db:
                 Base.metadata.create_all(db.get_bind(), tables=[m.__table__ for m in MODELS])
+            legacy_rubric = False
             with closing(sqlite3.connect(destination)) as dest:
                 dest.execute("PRAGMA foreign_keys=ON")
                 for model in MODELS:
                     table = model.__tablename__
+                    if model is CognitiveItem and not copy.execute(
+                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
+                    ).fetchone():
+                        # An offline submission can precede the first application restart.
+                        legacy_rubric = True
+                        continue
                     cols = [c.name for c in model.__table__.columns]
                     fields = ",".join(f'"{c}"' for c in cols)
                     insert = (
                         f'INSERT INTO "{table}" ({fields}) VALUES ({",".join("?" for _ in cols)})'
                     )
-                    for row in copy.execute(f'SELECT {fields} FROM "{table}" ORDER BY id'):
+                    existing = {r[1] for r in copy.execute(f'PRAGMA table_info("{table}")')}
+                    # Match the application's additive migrations even when exporting an unbooted checkout.
+                    legacy_defaults = {("sessions", "target_node_id"): "NULL",
+                                       ("knowledge_nodes", "key_points"): "'[]'"}
+                    source_fields = ",".join(
+                        f'"{table}"."{col}"' if col in existing else legacy_defaults[table, col]
+                        for col in cols
+                    )
+                    for row in copy.execute(f'SELECT {source_fields} FROM "{table}" ORDER BY id'):
                         clean = dict(zip(cols, row))
                         for col, value in clean.items():
                             if PRIVATE_FIELD.search(col) or col == "file_path":
@@ -147,6 +164,12 @@ def write_sanitized_db(source, destination):
                             )
                         dest.execute(insert, tuple(clean.values()))
                 dest.commit()
+                if legacy_rubric:
+                    from app.services.cognitive import from_nodes
+                    with snapshot_session(destination) as db:
+                        for doc_id in db.scalars(select(Document.id).where(Document.parse_status == "completed")).all():
+                            from_nodes(db, doc_id)
+                        db.commit()
                 dest.execute("VACUUM")
                 if dest.execute("PRAGMA integrity_check").fetchone() != ("ok",):
                     raise ValueError("脱敏副本完整性检查失败")

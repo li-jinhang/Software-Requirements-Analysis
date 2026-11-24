@@ -157,7 +157,7 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api.v1 import admin
-    from app.db.models import KnowledgeNode, Message
+    from app.db.models import CognitiveItem, KnowledgeNode, Message
     from app.services import model_profiles
     from scripts import export_submission_data as package
 
@@ -178,6 +178,9 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
     )
     model_profiles.save_account({"access": access, "refresh": refresh})
     db.get(KnowledgeNode, 1).user_note = f"不应导出 {key} 或 {access}"
+    db.add(CognitiveItem(doc_id=1, node_id=1, section_title="基础", item_order=1,
+                         statement="认识前提", key_criteria="解释前提", user_evidence=key,
+                         status="partial", issue_note=refresh))
     db.add(
         Message(
             session_id=1,
@@ -220,6 +223,7 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
             assert not copies[-1].parent.exists()
             if fmt == "json":
                 assert "password_hash" not in response.json()["users"][0]
+                assert response.json()["cognitive_items"][0]["user_evidence"] == "[REDACTED]"
                 assert response.json()["messages"][0]["meta_json"] == {"nested": {}}
             else:
                 exported = tmp_path / "download.db"
@@ -257,6 +261,14 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
         for p in out.rglob("*")
         if p.is_file()
     )
+    # Export before the first app restart on a teammate's pre-target/pre-rubric database.
+    with closing(sqlite3.connect(source)) as old:
+        old.execute("DROP TABLE cognitive_items")
+        old.execute("ALTER TABLE sessions RENAME COLUMN target_node_id TO previous_unused_target")
+        old.commit()
+    legacy = package.build(source, tmp_path)
+    contents = json.loads((legacy / "backend_data_snapshot.json").read_bytes())
+    assert contents["sessions"][0]["target_node_id"] is None and contents["cognitive_items"]
     (out / "sample_docs" / "unsafe.md").write_text("API_KEY=" + key)
     with pytest.raises(ValueError):
         package.inspect_files(out, [key])

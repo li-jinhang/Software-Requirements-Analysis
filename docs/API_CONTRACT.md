@@ -165,3 +165,18 @@ async function streamTurn(url, accessToken, content, onEvent) {
 | DELETE /chatgpt/login，DELETE /chatgpt/account | 取消待完成授权，或退出服务端 ChatGPT 账号 |
 
 缺少操作所需模型时返回 409，detail 对象包含 code（model_required）、purpose 和 message。
+
+## 认知文档与双窗纠偏
+
+| 接口（需登录） | 返回 |
+| --- | --- |
+| POST /api/v1/documents/generate-from-topic | 输入 `{topic, subject?, detail_level?}`，使用 extract 环节生成课程，成功返回 201 和标准 Document |
+| GET /api/v1/documents/{doc_id}/cognitive-doc | 返回 overview、sections（含 items）、current_item_id、mastery_score、mastered_count、total。可传 session_id 还原该会话的提问焦点 |
+
+条目分值为 untested 0、wrong 15、partial 50、mastered 100。文档和节点分别对所属条目等权取整。证据和缺口随条目保存在 user_evidence 与 issue_note。旧库启动时基于课件要点生成待考核条目，保留原会话和诊断报告。
+
+左窗流可额外发送以下事件。两者均表示对应数据已经提交，可在消息历史和认知文档接口重新读取。
+
+- `cognitive_update` 含 items（本轮变化的完整条目）、current_item_id（下一问，完成时为 null）、mastery_score 和 mastered_count。
+- `encyclopedia_push` 含 message_id、proactive、issue_type、label、concept_name、item_id、item_statement、user_claim、accurate_explanation 和 citations。每个独立问题一张卡，引用可为认知条目（kind=cognitive_item）或原文片段。右窗消息的 meta_json 保存同一载荷，消息主键即 message_id。
+- 右窗纠偏在左窗追问前提交。若随后生成追问中断，客户端重新读取两窗历史及认知文档即可恢复。流开始后遇到缺少绑定，error 事件包含 code=model_required 和 purpose。

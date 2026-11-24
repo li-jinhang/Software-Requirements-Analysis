@@ -9,6 +9,7 @@ import re
 from langgraph.config import get_stream_writer
 from langgraph.graph import END, START, StateGraph
 from langgraph.runtime import Runtime
+from pydantic import ValidationError
 from sqlalchemy import func, select, update
 
 from app.agents.contracts import (
@@ -16,7 +17,8 @@ from app.agents.contracts import (
 )
 from app.db.models import Message, Session, KnowledgeNode, WeaknessLog, public
 from app.services import memory_service as memory
-from . import model
+from app.services import cognitive
+from . import model, rubric
 from .prompts import opening
 from .schemas import Assessment, TeachingState
 
@@ -37,6 +39,9 @@ def load_context(state: TeachingState, runtime: Runtime[TeachingRuntime]):
         .order_by(Message.id.desc()).limit(24)
     ).all())]
     node = None
+    rows = cognitive.items(db, turn.doc_id)
+    previous = cognitive.last_focus(db, turn.session_id) if rows else None
+    current = cognitive.focus(rows, previous, turn.target_node_id)
     if ctx["nodes"]:
         explicit = next((n for n in ctx["nodes"] if n["id"] == turn.target_node_id), None)
         named = [n for n in ctx["nodes"] if n["concept_name"] in turn.content]
@@ -46,12 +51,15 @@ def load_context(state: TeachingState, runtime: Runtime[TeachingRuntime]):
         last = next((n for n in ctx["nodes"] if n["id"] in last_ids), None)
         node = explicit or (max(named, key=lambda n: len(n["concept_name"])) if named else last)
         node = node or relevant(ctx["nodes"], turn.content)
+        if current:
+            node = next((n for n in ctx["nodes"] if n["id"] == current["node_id"]), node)
         ctx = memory.get_memory_context(db, turn.doc_id, turn.session_id, concept=node["id"])
     # No database snapshot or write lock is held while waiting for the provider.
     db.rollback()
     return {
         "trace": ["load_context"], "content": turn.content, "node": node,
-        "memory": ctx, "history": history,
+        "memory": ctx, "history": history, "cognitive_items": rows, "accepted_early": False,
+        "current_item_id": current["id"] if current else None, "next_item": current,
         "assessment": None, "assessment_error": "", "repair_count": 0,
         "high_quality": False, "streak": 0, "delta": 0,
         "updates": [], "memory_synced": False,
@@ -68,6 +76,8 @@ def classify(state: TeachingState, runtime: Runtime[TeachingRuntime]):
         kind = "empty"
     elif runtime.context.turn.action == "opening":
         kind = "opening"
+    elif state["cognitive_items"] and not state["current_item_id"]:
+        kind = "finished"
     elif len(text) < 100 and help_intent:
         kind = "stuck"
     elif re.search(r"今天天气|明天天气|讲个笑话|股票推荐|买彩票|聊聊明星|订外卖", text):
@@ -80,7 +90,8 @@ def classify(state: TeachingState, runtime: Runtime[TeachingRuntime]):
 def retrieve(state: TeachingState, runtime: Runtime[TeachingRuntime]):
     hits = memory.search_rag(
         runtime.context.turn.doc_id,
-        state["node"]["concept_name"] + " " + state["content"], top_k=4,
+        " ".join([state["node"]["concept_name"], (state.get("next_item") or {}).get("statement", ""),
+                  state["content"]]), top_k=4,
     )
     if hits:
         get_stream_writer()(Citation(citations=hits))
@@ -88,24 +99,33 @@ def retrieve(state: TeachingState, runtime: Runtime[TeachingRuntime]):
 
 
 def assess(state: TeachingState):
-    if not state["citations"]:
+    if not state["citations"] and not state.get("next_item"):
         return {"trace": ["assess"], "assessment_error": "未召回课件原文，本轮不更新掌握度。"}
     try:
         raw = model.assess(state, Assessment.model_json_schema(), state["repair_count"] > 0)
+        if raw.startswith("```") and raw.endswith("```"):
+            raw = raw.partition("\n")[2].removesuffix("```").strip()
         assessment = Assessment.model_validate_json(raw)
+        rubric.validate_marks(assessment, state)
         if assessment.node_id != state["node"]["id"]:
             raise ValueError("评估知识点与当前教学目标不一致")
         if assessment.student_evidence not in state["content"]:
             raise ValueError("学生证据不是本轮输入原文")
-        if not any(assessment.source_evidence in h["snippet"] for h in state["citations"]):
+        evidence = [h["snippet"] for h in state["citations"]]
+        for item in state["cognitive_items"]:
+            evidence.extend((item["statement"], item["key_criteria"]))
+        if not any(assessment.source_evidence in source for source in evidence):
             raise ValueError("原文证据不属于召回片段")
         return {"trace": ["assess"], "assessment": assessment.model_dump(), "assessment_error": ""}
     except model.ModelError:
         raise
     except (ValueError, IndexError) as exc:
-        log.warning("教学评估校验失败 (%s)，纠错次数 %s", type(exc).__name__, state["repair_count"])
+        reason = ("字段错误：" + "、".join(".".join(map(str, err["loc"])) + "/" + err["type"]
+                                  for err in exc.errors(include_input=False)[:4])
+                  if isinstance(exc, ValidationError) else str(exc))
+        log.warning("教学评估校验失败 (%s)，纠错次数 %s", reason, state["repair_count"])
         return {"trace": ["assess"], "assessment": None,
-                "assessment_error": "评估结构或证据未通过校验，本轮不更新掌握度。"}
+                "assessment_error": reason + "。本轮不更新掌握度。"}
 
 
 def repair(state: TeachingState):
@@ -115,7 +135,7 @@ def repair(state: TeachingState):
 def assessment_route(state):
     if state.get("assessment"):
         return "plan_memory"
-    if state["citations"] and state["repair_count"] == 0:
+    if (state["citations"] or state.get("next_item")) and state["repair_count"] == 0:
         return "repair"
     return "respond"
 
@@ -126,6 +146,8 @@ def plan_memory(state: TeachingState):
         return {"trace": ["plan_memory"], "kind": "stuck", "assessment": None}
     if not assessment["on_topic"]:
         return {"trace": ["plan_memory"], "kind": "off_topic", "assessment": None}
+    if state["cognitive_items"]:
+        return {"trace": ["plan_memory"], "next_item": rubric.projected_focus(state)}
     challenge = next((m for m in reversed(state["history"])
                       if m["window_type"] == "feynman" and m["sender_role"] == "assistant"), None)
     answered_challenge = bool(challenge and node["id"] in challenge["related_node_ids"]
@@ -146,8 +168,18 @@ def respond(state: TeachingState, runtime: Runtime[TeachingRuntime]):
     if state["kind"] == "empty":
         chunks = ["这份资料没有可用知识点，请重新解析或上传资料后再练习。"]
         question_kind = "clarify"
+    elif state["cognitive_items"] and not state["next_item"]:
+        chunks = ["这份认知文档的条目已全部掌握，可以结束本次教学并查看诊断报告。"]
+        question_kind = "complete"
     elif state["kind"] == "opening":
-        chunks = [opening(node["concept_name"], turn.persona_type)]
+        item = state["next_item"]
+        if item:
+            question = {"child": "你能打个生活中的比方，让我听懂这句话吗？",
+                        "peer": "你能用自己的话，解释这句话背后的道理吗？",
+                        "examiner": "请通过一个具体情形说明这条结论的依据。"}[turn.persona_type]
+            chunks = [f"我们先看「{item['section_title']}」里的一句：\n\n{item['statement']}\n\n{question}"]
+        else:
+            chunks = [opening(node["concept_name"], turn.persona_type)]
         question_kind = "deep"
     elif state["kind"] == "stuck":
         chunks = [f"没关系，我们先查证「{node['concept_name']}」。点击“去右侧查证”，看过原文后再用自己的话讲一遍，好吗？"]
@@ -170,8 +202,15 @@ def respond(state: TeachingState, runtime: Runtime[TeachingRuntime]):
 def persist_memory(state: TeachingState, runtime: Runtime[TeachingRuntime]):
     """Short final write section; a savepoint isolates optional memory failures."""
     assessment, node = state.get("assessment"), state["node"]
-    if not assessment:
+    if not assessment or state["accepted_early"]:
         return {"trace": ["persist_memory"]}
+    if state["cognitive_items"]:
+        db, turn = runtime.context.db, runtime.context.turn
+        db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+        scores, marks_event = rubric.save_marks(db, state, turn)
+        get_stream_writer()(scores)
+        get_stream_writer()(marks_event)
+        return {"trace": ["persist_memory"], "memory_synced": True, "updates": scores.model_dump()["updates"]}
     db, turn = runtime.context.db, runtime.context.turn
     try:
         # Establish a real outer SQLite transaction before SAVEPOINT; releasing
@@ -236,6 +275,8 @@ def complete(state: TeachingState):
         )
     get_stream_writer()(TurnMetadata(metadata={
         "graph": "feynman_teaching", "graph_nodes": state["trace"] + ["complete"],
+        "current_item_id": state["next_item"]["id"] if state.get("next_item") else None,
+        "accepted_early": state["accepted_early"],
         "mode": "offline" if model.offline() else "live",
         "input_kind": state["kind"], "question_kind": state["question_kind"],
         "assessment": assessment, "assessment_error": state["assessment_error"],
@@ -249,7 +290,7 @@ def complete(state: TeachingState):
 def build_graph():
     graph = StateGraph(TeachingState, context_schema=TeachingRuntime)
     for node in (load_context, classify, retrieve, assess, repair, plan_memory,
-                 respond, persist_memory, complete):
+                 rubric.correct, respond, persist_memory, complete):
         graph.add_node(node.__name__, node)
     graph.add_edge(START, "load_context")
     graph.add_edge("load_context", "classify")
@@ -259,7 +300,12 @@ def build_graph():
     graph.add_conditional_edges("assess", assessment_route,
                                 {n: n for n in ("plan_memory", "repair", "respond")})
     graph.add_edge("repair", "assess")
-    graph.add_edge("plan_memory", "respond")
+    def after_plan(state):
+        marks = (state.get("assessment") or {}).get("item_marks", [])
+        return "correct" if any(m["issues"] for m in marks) else "respond"
+
+    graph.add_conditional_edges("plan_memory", after_plan, {"correct": "correct", "respond": "respond"})
+    graph.add_edge("correct", "respond")
     graph.add_edge("respond", "persist_memory")
     graph.add_edge("persist_memory", "complete")
     graph.add_edge("complete", END)

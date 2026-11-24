@@ -1,6 +1,7 @@
 from typing import Literal
 from pydantic import BaseModel, Field
 from app.schemas import Persona
+from app.schemas.responses import CognitiveItemOut
 
 
 class AgentInput(BaseModel):
@@ -48,6 +49,32 @@ class MemoryUpdate(BaseModel):
     updates: list[NodeUpdate]
 
 
+class CognitiveUpdate(BaseModel):
+    items: list[CognitiveItemOut]
+    current_item_id: int | None
+    mastery_score: int
+    mastered_count: int
+
+
+class RubricReference(BaseModel):
+    kind: Literal["cognitive_item"] = "cognitive_item"
+    item_id: int
+    section_title: str
+
+
+class EncyclopediaPush(BaseModel):
+    message_id: int
+    proactive: Literal[True] = True
+    issue_type: Literal["wrong", "inaccurate", "vague"]
+    label: str
+    item_id: int
+    concept_name: str
+    item_statement: str
+    user_claim: str
+    accurate_explanation: str
+    citations: list[RubricReference | CitationItem]
+
+
 class Done(BaseModel):
     message_id: int
 
@@ -68,8 +95,9 @@ class Report(BaseModel):
     review_plan: str
 
 
-AgentEvent = Token | Preview | Citation | MemoryUpdate | TurnMetadata
+AgentEvent = Token | Preview | Citation | MemoryUpdate | TurnMetadata | CognitiveUpdate | EncyclopediaPush
 EVENT_NAMES = {
+    CognitiveUpdate: "cognitive_update", EncyclopediaPush: "encyclopedia_push",
     Token: "token", Preview: "preview", Citation: "citation",
     MemoryUpdate: "memory_update", Done: "done", StreamError: "error",
 }

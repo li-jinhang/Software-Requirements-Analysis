@@ -173,7 +173,7 @@ def run(browser):
     expect(page.get_by_label("讲解内容")).to_have_value("未发送的草稿")
     expect(page.get_by_label("听众角色")).to_have_value("严苛考官")
     answers = [m for m in history if m["sender_role"] == "assistant"]
-    assert len(answers) == 3
+    assert len(answers) == 4  # opening, two teaching replies and one manual lookup
     for message in answers:
         selector = ".p0" if message["window_type"] == "feynman" else ".p1"
         assert message["content"].strip()
@@ -258,7 +258,7 @@ def run(browser):
         path = event.value.path()
         if fmt == "json":
             data = json.loads(path.read_bytes())
-            assert len(data) == 8 and all("password_hash" not in u for u in data["users"])
+            assert len(data) == 9 and data["cognitive_items"] and all("password_hash" not in u for u in data["users"])
         else:
             with sqlite3.connect(path) as db:
                 assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)

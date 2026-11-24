@@ -17,6 +17,35 @@ class DocumentOut(BaseModel):
     created_at: datetime
 
 
+class CognitiveItemOut(BaseModel):
+    id: int
+    doc_id: int
+    node_id: int | None
+    section_title: str
+    item_order: int
+    statement: str
+    key_criteria: str
+    status: Literal["untested", "partial", "wrong", "mastered"]
+    user_evidence: str
+    issue_note: str
+    updated_at: datetime
+
+
+class CognitiveSection(BaseModel):
+    title: str
+    items: list[CognitiveItemOut]
+
+
+class CognitiveDocOut(BaseModel):
+    doc_id: int
+    overview: str
+    sections: list[CognitiveSection]
+    current_item_id: int | None
+    mastery_score: int
+    mastered_count: int
+    total: int
+
+
 class NodeOut(BaseModel):
     id: int
     doc_id: int
