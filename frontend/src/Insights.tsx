@@ -26,7 +26,7 @@ import { dimensions } from "./model";
 import { relationLabel, WorkspaceToolbar, type ColorTheme } from "./ui";
 import { CourseText } from "./LearningMessage";
 import "./insights.css";
-import { ArrowRight, GraduationCap, LayoutGrid, RotateCcw, Search } from "lucide-react";
+import { ArrowRight, GraduationCap, LayoutGrid, RotateCcw, Search, Trash2 } from "lucide-react";
 import { MasteryLegend, MasteryProgress, masteryForScore } from "./MasteryProgress";
 echarts.use([RadarChart, RadarComponent, CanvasRenderer]);
 const graphFit = { padding: 0.18, minZoom: 0.025, maxZoom: 1.2 };
@@ -580,6 +580,7 @@ export function Reports({
   practice,
   guide,
   history,
+  onDelete,
   go,
 }: {
   theme: ColorTheme;
@@ -589,6 +590,7 @@ export function Reports({
   practice?: (c: Course, n?: Concept) => void;
   guide?: (c: Course, n?: Concept) => void;
   history?: (id: string) => void;
+  onDelete?: (report: Report) => void;
   go: () => void;
 }) {
   const r = space.reports.find((x) => x.id === id) || space.reports[0];
@@ -647,9 +649,10 @@ export function Reports({
               {space.reports.map((item) => {
                 const score = mean(item.scores);
                 return (
-                  <li key={item.id}>
+                  <li key={item.id} className="reports-list-row">
                     <button
                       type="button"
+                      className="reports-list-item"
                       aria-current={item.id === r.id ? "true" : undefined}
                       onClick={() => select(item.id)}
                     >
@@ -659,6 +662,20 @@ export function Reports({
                       </div>
                       <span className="reports-list-score">{score}</span>
                     </button>
+                    {onDelete && (
+                      <button
+                        type="button"
+                        className="icon-button reports-row-delete"
+                        aria-label="删除报告"
+                        title={"删除「" + item.title + "」报告"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onDelete(item);
+                        }}
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </button>
+                    )}
                   </li>
                 );
               })}
@@ -694,6 +711,17 @@ export function Reports({
                   导出 Markdown
                 </button>
                 <button onClick={() => window.print()}>打印 / 存 PDF</button>
+                {onDelete && (
+                  <button
+                    type="button"
+                    className="quiet report-delete-btn"
+                    title="删除此诊断报告"
+                    onClick={() => onDelete(r)}
+                  >
+                    <Trash2 aria-hidden="true" />
+                    删除报告
+                  </button>
+                )}
               </div>
             </header>
 

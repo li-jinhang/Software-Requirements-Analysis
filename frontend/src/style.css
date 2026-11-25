@@ -478,6 +478,59 @@ input[type="checkbox"] {
   font: 11px var(--mono);
   color: var(--subtle);
   flex: none;
+  transition: opacity 120ms ease;
+}
+.nav-row {
+  position: relative;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+.sidebar nav .nav-row > button:first-child {
+  flex: 1 1 auto;
+  padding-inline-end: 26px;
+}
+.sidebar nav button.nav-row-delete {
+  position: absolute;
+  inset-inline-end: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  width: 22px;
+  height: 22px;
+  min-height: 22px;
+  padding: 0;
+  justify-content: center;
+  border-radius: 5px;
+  color: var(--muted);
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+}
+.sidebar nav button.nav-row-delete > svg {
+  width: 13px;
+  height: 13px;
+}
+.nav-row:hover .nav-row-delete,
+.nav-row:focus-within .nav-row-delete {
+  opacity: 1;
+  pointer-events: auto;
+}
+.nav-row:hover .nav-meta,
+.nav-row:focus-within .nav-meta {
+  opacity: 0;
+}
+.sidebar nav button.nav-row-delete:enabled:hover {
+  background: var(--red-wash);
+  color: var(--red-ink);
+}
+@media (hover: none) {
+  .sidebar nav button.nav-row-delete {
+    opacity: 0.72;
+    pointer-events: auto;
+  }
+  .nav-row .nav-meta {
+    display: none;
+  }
 }
 .nav-empty {
   margin: 4px 9px;
@@ -1104,6 +1157,66 @@ button.account-delete:enabled:hover {
   gap: 5px;
   color: var(--muted);
   font-size: 12px;
+}
+.card-meta-actions {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.card-delete {
+  width: 24px;
+  height: 24px;
+  min-height: 24px;
+  padding: 0;
+  border-radius: 5px;
+  color: var(--muted);
+  opacity: 0;
+  transition: opacity 120ms ease, color 120ms ease, background 120ms ease;
+}
+.card-delete svg {
+  width: 13px;
+  height: 13px;
+}
+.card:hover .card-delete,
+.card:focus-within .card-delete {
+  opacity: 1;
+}
+.card-delete:enabled:hover {
+  background: var(--red-wash);
+  color: var(--red-ink);
+}
+@media (hover: none) {
+  .card-delete {
+    opacity: 0.75;
+  }
+}
+.confirm-dialog {
+  width: min(440px, 100%);
+}
+.confirm-copy {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.65;
+  color: var(--muted);
+}
+.confirm-copy strong {
+  color: var(--ink);
+  font-weight: 600;
+}
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 14px;
+}
+button.danger {
+  border-color: var(--red-ink);
+  background: var(--red-wash);
+  color: var(--red-ink);
+  font-weight: 550;
+}
+button.danger:enabled:hover {
+  filter: brightness(0.97);
 }
 .subject-tag svg,
 .format-mark svg,

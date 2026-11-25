@@ -309,6 +309,15 @@ export async function setPersona(id: string, role: string) {
     body: JSON.stringify({ persona_type: persona(role) }),
   });
 }
+export async function deleteDocument(id: string) {
+  await request("/documents/" + id, { method: "DELETE" });
+}
+export async function deleteSession(id: string) {
+  await request("/sessions/" + id, { method: "DELETE" });
+}
+export async function deleteReport(sessionId: string) {
+  await request("/sessions/" + sessionId + "/report", { method: "DELETE" });
+}
 type Citation = CourseCitation & { score: number };
 type Update = {
   node_id: number;

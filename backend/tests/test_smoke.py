@@ -299,3 +299,92 @@ def test_retry_and_cross_store_cleanup(tmp_path, monkeypatch):
         assert api.delete(url, headers=h).status_code == 204
         assert not path.exists() and not rag_store.search(id, "学习率")
         assert rag_store.search(1, "过拟合")
+
+
+def test_delete_session_and_report_cascade_and_ownership(tmp_path, monkeypatch):
+    monkeypatch.syspath_prepend(str(ROOT))
+    monkeypatch.setenv("DATA_DIR", str(tmp_path))
+    monkeypatch.setenv("MOCK_LLM", "true")
+    monkeypatch.setenv("EMBEDDING_PROVIDER", "local_lite")
+    from app.main import app
+    from fastapi.testclient import TestClient
+    from sqlalchemy import select
+    from app.db.database import SessionLocal
+    from app.db.models import (
+        CognitiveItem,
+        DiagnosticReport,
+        Document,
+        KnowledgeEdge,
+        KnowledgeNode,
+        Message,
+        Session,
+        WeaknessLog,
+    )
+    from app.services import rag_store
+    from fixture_inference import install
+
+    with TestClient(app) as api:
+        install(monkeypatch.setattr)
+        assert api.post("/api/v1/auth/register", json={"username": "owner-a", "password": "pw-123456", "nickname": "A"}).status_code == 201
+        assert api.post("/api/v1/auth/register", json={"username": "other-b", "password": "pw-123456", "nickname": "B"}).status_code == 201
+        ha = login(api, "owner-a", "pw-123456")
+        hb = login(api, "other-b", "pw-123456")
+
+        source = (
+            "梯度下降：沿负梯度更新参数。学习率：控制更新步长。正则化：约束模型复杂度。"
+            "损失函数：衡量预测误差。过拟合：训练好验证差。"
+        ) * 10
+        doc = api.post(
+            "/api/v1/documents/upload",
+            headers=ha,
+            files={"file": ("测试删除.md", source.encode(), "text/markdown")},
+            data={"subject": "机器学习"},
+        ).json()
+        doc_id = doc["id"]
+
+        s1 = api.post("/api/v1/sessions", headers=ha, json={"doc_id": doc_id}).json()["id"]
+        s2 = api.post("/api/v1/sessions", headers=ha, json={"doc_id": doc_id}).json()["id"]
+        for sid in (s1, s2):
+            events(api.post(f"/api/v1/sessions/{sid}/feynman/stream", headers=ha, json={"content": "梯度下降沿负梯度更新。"}))
+            events(api.post(f"/api/v1/sessions/{sid}/encyclopedia/stream", headers=ha, json={"content": "学习率是什么？"}))
+            assert api.post(f"/api/v1/sessions/{sid}/report", headers=ha).status_code == 200
+
+        # Non-owner attempts are rejected cleanly with 404.
+        assert api.delete(f"/api/v1/sessions/{s1}/report", headers=hb).status_code == 404
+        assert api.delete(f"/api/v1/sessions/{s1}", headers=hb).status_code == 404
+        assert api.delete(f"/api/v1/documents/{doc_id}", headers=hb).status_code == 404
+
+        # Delete only report of s1: report disappears while session and messages remain.
+        assert api.delete(f"/api/v1/sessions/{s1}/report", headers=ha).status_code == 204
+        assert api.delete(f"/api/v1/sessions/{s1}/report", headers=ha).status_code == 404
+        assert api.get(f"/api/v1/sessions/{s1}/report", headers=ha).status_code == 404
+        assert len(api.get(f"/api/v1/sessions/{s1}/messages", headers=ha).json()) >= 4
+        assert {row["id"] for row in api.get("/api/v1/sessions", headers=ha).json()} == {s1, s2}
+
+        # Delete s2: cascades its messages, weakness_logs and diagnostic_report, leaving s1 & doc intact.
+        assert api.delete(f"/api/v1/sessions/{s2}", headers=ha).status_code == 204
+        assert api.delete(f"/api/v1/sessions/{s2}", headers=ha).status_code == 404
+        assert {row["id"] for row in api.get("/api/v1/sessions", headers=ha).json()} == {s1}
+        with SessionLocal() as db:
+            assert db.get(Session, s2) is None
+            assert list(db.scalars(select(Message).where(Message.session_id == s2))) == []
+            assert list(db.scalars(select(WeaknessLog).where(WeaknessLog.session_id == s2))) == []
+            assert list(db.scalars(select(DiagnosticReport).where(DiagnosticReport.session_id == s2))) == []
+            assert db.get(Session, s1) is not None
+            doc_path = Path(db.get(Document, doc_id).file_path)
+            assert doc_path.exists()
+
+        # Delete document: cascades remaining s1, nodes, edges, items, messages, weaknesses, file & chroma chunks.
+        assert api.delete(f"/api/v1/documents/{doc_id}", headers=ha).status_code == 204
+        assert api.get("/api/v1/documents", headers=ha).json() == []
+        assert api.get("/api/v1/sessions", headers=ha).json() == []
+        assert not doc_path.exists()
+        assert not rag_store.search(doc_id, "梯度下降")
+        with SessionLocal() as db:
+            assert db.get(Document, doc_id) is None
+            assert list(db.scalars(select(KnowledgeNode).where(KnowledgeNode.doc_id == doc_id))) == []
+            assert list(db.scalars(select(KnowledgeEdge).where(KnowledgeEdge.doc_id == doc_id))) == []
+            assert list(db.scalars(select(CognitiveItem).where(CognitiveItem.doc_id == doc_id))) == []
+            assert list(db.scalars(select(Session).where(Session.doc_id == doc_id))) == []
+            assert list(db.scalars(select(Message).where(Message.session_id == s1))) == []
+            assert list(db.scalars(select(WeaknessLog).where(WeaknessLog.session_id == s1))) == []

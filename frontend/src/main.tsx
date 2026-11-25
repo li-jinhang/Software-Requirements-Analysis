@@ -20,11 +20,15 @@ import {
   Plus,
   FileText,
   MessagesSquare,
+  Trash2,
 } from "lucide-react";
 import {
   connected,
   createRemote,
   createGuidedSession,
+  deleteDocument,
+  deleteReport,
+  deleteSession,
   signIn,
   token,
   restoreSpace,
@@ -41,7 +45,7 @@ import {
 import Library from "./Library";
 import LocalAccounts from "./LocalAccounts";
 const CapabilityCenter = lazy(() => import("./CapabilityCenter"));
-import { Concept, Course, Space, initial, mean, roles } from "./model";
+import { Concept, Course, Report, Space, initial, mean, roles } from "./model";
 import { User, student, admin, authenticate, clearWorkspaceCache, read, write } from "./storage";
 import { Dialog, WorkspaceFrame, type ColorTheme } from "./ui";
 import { newSession } from "./model";
@@ -300,6 +304,11 @@ function App() {
   );
 }
 
+type ConfirmDelete =
+  | { kind: "course"; course: Course }
+  | { kind: "session"; session: Space["sessions"][number]; label: string }
+  | { kind: "report"; report: Report };
+
 function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
   user: User;
   login: (user: User) => void;
@@ -329,7 +338,10 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
     [starting, setStarting] = useState(false),
     [uploadTick, setUploadTick] = useState(0),
     [dueCount, setDueCount] = useState(0),
-    [modelStatus, setModelStatus] = useState<{ ready: boolean; label: string } | null>(null);
+    [modelStatus, setModelStatus] = useState<{ ready: boolean; label: string } | null>(null),
+    [confirmDelete, setConfirmDelete] = useState<ConfirmDelete | null>(null),
+    [deleteBusy, setDeleteBusy] = useState(false),
+    [deleteErr, setDeleteErr] = useState("");
   const online = user.id.startsWith("api:");
   const latest = useRef(space);
   const identity = useRef(user.id);
@@ -450,7 +462,9 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
     else sessionStorage.removeItem(key);
   }, [sid, user.id]);
   useEffect(() => {
-    if (guideId) sessionStorage.setItem("fm.guided:" + user.id, guideId);
+    const key = "fm.guided:" + user.id;
+    if (guideId) sessionStorage.setItem(key, guideId);
+    else sessionStorage.removeItem(key);
   }, [guideId, user.id]);
   useEffect(() => {
     if (
@@ -592,6 +606,101 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
       go("studio");
     }
   }
+  function askDelete(target: ConfirmDelete) {
+    setDeleteErr("");
+    setConfirmDelete(target);
+  }
+  async function executeDelete() {
+    if (!confirmDelete || deleteBusy) return;
+    setDeleteBusy(true);
+    setDeleteErr("");
+    try {
+      const snapshot = latest.current;
+      if (confirmDelete.kind === "course") {
+        const courseId = confirmDelete.course.id;
+        if (online) await deleteDocument(courseId);
+        const removedSessionIds = new Set(snapshot.sessions.filter((s) => s.doc === courseId).map((s) => s.id));
+        const removedReports = snapshot.reports.filter(
+          (r) => r.doc === courseId || (r.sessionId ? removedSessionIds.has(r.sessionId) : false),
+        );
+        removedReports.forEach((r) => {
+          try { localStorage.removeItem("fm.report.todo:" + r.id); } catch { /* ignore */ }
+        });
+        const nextCourses = snapshot.courses.filter((x) => x.id !== courseId);
+        const nextSessions = snapshot.sessions.filter((s) => s.doc !== courseId);
+        const nextReports = snapshot.reports.filter(
+          (r) => r.doc !== courseId && !(r.sessionId && removedSessionIds.has(r.sessionId)),
+        );
+        save((s) => ({
+          ...s,
+          courses: s.courses.filter((x) => x.id !== courseId),
+          sessions: s.sessions.filter((s) => s.doc !== courseId),
+          logs: s.logs.filter((w) => w.doc !== courseId && !removedSessionIds.has(w.session)),
+          reports: s.reports.filter((r) => r.doc !== courseId && !(r.sessionId && removedSessionIds.has(r.sessionId))),
+        }));
+        if (doc === courseId || !nextCourses.some((x) => x.id === doc)) {
+          setDoc(nextCourses[0]?.id || "");
+        }
+        if (removedSessionIds.has(sid) || (sess && removedSessionIds.has(sess.id))) {
+          const nextPractice = nextSessions.filter((s) => !s.guided);
+          setSid(nextPractice.find((s) => !s.closed)?.id || nextPractice[0]?.id || "");
+        }
+        if (removedSessionIds.has(guideId) || (guideSession && removedSessionIds.has(guideSession.id))) {
+          const nextGuide = nextSessions.filter((s) => s.guided);
+          setGuideId(nextGuide[0]?.id || "");
+        }
+        if (removedReports.some((r) => r.id === rid) || !nextReports.some((r) => r.id === rid)) {
+          setRid(nextReports[0]?.id || "");
+        }
+        if (!nextCourses.length && ["graph", "review", "studio", "tutor"].includes(currentPage)) {
+          go("library");
+        }
+      } else if (confirmDelete.kind === "session") {
+        const target = confirmDelete.session;
+        if (online) await deleteSession(target.id);
+        const removedReports = snapshot.reports.filter((r) => r.sessionId === target.id);
+        removedReports.forEach((r) => {
+          try { localStorage.removeItem("fm.report.todo:" + r.id); } catch { /* ignore */ }
+        });
+        const nextSessions = snapshot.sessions.filter((s) => s.id !== target.id);
+        const nextReports = snapshot.reports.filter((r) => r.sessionId !== target.id);
+        save((s) => ({
+          ...s,
+          sessions: s.sessions.filter((x) => x.id !== target.id),
+          logs: s.logs.filter((w) => w.session !== target.id),
+          reports: s.reports.filter((r) => r.sessionId !== target.id),
+        }));
+        if (sid === target.id || sess?.id === target.id) {
+          const nextPractice = nextSessions.filter((s) => !s.guided);
+          setSid(nextPractice.find((s) => !s.closed)?.id || nextPractice[0]?.id || "");
+        }
+        if (guideId === target.id || guideSession?.id === target.id) {
+          const nextGuide = nextSessions.filter((s) => s.guided);
+          setGuideId(nextGuide[0]?.id || "");
+        }
+        if (removedReports.some((r) => r.id === rid) || !nextReports.some((r) => r.id === rid)) {
+          setRid(nextReports[0]?.id || "");
+        }
+      } else {
+        const report = confirmDelete.report;
+        if (online && report.sessionId) await deleteReport(report.sessionId);
+        try { localStorage.removeItem("fm.report.todo:" + report.id); } catch { /* ignore */ }
+        const nextReports = snapshot.reports.filter((r) => r.id !== report.id);
+        save((s) => ({
+          ...s,
+          reports: s.reports.filter((r) => r.id !== report.id),
+        }));
+        if (rid === report.id || !nextReports.some((r) => r.id === rid)) {
+          setRid(nextReports[0]?.id || "");
+        }
+      }
+      setConfirmDelete(null);
+    } catch (e) {
+      setDeleteErr((e as Error).message || "删除失败，请稍后重试。");
+    } finally {
+      setDeleteBusy(false);
+    }
+  }
   if (online && ready !== user.id) {
     return (
       <AccountEntry theme={theme} toggleTheme={toggleTheme}>
@@ -654,17 +763,31 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
               const avg = mean(course.nodes.map((n) => n.score));
               const active = c?.id === course.id;
               return (
-                <button
-                  key={course.id}
-                  type="button"
-                  aria-current={active ? "true" : undefined}
-                  title={course.title}
-                  onClick={() => selectCourseFromRail(course)}
-                >
-                  <FileText aria-hidden="true" />
-                  <span className="truncate">{course.title}</span>
-                  <span className="nav-meta">{avg}%</span>
-                </button>
+                <div className="nav-row" key={course.id}>
+                  <button
+                    type="button"
+                    aria-current={active ? "true" : undefined}
+                    title={course.title}
+                    onClick={() => selectCourseFromRail(course)}
+                  >
+                    <FileText aria-hidden="true" />
+                    <span className="truncate">{course.title}</span>
+                    <span className="nav-meta">{avg}%</span>
+                  </button>
+                  <button
+                    type="button"
+                    className="icon-button nav-row-delete"
+                    aria-label="删除资料"
+                    title={"删除「" + course.title + "」"}
+                    disabled={course.parseStatus === "processing"}
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      askDelete({ kind: "course", course });
+                    }}
+                  >
+                    <Trash2 aria-hidden="true" />
+                  </button>
+                </div>
               );
             })}
             {!space.courses.length && <p className="nav-empty">暂无课程</p>}
@@ -686,16 +809,29 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
                     ? currentPage === "tutor" && guideSession?.id === s.id
                     : currentPage === "studio" && sess?.id === s.id;
                   return (
-                    <button
-                      key={s.id}
-                      type="button"
-                      aria-current={active ? "true" : undefined}
-                      title={sessionTitle}
-                      onClick={() => openSessionFromRail(s)}
-                    >
-                      {s.guided ? <GraduationCap aria-hidden="true" /> : <MessagesSquare aria-hidden="true" />}
-                      <span className="truncate">{sessionTitle}</span>
-                    </button>
+                    <div className="nav-row" key={s.id}>
+                      <button
+                        type="button"
+                        aria-current={active ? "true" : undefined}
+                        title={sessionTitle}
+                        onClick={() => openSessionFromRail(s)}
+                      >
+                        {s.guided ? <GraduationCap aria-hidden="true" /> : <MessagesSquare aria-hidden="true" />}
+                        <span className="truncate">{sessionTitle}</span>
+                      </button>
+                      <button
+                        type="button"
+                        className="icon-button nav-row-delete"
+                        aria-label="删除记录"
+                        title={"删除「" + sessionTitle + "」"}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          askDelete({ kind: "session", session: s, label: sessionTitle });
+                        }}
+                      >
+                        <Trash2 aria-hidden="true" />
+                      </button>
+                    </div>
                   );
                 })}
               </nav>
@@ -776,6 +912,7 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
                 select={setRid}
                 practice={begin}
                 guide={beginGuided}
+                onDelete={(report) => askDelete({ kind: "report", report })}
                 history={
                   online
                     ? (id) => {
@@ -894,6 +1031,7 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
                 onOpenStudio={(id) => { setSid(id); go("studio"); }}
                 onOpenTutor={(id) => { setGuideId(id); go("tutor"); }}
                 onOpenGraph={(courseId) => { setDoc(courseId); go("graph"); }}
+                onDelete={(course) => askDelete({ kind: "course", course })}
               />
             )}
           </Suspense>
@@ -1046,6 +1184,65 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
           >
             前往模型配置
           </button>
+        </Dialog>
+      )}
+      {confirmDelete && (
+        <Dialog
+          title={
+            confirmDelete.kind === "course"
+              ? "删除学习资料"
+              : confirmDelete.kind === "session"
+                ? "删除学习记录"
+                : "删除诊断报告"
+          }
+          className="confirm-dialog"
+          close={() => {
+            if (!deleteBusy) {
+              setConfirmDelete(null);
+              setDeleteErr("");
+            }
+          }}
+        >
+          <p className="confirm-copy">
+            {confirmDelete.kind === "course" ? (
+              <>
+                确定要删除「<strong>{confirmDelete.course.title}</strong>
+                」吗？将一并删除该课程的知识点、图谱、对话记录与复习进度，且不可恢复。
+              </>
+            ) : confirmDelete.kind === "session" ? (
+              <>
+                确定要删除「<strong>{confirmDelete.label}</strong>
+                」吗？将同步移除该会话的对话记录与对应诊断报告，且不可恢复。
+              </>
+            ) : (
+              <>
+                确定要删除「<strong>{confirmDelete.report.title}</strong>
+                」的本次诊断报告吗？将保留原对话记录，报告本身不可恢复。
+              </>
+            )}
+          </p>
+          {deleteErr && <p role="alert">{deleteErr}</p>}
+          <div className="confirm-actions">
+            <button
+              type="button"
+              className="quiet"
+              disabled={deleteBusy}
+              onClick={() => {
+                setConfirmDelete(null);
+                setDeleteErr("");
+              }}
+            >
+              取消
+            </button>
+            <button
+              type="button"
+              className="danger"
+              disabled={deleteBusy}
+              onClick={() => void executeDelete()}
+            >
+              {deleteBusy ? "正在删除…" : "确认删除"}
+            </button>
+          </div>
         </Dialog>
       )}
     </div>

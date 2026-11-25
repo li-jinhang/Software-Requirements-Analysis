@@ -9,6 +9,7 @@ import {
   ArrowRight,
   UploadCloud,
   GraduationCap,
+  Trash2,
 } from "lucide-react";
 import { Concept, Course, Space, archive, mean, status } from "./model";
 import {
@@ -35,6 +36,7 @@ type Props = {
   onOpenStudio?: (id: string) => void;
   onOpenTutor?: (id: string) => void;
   onOpenGraph?: (courseId: string) => void;
+  onDelete?: (c: Course) => void;
 };
 export default function Library({
   online,
@@ -49,6 +51,7 @@ export default function Library({
   onOpenStudio,
   onOpenTutor,
   onOpenGraph,
+  onDelete,
 }: Props) {
   const [query, setQuery] = useState(""),
     [subject, setSubject] = useState(""),
@@ -207,7 +210,24 @@ export default function Library({
                   <div className="cardbody">
                     <div className="row between meta">
                       <span className="subject-tag"><BookOpen aria-hidden="true" />{c.subject}</span>
-                      <span className="format-mark"><FileText aria-hidden="true" />{c.format}</span>
+                      <div className="card-meta-actions">
+                        <span className="format-mark"><FileText aria-hidden="true" />{c.format}</span>
+                        {onDelete && (
+                          <button
+                            type="button"
+                            className="icon-button card-delete"
+                            aria-label="删除资料"
+                            title={"删除「" + c.title + "」"}
+                            disabled={c.parseStatus === "processing"}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              onDelete(c);
+                            }}
+                          >
+                            <Trash2 aria-hidden="true" />
+                          </button>
+                        )}
+                      </div>
                     </div>
                     <h2>{c.title}</h2>
                     <p className="meta">

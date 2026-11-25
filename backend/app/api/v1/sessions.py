@@ -299,3 +299,25 @@ def report(id: int, db=Depends(get_db), user=Depends(current_user)):
     if not row:
         raise HTTPException(404, "报告尚未生成")
     return public(row)
+
+
+@router.delete("/{id}", status_code=204)
+def delete_session(id: int, db=Depends(get_db), user=Depends(current_user)):
+    from app.services import extension_store
+
+    with session_guard(id):
+        s = owned(db, Session, id, user)
+        db.delete(s)
+        db.commit()
+    extension_store.purge_sessions(user.id, [id])
+
+
+@router.delete("/{id}/report", status_code=204)
+def delete_report(id: int, db=Depends(get_db), user=Depends(current_user)):
+    with session_guard(id):
+        owned(db, Session, id, user)
+        row = db.scalar(select(DiagnosticReport).where(DiagnosticReport.session_id == id))
+        if not row:
+            raise HTTPException(404, "报告尚未生成")
+        db.delete(row)
+        db.commit()

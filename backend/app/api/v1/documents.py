@@ -152,10 +152,15 @@ def detail(id: int, db=Depends(get_db), user=Depends(current_user)):
 
 @router.delete("/{id}", status_code=204)
 def delete(id: int, db=Depends(get_db), user=Depends(current_user)):
+    from app.db.models import Session
+    from app.services import extension_store
+
     doc = owned(db, Document, id, user)
     if doc.parse_status == "processing":
         raise HTTPException(409, "正在解析")
+    session_ids = list(db.scalars(select(Session.id).where(Session.doc_id == doc.id)))
     memory.delete_document(db, doc)
+    extension_store.purge_sessions(user.id, session_ids)
 
 
 @router.get("/{id}/memory", response_model=ContextOut, response_model_exclude_unset=True)

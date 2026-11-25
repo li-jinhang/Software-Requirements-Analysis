@@ -47,6 +47,18 @@ def purge_account(owner):
             db.execute(f"DELETE FROM {table} WHERE owner=?", (owner,))
 
 
+def purge_sessions(owner, session_ids):
+    """Remove capability run logs associated with deleted sessions."""
+    ids = [int(i) for i in session_ids]
+    if not ids:
+        return
+    with store() as db:
+        db.execute(
+            f"DELETE FROM runs WHERE owner=? AND session_id IN ({','.join('?' * len(ids))})",
+            (owner, *ids),
+        )
+
+
 def skill_out(row, owner):
     return {k: row[k] for k in ("id", "name", "description", "version", "reason")} | {
         "enabled": bool(row["enabled"]), "shared": bool(row["shared"]),

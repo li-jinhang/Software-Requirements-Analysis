@@ -205,3 +205,21 @@ test("capability failures and interrupted streams do not confirm completion", as
     await assert.rejects(api.capabilitiesApi.stream(body,()=>{}),pattern);
   }
 });
+
+test("deleteDocument, deleteSession, and deleteReport issue DELETE requests and surface errors", async () => {
+  const calls = [];
+  globalThis.fetch = async (url, options) => {
+    calls.push({ url, method: options?.method });
+    return new Response(null, { status: 204 });
+  };
+  await api.deleteDocument("11");
+  await api.deleteSession("22");
+  await api.deleteReport("22");
+  assert.deepEqual(calls, [
+    { url: "http://backend.test/api/v1/documents/11", method: "DELETE" },
+    { url: "http://backend.test/api/v1/sessions/22", method: "DELETE" },
+    { url: "http://backend.test/api/v1/sessions/22/report", method: "DELETE" },
+  ]);
+  globalThis.fetch = async () => response({ detail: "无权删除该记录" }, 404);
+  await assert.rejects(api.deleteSession("99"), /无权删除/);
+});
