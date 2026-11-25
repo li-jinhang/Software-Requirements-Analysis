@@ -282,6 +282,7 @@ select {
 }
 .account-entry > p { color: var(--muted); }
 .account-entry > button { min-height: 44px; }
+.local-account-actions .account-delete { color: #9c2929; }
 main {
   margin-left: 264px;
 }

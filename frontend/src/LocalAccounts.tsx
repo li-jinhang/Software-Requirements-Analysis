@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { ChevronRight, LockKeyhole, UserRound } from "lucide-react";
-import { accountId, localAccountsApi, type LocalAccount } from "./api";
+import { accountDeletePhrase, accountId, localAccountsApi, type LocalAccount } from "./api";
 import type { User } from "./storage";
 import { Dialog } from "./ui";
 
@@ -9,15 +9,18 @@ export default function LocalAccounts({
   login,
   close,
   logout,
+  onDeleted,
 }: {
   current?: User;
   login: (user: User) => void;
   close: () => void;
   logout?: () => void;
+  onDeleted?: () => void;
 }) {
   const [accounts, setAccounts] = useState<LocalAccount[]>();
   const [selected, setSelected] = useState<LocalAccount>();
   const [creating, setCreating] = useState(false);
+  const [deleting, setDeleting] = useState(false);
   const [value, setValue] = useState("");
   const [error, setError] = useState("");
   const [busy, setBusy] = useState(false);
@@ -60,12 +63,39 @@ export default function LocalAccounts({
 
   return (
     <Dialog
-      title="本机账号"
+      title={deleting ? "删除当前账号" : "本机账号"}
       close={() => {
         if (!busy) close();
       }}
     >
-      {selected || creating ? (
+      {deleting && current && onDeleted ? (
+        <form onSubmit={(event) => {
+          event.preventDefault();
+          if (value === accountDeletePhrase) {
+            void run(async () => {
+              await localAccountsApi.removeCurrent(value);
+              onDeleted();
+            });
+          }
+        }}>
+          <p>将永久删除「{current.name}」及其学习资料、图谱、进度和会话记录。</p>
+          <label>
+            请输入「{accountDeletePhrase}」
+            <input autoFocus required autoComplete="off" spellCheck={false}
+              value={value} disabled={busy} onChange={(event) => setValue(event.target.value)} />
+          </label>
+          <div className="tools">
+            <button type="submit" className="primary" disabled={busy || value !== accountDeletePhrase}>
+              永久删除账号
+            </button>
+            <button type="button" disabled={busy} onClick={() => {
+              setDeleting(false);
+              setValue("");
+              setError("");
+            }}>取消</button>
+          </div>
+        </form>
+      ) : selected || creating ? (
         <form
           onSubmit={(event) => {
             event.preventDefault();
@@ -175,6 +205,13 @@ export default function LocalAccounts({
               </button>
             )}
             {logout && <button type="button" disabled={busy} onClick={logout}>退出当前账号</button>}
+            {active && onDeleted && (
+              <button type="button" className="account-delete" disabled={busy} onClick={() => {
+                setValue("");
+                setError("");
+                setDeleting(true);
+              }}>删除当前账号</button>
+            )}
             <input
               ref={picker}
               type="file"

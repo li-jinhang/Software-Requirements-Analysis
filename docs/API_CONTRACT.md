@@ -46,6 +46,7 @@ JWT 有效期 24 小时。注册密码至少 6 字符且 UTF-8 编码至多 72 �
 | POST /{id}/activate | 进入指定账号。受保护账号提交原密码 |
 | GET /export | 使用当前账号令牌下载 ZIP |
 | POST /import | 以 multipart 的 file 字段上传 ZIP，恢复为独立账号 |
+| DELETE /current | 使用当前账号令牌，传 `{"confirmation":"确认删除"}`，成功返回 204。账号及其学习资料和记录一并删除 |
 
 ### 学习资料和知识图谱
 

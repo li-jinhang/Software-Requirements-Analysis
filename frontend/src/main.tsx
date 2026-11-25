@@ -33,7 +33,7 @@ import {
 import Library from "./Library";
 import LocalAccounts from "./LocalAccounts";
 import { Concept, Course, Space, initial, roles } from "./model";
-import { User, student, admin, authenticate, read, write } from "./storage";
+import { User, student, admin, authenticate, clearWorkspaceCache, read, write } from "./storage";
 import { Dialog } from "./ui";
 import { newSession } from "./model";
 const Settings = lazy(() => import("./ModelSettings"));
@@ -190,14 +190,15 @@ function storedUser(): User | null {
   }
 }
 
-function AccountDialog({ current, login, close, logout }: {
+function AccountDialog({ current, login, close, logout, onDeleted }: {
   current?: User;
   login: (user: User) => void;
   close: () => void;
   logout?: () => void;
+  onDeleted?: () => void;
 }) {
   return localModelSettings
-    ? <LocalAccounts current={current} login={login} close={close} logout={logout} />
+    ? <LocalAccounts current={current} login={login} close={close} logout={logout} onDeleted={onDeleted} />
     : <Auth login={login} close={close} logout={logout} />;
 }
 
@@ -685,7 +686,16 @@ function Workspace({ user, login, logout }: {
           />
         </Suspense>
       )}
-      {auth && <AccountDialog current={user} login={login} logout={() => logout()} close={() => setAuth(false)} />}
+      {auth && (
+        <AccountDialog current={user} login={login} logout={() => logout()} close={() => setAuth(false)}
+          onDeleted={() => {
+            try {
+              clearWorkspaceCache(user.id);
+            } finally {
+              logout("账号已删除。");
+            }
+          }} />
+      )}
       {setup && c && (
         <Dialog
           title="开始费曼教学"

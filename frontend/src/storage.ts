@@ -7,6 +7,12 @@ export const student: User = {
   },
   admin: User = { id: "demo-admin", name: "演示管理员", admin: true };
 const prefix = "feynman.workspace.v1.";
+export function clearWorkspaceCache(id: string) {
+  localStorage.removeItem(prefix + id);
+  sessionStorage.removeItem("fm.active:" + id);
+  sessionStorage.removeItem("fm.guided:" + id);
+}
+
 export function read(id: string): Space {
   const v = localStorage.getItem(prefix + id);
   try { if (v) return JSON.parse(v); } catch { /* A broken cache can be rebuilt. */ }

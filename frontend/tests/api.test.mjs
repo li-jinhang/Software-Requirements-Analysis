@@ -23,6 +23,26 @@ function eventStream(frames) {
 }
 const send = (callback = () => {}) => api.stream("2", 0, "我的讲解", new AbortController().signal, callback);
 
+test("deletion sends the exact confirmation for the signed-in account only", async () => {
+  const calls = [];
+  api.token("fixture-account-token");
+  globalThis.fetch = async (url, options) => {
+    calls.push({url, options});
+    return new Response(null, {status: 204});
+  };
+  for (const text of ["", "确认", "确认删除 "]) {
+    await assert.rejects(api.localAccountsApi.removeCurrent(text), /确认删除/);
+  }
+  assert.equal(calls.length, 0);
+  await api.localAccountsApi.removeCurrent("确认删除");
+  assert.equal(calls.length, 1);
+  assert.match(calls[0].url, /local-accounts\/current$/);
+  assert.equal(calls[0].options.method, "DELETE");
+  assert.equal(calls[0].options.headers.get("Authorization"), "Bearer fixture-account-token");
+  assert.deepEqual(JSON.parse(calls[0].options.body), {confirmation: "确认删除"});
+  api.token("");
+});
+
 test("split UTF-8 and CRLF preserve citations, committed scores and final ID", async () => {
   globalThis.fetch = async () => eventStream(
     frame("citation", { citations: [{ doc_title: "课件", chunk_index: 0, snippet: "原文", score: 0.8 }] }) +

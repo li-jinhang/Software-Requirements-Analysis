@@ -4,6 +4,7 @@ from app.core.config import settings
 from app.core.security import hash_password
 from app.db.models import (
     User,
+    RetiredAccountId,
     Document,
     KnowledgeNode,
     KnowledgeEdge,
@@ -83,6 +84,9 @@ def seed(db):
                 rag_store.remove(demo.id)
                 rag_store.index(demo.id, demo.title, chunks)
                 demo.chunk_count = len(chunks)
+        db.commit()
+        return
+    if db.scalar(select(RetiredAccountId.id).limit(1)) is not None:
         db.commit()
         return
     admin = User(

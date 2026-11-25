@@ -101,6 +101,7 @@ export async function signIn(
 }
 
 const accountPath = "/local-accounts";
+export const accountDeletePhrase = "确认删除";
 async function openLocalAccount(path: string, options: RequestInit) {
   const result: AccountSession = await (
     await request(accountPath + path, options, false)
@@ -121,6 +122,10 @@ export const localAccountsApi = {
   exportBackup: async (name: string) => {
     const res = await request(accountPath + "/export");
     download(name + ".zip", await res.blob(), "application/zip");
+  },
+  removeCurrent: async (confirmation: string) => {
+    if (confirmation !== accountDeletePhrase) throw Error(`请输入完整的「${accountDeletePhrase}」。`);
+    await request(accountPath + "/current", { method: "DELETE", body: JSON.stringify({ confirmation }) });
   },
 };
 type RawNode = {

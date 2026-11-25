@@ -1,6 +1,6 @@
 from datetime import datetime, timezone
 from typing import Annotated
-from sqlalchemy import JSON, ForeignKey, CheckConstraint, UniqueConstraint, Text, inspect
+from sqlalchemy import JSON, ForeignKey, CheckConstraint, UniqueConstraint, Text, func, inspect, select
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.db.database import Base
@@ -29,6 +29,18 @@ class User(Base):
     created_at: Mapped[Created]
 
 
+class RetiredAccountId(Base):
+    __tablename__ = "retired_account_ids"
+    id: Mapped[PK]
+
+
+def next_account_id(db):
+    """Call under the SQLite write lock so retired IDs cannot be issued again."""
+    latest = db.scalar(select(func.max(User.id))) or 0
+    retired = db.scalar(select(func.max(RetiredAccountId.id))) or 0
+    return max(latest, retired) + 1
+
+
 class Document(Base):
     __tablename__ = "documents"
     __table_args__ = (
@@ -37,6 +49,10 @@ class Document(Base):
     )
     id: Mapped[PK]
     user_id: Mapped[int] = fk("users")
+    is_library: Mapped[bool] = mapped_column(default=False, server_default="0")
+    library_id: Mapped[int | None] = mapped_column(
+        ForeignKey("documents.id", ondelete="SET NULL"), index=True
+    )
     title: Mapped[str]
     subject: Mapped[str]
     file_type: Mapped[str]
