@@ -37,6 +37,7 @@ export type ReviewCard = CognitiveItem & {
 };
 export type ReviewChallenge = {
   available: boolean;
+  scenario_question: string;
   challenge: string;
   hint: string;
   notice: string;
@@ -46,8 +47,12 @@ export type ReviewVerifyResult = {
   verdict: "pass" | "partial" | "fail";
   score_hint: "remembered" | "again";
   feedback: string;
+  socratic_followup: string;
   missing_points: string[];
   matched_criteria: string[];
+  previous_evidence: string;
+  updated_evidence: string;
+  evidence_evolved: boolean;
   notice: string;
 };
 export type ReviewLists = { due_items: ReviewCard[]; all_reviewable_items: ReviewCard[] };

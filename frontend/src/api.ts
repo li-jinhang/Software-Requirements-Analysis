@@ -317,8 +317,11 @@ export const reviews = {
     json<ReviewLists>(`/documents/${doc}/reviews/${item}/skip`, { ...post({}), signal }),
   aiChallenge: (doc: string, item: number, signal?: AbortSignal) =>
     json<ReviewChallenge>(`/documents/${doc}/reviews/${item}/ai-challenge`, { ...post({}), signal }),
-  aiVerify: (doc: string, item: number, answer: string, signal?: AbortSignal) =>
-    json<ReviewVerifyResult>(`/documents/${doc}/reviews/${item}/ai-verify`, { ...post({ answer }), signal }),
+  aiVerify: (doc: string, item: number, answer: string, followupAnswer = "", signal?: AbortSignal) =>
+    json<ReviewVerifyResult>(`/documents/${doc}/reviews/${item}/ai-verify`, {
+      ...post(followupAnswer.trim() ? { answer, followup_answer: followupAnswer } : { answer }),
+      signal,
+    }),
 };
 async function createSession(doc: string, role: string, node?: string, options?: {
   mode: "assessment" | "guided";

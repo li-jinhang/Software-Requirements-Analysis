@@ -1,15 +1,17 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  AlertCircle,
   ArrowRight,
   BookOpen,
-  CheckCircle2,
+  Check,
+  ChevronRight,
   Clock,
-  FileText,
   Layers3,
+  Lightbulb,
   ListChecks,
+  MessageSquareMore,
   RotateCcw,
   Sparkles,
-  TriangleAlert,
 } from "lucide-react";
 import { reviews } from "./api";
 import { WorkspaceToolbar } from "./ui";
@@ -32,8 +34,6 @@ const formatTime = new Intl.DateTimeFormat("zh-CN", {
   minute: "2-digit",
 });
 
-const STAGE_RETENTION = [64, 75, 84, 91, 96, 98];
-
 function toUtcDate(date?: string | null) {
   if (!date) return "";
   return date.endsWith("Z") || /[+-]\d{2}:\d{2}$/.test(date) ? date : date + "Z";
@@ -47,7 +47,7 @@ function summarizeStatement(text: string) {
     .trim();
   if (!cleaned) return "认知核验条目";
   const first = cleaned.split(/[。！？!?]/)[0]?.trim() || cleaned;
-  return first.length > 34 ? first.slice(0, 34) + "…" : first;
+  return first.length > 36 ? first.slice(0, 36) + "…" : first;
 }
 
 function stageDays(stage: number) {
@@ -59,18 +59,7 @@ function stageDays(stage: number) {
 
 function nextDaysFor(card: ReviewCard) {
   if (card.next_remembered_days) return card.next_remembered_days;
-  const nextStage = Math.min(5, (card.review_stage || 0) + 1);
-  return stageDays(nextStage);
-}
-
-function localCue(card: ReviewCard) {
-  const parts: string[] = [];
-  if (card.key_criteria?.trim()) parts.push(`核验判据：${card.key_criteria.trim()}`);
-  if (card.issue_note?.trim()) parts.push(`曾有盲区：留意「${card.issue_note.trim()}」`);
-  if (!parts.length) {
-    parts.push(`试着用自己的话讲清「${card.concept_name || card.section_title}」的原理机制与边界条件。`);
-  }
-  return parts.join(" · ");
+  return stageDays(Math.min(5, (card.review_stage || 0) + 1));
 }
 
 function ReviewSteps() {
@@ -95,71 +84,6 @@ function ReviewSteps() {
   );
 }
 
-function EbbinghausStrip({
-  all,
-  dueRemaining,
-  dueDoneCount,
-}: {
-  all: ReviewCard[];
-  dueRemaining: number;
-  dueDoneCount: number;
-}) {
-  const stages = useMemo(() => {
-    let s1 = 0;
-    let s2 = 0;
-    let s3 = 0;
-    let s4 = 0;
-    let retentionSum = 0;
-    for (const item of all) {
-      const st = item.review_stage ?? 0;
-      if (st <= 1) s1 += 1;
-      else if (st === 2) s2 += 1;
-      else if (st === 3) s3 += 1;
-      else s4 += 1;
-      const base = STAGE_RETENTION[Math.min(5, Math.max(0, st))];
-      retentionSum += Math.round(base * 0.7 + item.mastery_score * 0.3);
-    }
-    return {
-      buckets: [
-        { label: "第1阶 1d", count: s1 },
-        { label: "第2阶 3d", count: s2 },
-        { label: "第3阶 7d", count: s3 },
-        { label: "长期 15d", count: s4 },
-      ],
-      consolidation: all.length ? Math.round(retentionSum / all.length) : 0,
-    };
-  }, [all]);
-
-  const dueTotal = dueRemaining + dueDoneCount;
-  const dueProgress = dueTotal ? Math.round((dueDoneCount / dueTotal) * 100) : 100;
-
-  return (
-    <section className="ebbinghaus-bar" aria-label="艾宾浩斯记忆阶梯概览">
-      <div className="ebbinghaus-stages">
-        {stages.buckets.map((b) => (
-          <div className="ebbinghaus-pill" key={b.label}>
-            <span>{b.label}</span>
-            <strong>{b.count}</strong>
-          </div>
-        ))}
-      </div>
-      <div className="ebbinghaus-progress">
-        <div className="ebbinghaus-metrics">
-          <span>
-            预计巩固度 <b>{stages.consolidation}%</b>
-          </span>
-          <span>
-            今日到期 <b>{dueDoneCount}/{dueTotal || 0}</b>
-          </span>
-        </div>
-        <div className="ebbinghaus-track" role="progressbar" aria-label="今日到期复习进度" aria-valuenow={dueProgress} aria-valuemin={0} aria-valuemax={100}>
-          <span style={{ width: `${dueProgress}%` }} />
-        </div>
-      </div>
-    </section>
-  );
-}
-
 function ReviewDeck({
   course,
   assess,
@@ -174,7 +98,6 @@ function ReviewDeck({
   const [selected, setSelected] = useState<number>();
   const [revealed, setRevealed] = useState<number>();
   const [handled, setHandled] = useState<number[]>([]);
-  const [dueHandled, setDueHandled] = useState<number[]>([]);
   const [sessionStats, setSessionStats] = useState({ remembered: 0, again: 0, skipped: 0, promoted: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -183,14 +106,16 @@ function ReviewDeck({
   const [challenges, setChallenges] = useState<Record<number, ReviewChallenge>>({});
   const [verifies, setVerifies] = useState<Record<number, ReviewVerifyResult>>({});
   const [drafts, setDrafts] = useState<Record<number, string>>({});
+  const [followups, setFollowups] = useState<Record<number, string>>({});
   const [challengingId, setChallengingId] = useState<number>();
   const [verifyingId, setVerifyingId] = useState<number>();
+  const [hintOpen, setHintOpen] = useState(false);
 
   const request = useRef<AbortController | null>(null);
 
   async function update(
     action: (signal: AbortSignal) => Promise<ReviewLists>,
-    handledCard?: { id: number; wasDue: boolean; kind: "remembered" | "again" | "skip"; promoted?: boolean },
+    handledCard?: { id: number; kind: "remembered" | "again" | "skip"; promoted?: boolean },
     message = "",
   ) {
     if (request.current) return;
@@ -205,9 +130,6 @@ function ReviewDeck({
       setQueue(data);
       if (handledCard !== undefined) {
         setHandled((ids) => (ids.includes(handledCard.id) ? ids : [...ids, handledCard.id]));
-        if (handledCard.wasDue) {
-          setDueHandled((ids) => (ids.includes(handledCard.id) ? ids : [...ids, handledCard.id]));
-        }
         setSessionStats((prev) => ({
           remembered: prev.remembered + (handledCard.kind === "remembered" ? 1 : 0),
           again: prev.again + (handledCard.kind === "again" ? 1 : 0),
@@ -252,19 +174,45 @@ function ReviewDeck({
   const activeChallenge = card ? challenges[card.id] : undefined;
   const activeVerify = card ? verifies[card.id] : undefined;
   const draftAnswer = card ? drafts[card.id] ?? "" : "";
+  const draftFollowup = card ? followups[card.id] ?? "" : "";
   const nextDays = card ? nextDaysFor(card) : 1;
+
+  // Automatically fetch zero-spoiler scenario challenge when switching cards.
+  useEffect(() => {
+    setHintOpen(false);
+    if (!card || challenges[card.id]) return;
+    const targetId = card.id;
+    const ctrl = new AbortController();
+    setChallengingId(targetId);
+    reviews
+      .aiChallenge(course.id, targetId, ctrl.signal)
+      .then((res) => {
+        if (!ctrl.signal.aborted) {
+          setChallenges((prev) => ({ ...prev, [targetId]: res }));
+        }
+      })
+      .catch(() => {
+        // Silent fallback on abort or transient failure; user can retry or view answer directly.
+      })
+      .finally(() => {
+        if (!ctrl.signal.aborted) {
+          setChallengingId((curr) => (curr === targetId ? undefined : curr));
+        }
+      });
+    return () => ctrl.abort();
+  }, [card?.id, course.id]);
 
   function record(outcome: "remembered" | "again") {
     if (!card || !answerShown) return;
     const promoted = outcome === "remembered" && (card.review_stage ?? 0) < 5;
     void update(
       (signal) => reviews.record(course.id, card, outcome, signal),
-      { id: card.id, wasDue: dueNow, kind: outcome, promoted },
+      { id: card.id, kind: outcome, promoted },
       outcome === "remembered" ? "已记录，复习计划已更新。" : "已安排 10 分钟后再复习。",
     );
   }
 
-  async function requestChallenge() {
+  async function refreshChallenge() {
     if (!card || challengingId === card.id) return;
     const targetId = card.id;
     setChallengingId(targetId);
@@ -272,6 +220,7 @@ function ReviewDeck({
     try {
       const res = await reviews.aiChallenge(course.id, targetId);
       setChallenges((prev) => ({ ...prev, [targetId]: res }));
+      setHintOpen(false);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -279,18 +228,22 @@ function ReviewDeck({
     }
   }
 
-  async function submitQuickVerify(event: React.FormEvent) {
-    event.preventDefault();
+  async function submitVerify(isFollowup: boolean) {
     if (!card || verifyingId === card.id) return;
-    const answer = draftAnswer.trim();
-    if (!answer) return;
+    const primary = draftAnswer.trim();
+    const supplemental = isFollowup ? draftFollowup.trim() : "";
+    if (!primary || (isFollowup && !supplemental)) return;
     const targetId = card.id;
     setVerifyingId(targetId);
     setError("");
     try {
-      const res = await reviews.aiVerify(course.id, targetId, answer);
+      const res = await reviews.aiVerify(course.id, targetId, primary, supplemental);
       setVerifies((prev) => ({ ...prev, [targetId]: res }));
-      setRevealed(targetId);
+      // Trigger round-2 Socratic follow-up inline if first-round partial has a follow-up question;
+      // otherwise expand the answer & memory evolution card immediately.
+      if (!(res.verdict === "partial" && !isFollowup && res.socratic_followup)) {
+        setRevealed(targetId);
+      }
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -308,15 +261,20 @@ function ReviewDeck({
     return sorted[0] || "";
   }, [all]);
 
-  const hasTraceArchive = Boolean(
+  const socraticActive = Boolean(
     card &&
-      (card.user_evidence?.trim() ||
-        card.issue_note?.trim() ||
-        card.user_note?.trim() ||
-        (card.source_snippets && card.source_snippets.length > 0)),
+      !answerShown &&
+      activeVerify?.verdict === "partial" &&
+      activeVerify.socratic_followup,
   );
   const needsDeepReview = Boolean(
     activeVerify && (activeVerify.verdict !== "pass" || activeVerify.missing_points.length > 0),
+  );
+  const snippetCount = card?.source_snippets?.length ?? 0;
+  const noteCount = (card?.issue_note?.trim() ? 1 : 0) + (card?.user_note?.trim() ? 1 : 0);
+  const hasTraceDetails = Boolean(snippetCount + noteCount > 0);
+  const showEvolution = Boolean(
+    activeVerify?.evidence_evolved || card?.user_evidence?.trim(),
   );
 
   return (
@@ -354,19 +312,6 @@ function ReviewDeck({
       <aside className="review-queue-rail" aria-label="复习队列与解锁进度">
         <div className="review-rail-head">
           <h3>{cards.length ? "复习队列" : "待解锁进度"}</h3>
-          {queue && (
-            <div className="review-rail-stats">
-              <span>
-                到期 <b>{due.length}</b>
-              </span>
-              <span>
-                已解锁 <b>{all.length}</b>
-              </span>
-              <span>
-                已完成 <b>{handled.length}</b>
-              </span>
-            </div>
-          )}
         </div>
         {cards.length ? (
           <ul className="review-queue-list">
@@ -386,9 +331,10 @@ function ReviewDeck({
                     <div className="review-queue-body">
                       <strong>{summarizeStatement(item.statement)}</strong>
                       <div className="review-queue-meta">
-                        <span className="review-node-badge">{item.concept_name || item.section_title}</span>
-                        <small>第 {stage} 阶 · {stageDays(stage)}天</small>
-                        {item.issue_note?.trim() && <span className="review-issue-flag">曾有盲区</span>}
+                        <small>第{stage}阶 · {stageDays(stage)}d</small>
+                        {item.issue_note?.trim() && (
+                          <span className="review-issue-dot" title="曾有历史盲区" aria-label="曾有盲区" />
+                        )}
                       </div>
                     </div>
                   </button>
@@ -415,9 +361,6 @@ function ReviewDeck({
         )}
       </aside>
       <div className="review-stage">
-        {queue && all.length > 0 && (
-          <EbbinghausStrip all={all} dueRemaining={due.length} dueDoneCount={dueHandled.length} />
-        )}
         {error && (
           <div className="review-feedback">
             <p role="alert">{error}</p>
@@ -435,9 +378,8 @@ function ReviewDeck({
             <header>
               <div className="review-card-tags">
                 <small>{dueNow ? "已到期" : "提前复习"}</small>
-                <span className="review-section-tag">{card.section_title}</span>
-                <span className="review-stage-chip">
-                  第 {card.review_stage ?? 0} 阶 · 记得推迟 {nextDays} 天
+                <span className="review-meta-line">
+                  {card.section_title} · 第{card.review_stage ?? 0}阶 · 记得推迟 {nextDays} 天
                 </span>
               </div>
               <span className="review-mastery">掌握度 {card.mastery_score}%</span>
@@ -464,52 +406,162 @@ function ReviewDeck({
               <div className="review-cue-head">
                 <span className="review-cue-title">
                   <Sparkles aria-hidden="true" />
-                  {activeChallenge?.available && activeChallenge.challenge ? "AI 变式情景追问" : "启发式回忆线索"}
+                  {activeChallenge?.available ? "AI 情景考问" : "费曼考官提问"}
                 </span>
-                <button
-                  type="button"
-                  className="quiet review-challenge-btn"
-                  disabled={loading || challengingId === card.id}
-                  onClick={() => void requestChallenge()}
-                >
-                  <Sparkles aria-hidden="true" />
-                  {challengingId === card.id ? "生成中…" : activeChallenge ? "换一道追问" : "AI 出变式追问"}
-                </button>
+                {activeChallenge && (
+                  <button
+                    type="button"
+                    className="quiet review-challenge-btn"
+                    disabled={loading || challengingId === card.id}
+                    onClick={() => void refreshChallenge()}
+                  >
+                    {challengingId === card.id ? "构思中…" : "换一题"}
+                  </button>
+                )}
               </div>
-              {activeChallenge?.challenge ? (
-                <div className="review-challenge-body">
-                  <p className="review-challenge-question">{activeChallenge.challenge}</p>
-                  <p className="review-cue-text">线索：{activeChallenge.hint}</p>
-                </div>
+              {challengingId === card.id && !activeChallenge ? (
+                <p className="review-cue-loading">考官正在为你构思情景考题…</p>
               ) : (
-                <p className="review-cue-text">
-                  {activeChallenge?.hint || localCue(card)}
+                <p className="review-challenge-question">
+                  {activeChallenge?.scenario_question ||
+                    activeChallenge?.challenge ||
+                    `请尝试用自己的话说明「${card.concept_name || card.section_title}」的核心机制与关键条件。`}
                 </p>
+              )}
+              {activeChallenge?.hint && (
+                <div className="review-hint-wrap">
+                  <button
+                    type="button"
+                    className="quiet review-hint-toggle"
+                    aria-expanded={hintOpen}
+                    onClick={() => setHintOpen((open) => !open)}
+                  >
+                    <Lightbulb aria-hidden="true" />
+                    {hintOpen ? "收起提示" : "需要一点提示"}
+                  </button>
+                  {hintOpen && <p className="review-cue-text">{activeChallenge.hint}</p>}
+                </div>
               )}
               {activeChallenge?.notice && (
                 <small className="review-cue-notice">{activeChallenge.notice}</small>
               )}
             </div>
 
-            <form className="review-quick-form" onSubmit={(e) => void submitQuickVerify(e)}>
-              <input
-                type="text"
-                aria-label="一句话费曼速测"
-                placeholder="用一句话复述核心逻辑，回车或点击 AI 核验…"
+            <form
+              className="review-recall-form"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void submitVerify(false);
+              }}
+            >
+              <textarea
+                rows={3}
+                aria-label="费曼复述作答"
+                placeholder="用自己的话讲清背后的因果或应对方案（Ctrl/Cmd + Enter 提交）…"
                 value={draftAnswer}
-                disabled={loading || verifyingId === card.id}
+                disabled={loading || verifyingId === card.id || socraticActive}
                 onChange={(e) => {
                   const val = e.target.value;
                   setDrafts((prev) => ({ ...prev, [card.id]: val }));
                 }}
+                onKeyDown={(e) => {
+                  if ((e.ctrlKey || e.metaKey) && e.key === "Enter" && !socraticActive) {
+                    e.preventDefault();
+                    void submitVerify(false);
+                  }
+                }}
               />
-              <button
-                type="submit"
-                disabled={loading || verifyingId === card.id || !draftAnswer.trim()}
-              >
-                {verifyingId === card.id ? "核验中…" : "AI 核验"}
-              </button>
+              {!answerShown && !socraticActive && (
+                <div className="review-recall-actions">
+                  <button
+                    type="submit"
+                    className="primary"
+                    disabled={loading || verifyingId === card.id || !draftAnswer.trim()}
+                  >
+                    {verifyingId === card.id ? "考官核验中…" : "提交给考官"}
+                  </button>
+                  <button
+                    type="button"
+                    aria-label="查看答案"
+                    disabled={loading}
+                    onClick={() => setRevealed(card.id)}
+                  >
+                    直接查看答案
+                  </button>
+                  {dueNow && (
+                    <button
+                      type="button"
+                      className="quiet"
+                      aria-label="明天再复习"
+                      title="跳过本次，顺延 1 天再复习"
+                      disabled={loading}
+                      onClick={() =>
+                        void update(
+                          (signal) => reviews.skip(course.id, card.id, signal),
+                          { id: card.id, kind: "skip" },
+                          "已延到明天。",
+                        )
+                      }
+                    >
+                      跳过
+                    </button>
+                  )}
+                </div>
+              )}
             </form>
+
+            {socraticActive && activeVerify && (
+              <div className="review-socratic-box" role="region" aria-label="考官苏格拉底追问">
+                <div className="review-socratic-head">
+                  <MessageSquareMore aria-hidden="true" />
+                  <span>部分命中 · 考官追问</span>
+                </div>
+                <p className="review-socratic-feedback">{activeVerify.feedback}</p>
+                <p className="review-socratic-question">{activeVerify.socratic_followup}</p>
+                <form
+                  className="review-socratic-form"
+                  onSubmit={(e) => {
+                    e.preventDefault();
+                    void submitVerify(true);
+                  }}
+                >
+                  <textarea
+                    rows={2}
+                    aria-label="补充回答"
+                    placeholder="沿着考官追问方向补充关键条件…（Ctrl/Cmd + Enter 提交）"
+                    value={draftFollowup}
+                    disabled={loading || verifyingId === card.id}
+                    onChange={(e) => {
+                      const val = e.target.value;
+                      setFollowups((prev) => ({ ...prev, [card.id]: val }));
+                    }}
+                    onKeyDown={(e) => {
+                      if ((e.ctrlKey || e.metaKey) && e.key === "Enter") {
+                        e.preventDefault();
+                        void submitVerify(true);
+                      }
+                    }}
+                  />
+                  <div className="review-recall-actions">
+                    <button
+                      type="submit"
+                      className="primary"
+                      disabled={loading || verifyingId === card.id || !draftFollowup.trim()}
+                    >
+                      {verifyingId === card.id ? "二次核验中…" : "提交补充回答"}
+                    </button>
+                    <button
+                      type="button"
+                      aria-label="查看答案"
+                      disabled={loading}
+                      onClick={() => setRevealed(card.id)}
+                    >
+                      直接查看答案
+                    </button>
+                  </div>
+                </form>
+              </div>
+            )}
 
             {answerShown && (
               <div className="review-answer" id="current-review-answer">
@@ -518,14 +570,14 @@ function ReviewDeck({
                     <div className="review-verify-head">
                       <strong>
                         {activeVerify.verdict === "pass" ? (
-                          <CheckCircle2 aria-hidden="true" />
+                          <Check aria-hidden="true" />
                         ) : (
-                          <TriangleAlert aria-hidden="true" />
+                          <AlertCircle aria-hidden="true" />
                         )}
                         {!activeVerify.available
                           ? "本地核验提示"
                           : activeVerify.verdict === "pass"
-                            ? "复述通过 · 建议点「记得」"
+                            ? "复述通过 · 建议记为「记得」"
                             : activeVerify.verdict === "partial"
                               ? "部分命中 · 建议强化巩固"
                               : "存在偏差 · 建议再来一次"}
@@ -538,18 +590,20 @@ function ReviewDeck({
                     </div>
                     <p>{activeVerify.feedback}</p>
                     {(activeVerify.matched_criteria.length > 0 || activeVerify.missing_points.length > 0) && (
-                      <div className="review-verify-points">
+                      <ul className="review-criteria-list" aria-label="逐条判据命中清单">
                         {activeVerify.matched_criteria.map((pt, i) => (
-                          <span className="verify-chip matched" key={"m" + i}>
-                            ✓ {pt}
-                          </span>
+                          <li className="is-matched" key={"m" + i}>
+                            <span aria-hidden="true">✓</span>
+                            <span>{pt}</span>
+                          </li>
                         ))}
                         {activeVerify.missing_points.map((pt, i) => (
-                          <span className="verify-chip missing" key={"x" + i}>
-                            缺：{pt}
-                          </span>
+                          <li className="is-missing" key={"x" + i}>
+                            <span aria-hidden="true">!</span>
+                            <span>遗漏：{pt}</span>
+                          </li>
                         ))}
-                      </div>
+                      </ul>
                     )}
                   </div>
                 )}
@@ -565,30 +619,56 @@ function ReviewDeck({
                   )}
                 </div>
 
-                {hasTraceArchive && (
-                  <section className="review-trace-panel" aria-label="智溯记忆档案">
-                    <div className="review-trace-head">
-                      <FileText aria-hidden="true" />
-                      <span>智溯记忆档案</span>
-                    </div>
-                    <div className="review-trace-grid">
-                      {card.user_evidence?.trim() && (
+                {showEvolution && (
+                  <section className="review-evolution-box" aria-label="记忆进化对比">
+                    {activeVerify?.evidence_evolved ? (
+                      <div className="review-evolution-grid">
+                        <div className="evolution-col">
+                          <small>上次掌握</small>
+                          <p>{activeVerify.previous_evidence || "首次建立掌握原话"}</p>
+                        </div>
+                        <div className="evolution-col is-evolved">
+                          <small>本次表达 · 已更新沉淀</small>
+                          <p>{activeVerify.updated_evidence}</p>
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="evolution-col">
+                        <small>上次掌握原话</small>
+                        <p>{card.user_evidence}</p>
+                      </div>
+                    )}
+                  </section>
+                )}
+
+                {hasTraceDetails && (
+                  <details className="review-trace-details">
+                    <summary>
+                      <ChevronRight aria-hidden="true" />
+                      <span>课程原文与个人笔记</span>
+                      <small>
+                        {[snippetCount ? `${snippetCount} 条原文` : "", noteCount ? "含笔记/盲区" : ""]
+                          .filter(Boolean)
+                          .join(" · ")}
+                      </small>
+                    </summary>
+                    <div className="review-trace-body">
+                      {card.issue_note?.trim() && (
                         <div className="review-trace-item">
-                          <small>你上次掌握时的原话</small>
-                          <p>{card.user_evidence}</p>
+                          <small>历史纠偏记录</small>
+                          <p className="trace-issue">{card.issue_note}</p>
                         </div>
                       )}
-                      {(card.issue_note?.trim() || card.user_note?.trim()) && (
+                      {card.user_note?.trim() && (
                         <div className="review-trace-item">
-                          <small>历史踩坑与个人笔记</small>
-                          {card.issue_note?.trim() && <p className="trace-issue">纠偏记录：{card.issue_note}</p>}
-                          {card.user_note?.trim() && <p>个人笔记：{card.user_note}</p>}
+                          <small>个人笔记</small>
+                          <p>{card.user_note}</p>
                         </div>
                       )}
-                      {card.source_snippets && card.source_snippets.length > 0 && (
+                      {snippetCount > 0 && (
                         <div className="review-trace-item trace-snippets">
                           <small>课程原文依据</small>
-                          {card.source_snippets.map((sn, i) => (
+                          {card.source_snippets!.map((sn, i) => (
                             <blockquote key={i}>
                               <cite>
                                 {sn.doc_title || course.title} · 片段 #{sn.chunk_index + 1}
@@ -599,80 +679,73 @@ function ReviewDeck({
                         </div>
                       )}
                     </div>
-                  </section>
+                  </details>
                 )}
               </div>
             )}
 
-            <footer>
-              <div className="tools">
-                {answerShown ? (
-                  <>
-                    <button
-                      type="button"
-                      className="primary"
-                      aria-label="记得"
-                      title={`记得 · 推迟至 ${nextDays} 天后`}
-                      disabled={loading}
-                      onClick={() => record("remembered")}
-                    >
-                      记得 · 推迟至 {nextDays} 天后
-                    </button>
-                    <button
-                      type="button"
-                      className="review-again"
-                      aria-label="需巩固"
-                      title="再来一次 · 10 分钟后强化"
-                      disabled={loading}
-                      onClick={() => record("again")}
-                    >
-                      再来一次 · 10 分钟后强化
-                    </button>
-                  </>
-                ) : (
-                  <button
-                    type="button"
-                    className="primary"
-                    disabled={loading}
-                    onClick={() => setRevealed(card.id)}
-                  >
-                    查看答案
-                  </button>
+            {(answerShown || !socraticActive) && (
+              <footer>
+                <div className="tools">
+                  {answerShown && (
+                    <>
+                      <button
+                        type="button"
+                        className="primary"
+                        aria-label="记得"
+                        title={`记得 · 推迟至 ${nextDays} 天后`}
+                        disabled={loading}
+                        onClick={() => record("remembered")}
+                      >
+                        记得 · 推迟至 {nextDays} 天后
+                      </button>
+                      <button
+                        type="button"
+                        className="review-again"
+                        aria-label="需巩固"
+                        title="再来一次 · 10 分钟后强化"
+                        disabled={loading}
+                        onClick={() => record("again")}
+                      >
+                        再来一次 · 10 分钟后
+                      </button>
+                      {dueNow && (
+                        <button
+                          type="button"
+                          className="quiet"
+                          aria-label="明天再复习"
+                          title="跳过本次，顺延 1 天再复习"
+                          disabled={loading}
+                          onClick={() =>
+                            void update(
+                              (signal) => reviews.skip(course.id, card.id, signal),
+                              { id: card.id, kind: "skip" },
+                              "已延到明天。",
+                            )
+                          }
+                        >
+                          跳过
+                        </button>
+                      )}
+                      {needsDeepReview && (
+                        <button
+                          type="button"
+                          className="quiet review-deep-link"
+                          onClick={() => assess(linkedConcept)}
+                        >
+                          去双窗工作台深度补漏 →
+                        </button>
+                      )}
+                    </>
+                  )}
+                </div>
+                {utcDate && (
+                  <small>
+                    下次复习 <time dateTime={utcDate}>{formatTime.format(new Date(utcDate))}</time>
+                  </small>
                 )}
-                {dueNow && (
-                  <button
-                    type="button"
-                    className="quiet"
-                    aria-label="明天再复习"
-                    title="跳过本次，顺延 1 天再复习"
-                    disabled={loading}
-                    onClick={() =>
-                      void update(
-                        (signal) => reviews.skip(course.id, card.id, signal),
-                        { id: card.id, wasDue: true, kind: "skip" },
-                        "已延到明天。",
-                      )
-                    }
-                  >
-                    跳过（顺延 1 天）
-                  </button>
-                )}
-                {answerShown && needsDeepReview && (
-                  <button
-                    type="button"
-                    className="quiet review-deep-link"
-                    onClick={() => assess(linkedConcept)}
-                  >
-                    去双窗工作台深度补漏 →
-                  </button>
-                )}
-              </div>
-              {utcDate && (
-                <small>
-                  下次复习 <time dateTime={utcDate}>{formatTime.format(new Date(utcDate))}</time>
-                </small>
-              )}
-            </footer>
+              </footer>
+            )}
           </article>
         ) : (
           queue && (

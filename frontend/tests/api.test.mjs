@@ -229,24 +229,38 @@ test("review aiChallenge and aiVerify call expected endpoints", async () => {
   globalThis.fetch = async (url, options) => {
     calls.push({ url, method: options?.method, body: options?.body });
     if (url.endsWith("/ai-challenge")) {
-      return response({ available: true, challenge: "请结合实例解释梯度方向。", hint: "思考负号含义", notice: "" });
+      return response({
+        available: true,
+        scenario_question: "请结合实例解释梯度方向。",
+        challenge: "请结合实例解释梯度方向。",
+        hint: "思考负号含义",
+        notice: "",
+      });
     }
     return response({
       available: true,
       verdict: "pass",
       score_hint: "remembered",
       feedback: "方向与步长机制表述准确。",
+      socratic_followup: "",
       missing_points: [],
       matched_criteria: ["能解释方向"],
+      previous_evidence: "原表达",
+      updated_evidence: "沿负梯度下降（补充：步长过大震荡）",
+      evidence_evolved: true,
       notice: "",
     });
   };
   const ch = await api.reviews.aiChallenge("3", 5);
-  const vr = await api.reviews.aiVerify("3", 5, "沿负梯度下降");
-  assert.equal(ch.available, true);
-  assert.equal(vr.verdict, "pass");
+  const vr = await api.reviews.aiVerify("3", 5, "沿负梯度下降", "步长过大震荡");
+  assert.equal(ch.scenario_question, "请结合实例解释梯度方向。");
+  assert.equal(vr.evidence_evolved, true);
   assert.deepEqual(calls, [
     { url: "http://backend.test/api/v1/documents/3/reviews/5/ai-challenge", method: "POST", body: "{}" },
-    { url: "http://backend.test/api/v1/documents/3/reviews/5/ai-verify", method: "POST", body: JSON.stringify({ answer: "沿负梯度下降" }) },
+    {
+      url: "http://backend.test/api/v1/documents/3/reviews/5/ai-verify",
+      method: "POST",
+      body: JSON.stringify({ answer: "沿负梯度下降", followup_answer: "步长过大震荡" }),
+    },
   ]);
 });

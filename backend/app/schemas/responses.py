@@ -61,6 +61,7 @@ class ReviewListsOut(BaseModel):
 
 class ReviewChallengeOut(BaseModel):
     available: bool = True
+    scenario_question: str = ""
     challenge: str = ""
     hint: str = ""
     notice: str = ""
@@ -71,8 +72,12 @@ class ReviewVerifyOut(BaseModel):
     verdict: Literal["pass", "partial", "fail"]
     score_hint: Literal["remembered", "again"]
     feedback: str
+    socratic_followup: str = ""
     missing_points: list[str] = []
     matched_criteria: list[str] = []
+    previous_evidence: str = ""
+    updated_evidence: str = ""
+    evidence_evolved: bool = False
     notice: str = ""
 
 
