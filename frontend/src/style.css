@@ -549,15 +549,6 @@ progress::-moz-progress-bar {
 .graphlayout .graph-actions {
   margin-bottom: 0;
 }
-.node.green {
-  border-left: 5px solid #10b981;
-}
-.node.amber {
-  border-left: 5px solid #f59e0b;
-}
-.node.red {
-  border-left: 5px solid #ef4444;
-}
 .node {
   border-radius: 9px !important;
 }

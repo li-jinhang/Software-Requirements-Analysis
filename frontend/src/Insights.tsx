@@ -16,6 +16,7 @@ import { CanvasRenderer } from "echarts/renderers";
 import { Course, Concept, Report, Space, download, status } from "./model";
 import { dimensions } from "./model";
 import { GraduationCap } from "lucide-react";
+import { MasteryLegend, MasteryProgress, masteryForScore } from "./MasteryProgress";
 echarts.use([RadarChart, RadarComponent, CanvasRenderer]);
 const graphFit = { padding: 0.22, minZoom: 0.1, maxZoom: 1.3 };
 const relationNames: Record<string, string> = {
@@ -70,13 +71,9 @@ export function Graph({
           y: Math.floor(i / 3) * 130 + (i % 3 === 1 ? 50 : 0),
         },
         data: { label: n.name + " · " + n.score + "%" },
-        className:
-          "node " +
-          { 未学习: "", 已掌握: "green", 巩固中: "amber", 待补漏: "red" }[
-            status(n, space.logs)
-          ],
+        className: "node mastery-node mastery-" + masteryForScore(n.score).tone,
       })),
-    [matches, space.logs],
+    [matches],
   );
   const [nodes, setNodes, change] = useNodesState(initial);
   useEffect(() => setNodes(initial), [initial, setNodes]);
@@ -100,14 +97,14 @@ export function Graph({
           </button>
         </div>
       </div>
-      <div className="sectionhead">
+      <div className="sectionhead graph-progress-controls">
         <input
           aria-label="搜索知识点"
           placeholder="搜索知识点…"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
         />
-        <small>已掌握 ≥80　巩固中 40–79　待补漏 &lt;40 或有薄弱记录</small>
+        <MasteryLegend />
       </div>
       <div className="graphlayout">
         <div className="graph">
@@ -155,10 +152,8 @@ export function Graph({
             <>
               <small>节点详情</small>
               <h2>{current.name}</h2>
-              <b>
-                {status(current, space.logs)} · {current.score}%
-              </b>
-              <progress value={current.score} max={100} />
+              <MasteryProgress key={current.id + ":" + current.score} score={current.score}
+                status={status(current, space.logs)} />
               <p>{current.summary}</p>
               <h3>薄弱记录</h3>
               {space.logs
