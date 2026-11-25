@@ -37,7 +37,9 @@ import { Dialog } from "./ui";
 import { newSession } from "./model";
 const Settings = lazy(() => import("./ModelSettings"));
 const Workbench = lazy(() => import("./Workbench"));
+const GuidedChat = lazy(() => import("./GuidedChat"));
 import "./style.css";
+import "./guided-chat.css";
 const Graph = lazy(() =>
     import("./Insights").then((m) => ({ default: m.Graph })),
   ),
@@ -47,6 +49,7 @@ const Graph = lazy(() =>
   Admin = lazy(() => import("./Admin"));
 const pages = [
   ["library", "学习资料库", LibraryBig],
+  ["tutor", "AI 讲解", GraduationCap],
   ["studio", "双窗工作台", PanelsTopLeft],
   ["graph", "知识图谱", Workflow],
   ["reports", "历史报告", Files],
@@ -183,6 +186,9 @@ function App() {
     [sid, setSid] = useState(
       () => sessionStorage.getItem("fm.active:" + user.id) || "",
     ),
+    [guideId, setGuideId] = useState(
+      () => sessionStorage.getItem("fm.guided:" + user.id) || "",
+    ),
     [rid, setRid] = useState(""),
     [err, setErr] = useState(""),
     [starting, setStarting] = useState(false);
@@ -240,10 +246,25 @@ function App() {
       });
     return () => ctrl.abort();
   }, [page, user.id, ready]);
-  const c = space.courses.find((x) => x.id === doc) || space.courses[0],
-    sess =
-      space.sessions.find((s) => s.id === sid && (online || !s.closed)) ||
-      space.sessions.find((s) => !s.closed);
+  const c = space.courses.find((x) => x.id === doc) || space.courses[0];
+  const practiceSessions = space.sessions.filter((s) => !s.guided);
+  const guideSessions = space.sessions.filter((s) => s.guided);
+  const sess = practiceSessions.find((s) => s.id === sid && (online || !s.closed)) ||
+    practiceSessions.find((s) => !s.closed);
+  const oldGuide = online && ready === user.id && guideSessions.some((s) => s.id === sid);
+  const legacyStudioRoute = page === "studio" && oldGuide;
+  const guideSession = guideSessions.find((s) => s.id === (legacyStudioRoute ? sid : guideId)) || guideSessions[0];
+  const guideCourse = space.courses.find((course) => course.id === guideSession?.doc);
+  const currentPage = legacyStudioRoute ? "tutor" : page;
+  useEffect(() => {
+    if (!oldGuide) return;
+    if (legacyStudioRoute || !guideId) setGuideId(sid);
+    setSid("");
+    if (legacyStudioRoute) {
+      history.replaceState(history.state, "", "#tutor");
+      setPage("tutor");
+    }
+  }, [oldGuide, legacyStudioRoute, guideId, sid]);
   useEffect(() => {
     if (online) return;
     try {
@@ -282,6 +303,10 @@ function App() {
     setPage(p);
     setNav(false);
   }
+  function openReport(id: string) {
+    setRid(id);
+    go("reports");
+  }
   function login(u: User) {
     if (!u.id.startsWith("api:")) token("");
     const next = read(u.id);
@@ -294,6 +319,7 @@ function App() {
     setSpace(next);
     setDoc("");
     setSid(sessionStorage.getItem("fm.active:" + u.id) || "");
+    setGuideId(sessionStorage.getItem("fm.guided:" + u.id) || "");
     setRid("");
     setAuth(false);
     setSettings(false);
@@ -303,8 +329,13 @@ function App() {
     go(u.admin ? "admin" : "library");
   }
   useEffect(() => {
-    if (sid) sessionStorage.setItem("fm.active:" + user.id, sid);
+    const key = "fm.active:" + user.id;
+    if (sid) sessionStorage.setItem(key, sid);
+    else sessionStorage.removeItem(key);
   }, [sid, user.id]);
+  useEffect(() => {
+    if (guideId) sessionStorage.setItem("fm.guided:" + user.id, guideId);
+  }, [guideId, user.id]);
   useEffect(() => {
     if (
       !online ||
@@ -372,15 +403,15 @@ function App() {
       const session = { ...newSession(id, course, course.nodes[0], role), focus: target, guided: true };
       save((s) => ({ ...s, sessions: [session, ...s.sessions] }));
       setDoc(course.id);
-      setSid(id);
-      go("studio");
+      setGuideId(id);
+      go("tutor");
     } catch (e) {
       if (identity.current === user.id && !modelRequired(e)) setErr((e as Error).message);
     } finally {
       setStarting(false);
     }
   }
-  const title = pages.find((p) => p[0] === page)?.[1] || "学习资料库";
+  const title = pages.find((p) => p[0] === currentPage)?.[1] || "学习资料库";
   const links = pages.filter((p) => p[0] !== "admin" || user.admin);
   return (
     <div className="shell">
@@ -406,7 +437,7 @@ function App() {
           {links.map(([key, label, Icon]) => (
             <button
               key={key}
-              aria-current={page === key ? "page" : undefined}
+              aria-current={currentPage === key ? "page" : undefined}
               onClick={() => go(key)}
             >
               <Icon />
@@ -461,7 +492,7 @@ function App() {
             <SettingsIcon aria-hidden="true" />
           </button>
         </header>
-        <div className={"content " + (page === "studio" ? "studio" : "")}>
+        <div className={"content " + (currentPage === "tutor" ? "tutor-content" : page === "studio" ? "studio" : "")}>
           {err && <p role="alert">{err}</p>}
           <Suspense fallback={<p>正在载入…</p>}>
             {online && ready !== user.id ? (
@@ -496,13 +527,38 @@ function App() {
                 history={
                   online
                     ? (id) => {
-                        setSid(id);
-                        go("studio");
+                        if (guideSessions.some((session) => session.id === id)) {
+                          setGuideId(id);
+                          go("tutor");
+                        } else {
+                          setSid(id);
+                          go("studio");
+                        }
                       }
                     : undefined
                 }
                 go={() => go("studio")}
               />
+            ) : currentPage === "tutor" ? (
+              guideSession && guideCourse ? (
+                <GuidedChat key={guideSession.id} session={guideSession} course={guideCourse}
+                  historyOptions={guideSessions.map((session) => {
+                    const course = space.courses.find((doc) => doc.id === session.doc);
+                    const node = course?.nodes.find((concept) => concept.id === session.focus);
+                    return { id: session.id, title: node ? `${node.name} · ${course?.title}` : course?.title || "AI 讲解" };
+                  })}
+                  select={setGuideId} save={save} modelRequired={modelRequired} showReport={openReport}
+                  graph={() => { setDoc(guideCourse.id); go("graph"); }} />
+              ) : (
+                <div className="chat-empty">
+                  <span className="chat-avatar"><GraduationCap aria-hidden="true" /></span>
+                  <h1>先听 AI 讲解</h1>
+                  <p>{c ? "从图谱中选一个还没掌握的知识点。" : "上传一份学习资料，生成图谱后开始讲解。"}</p>
+                  <button className="primary" onClick={() => go(c ? "graph" : "library")}>
+                    {c ? "前往知识图谱" : "前往资料库"}
+                  </button>
+                </div>
+              )
             ) : page === "studio" && sess ? (
               <Workbench
                 online={online}
@@ -524,10 +580,7 @@ function App() {
                   setDoc(sess.doc);
                   go("graph");
                 }}
-                report={(id) => {
-                  setRid(id);
-                  go("reports");
-                }}
+                report={openReport}
               />
             ) : ["studio", "graph"].includes(page) ? (
               <div className="box empty">
@@ -590,7 +643,7 @@ function App() {
             if (!starting) setSetup(false);
           }}
         >
-          {space.sessions.some((s) => !s.closed) && (
+          {practiceSessions.some((s) => !s.closed) && (
             <label>
               继续已有会话
               <select
@@ -604,12 +657,12 @@ function App() {
                 <option value="" disabled>
                   选择进行中的会话
                 </option>
-                {space.sessions
+                {practiceSessions
                   .filter((s) => !s.closed)
                   .map((s) => (
                     <option key={s.id} value={s.id}>
                       {space.courses.find((c) => c.id === s.doc)?.title} ·{" "}
-                      {s.guided ? "AI 讲解 · " : ""}{s.role} · {s.left.filter((m) => m.who === "我").length}{" "}
+                      {s.role} · {s.left.filter((m) => m.who === "我").length}{" "}
                       轮
                     </option>
                   ))}

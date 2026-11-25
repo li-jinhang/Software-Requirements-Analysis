@@ -233,6 +233,7 @@ export function Reports({
   go: () => void;
 }) {
   const r = space.reports.find((x) => x.id === id) || space.reports[0];
+  const guided = space.sessions.some((session) => session.id === r?.sessionId && session.guided);
   return (
     <>
       <div className="pagehead">
@@ -265,7 +266,7 @@ export function Reports({
           <small>费曼学习诊断 · {new Date(r.date).toLocaleString()}</small>
           <h2>{r.title}</h2>
           {history && r.sessionId && (
-            <button onClick={() => history(r.sessionId!)}>查看双窗历史</button>
+            <button onClick={() => history(r.sessionId!)}>{guided ? "查看讲解会话" : "查看双窗历史"}</button>
           )}
           <div className="tools">
             <button

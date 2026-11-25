@@ -4,13 +4,7 @@ import { ReviewTools } from "./ReviewTools";
 import { animateCorrection } from "./correctionFlight";
 import { Dialog } from "./ui";
 import "./cognitive.css";
-import Markdown from "react-markdown";
-import gfm from "remark-gfm";
-import math from "remark-math";
-import katex from "rehype-katex";
-import highlight from "rehype-highlight";
-import "katex/dist/katex.min.css";
-import "highlight.js/styles/github.css";
+import { CourseText, CorrectionDetails, MessageSources } from "./LearningMessage";
 import {
   ArrowUp,
   ArrowRight,
@@ -29,7 +23,7 @@ import {
 } from "./api";
 import {
   CognitiveDoc, CognitiveItem, CognitiveUpdate, Correction,
-  Course, CourseCitation,
+  Course,
   Message,
   Session,
   Space,
@@ -40,50 +34,6 @@ import {
 
 type PendingTurn = { question: string; reply: string };
 
-function CourseText({ text }: { text: string }) {
-  return (
-    <Markdown remarkPlugins={[gfm, math]} rehypePlugins={[katex, highlight]}>
-      {text}
-    </Markdown>
-  );
-}
-
-function SourceCard({ hit }: { hit: CourseCitation }) {
-  const [expanded, setExpanded] = useState(false);
-  const long = hit.snippet.length > 200 || hit.snippet.split("\n").length > 7;
-  const preview = hit.snippet
-    .split(/\n\s*\n|(?<=[。！？])\s*/u)
-    .find((part) => part.trim() && !/^\s*#{1,6}\s+[^\n]*$/.test(part));
-  return (
-    <section className="source-card">
-      <header>
-        <strong>
-          {hit.doc_title} · 片段 #{hit.chunk_index}
-        </strong>
-        <small>
-          {hit.score === undefined
-            ? "本地课件"
-            : "相关度 " + hit.score.toFixed(2)}
-        </small>
-      </header>
-      <div className={long && !expanded ? "source-preview" : ""}>
-        <CourseText
-          text={long && !expanded ? preview || hit.snippet : hit.snippet}
-        />
-      </div>
-      {long && (
-        <button
-          type="button"
-          className="quiet"
-          aria-expanded={expanded}
-          onClick={() => setExpanded(!expanded)}
-        >
-          {expanded ? "收起片段" : "展开全文"}
-        </button>
-      )}
-    </section>
-  );
-}
 const markLabels = { mastered: "✓ 已掌握", partial: "◐ 待补全", wrong: "× 理解偏差", untested: "○ 待考核" };
 
 function Rubric({ doc, close, review, busy }: { doc: CognitiveDoc; close: () => void; review: (ids: number[]) => void; busy: boolean }) {
@@ -121,12 +71,7 @@ function CorrectionCard({ card, back, messageId, arrivals }: {
   }, [justPushed, arrivals, messageId]);
   return <article ref={target} className={"msg correction-card " + card.issue_type}>
     <header><strong>实时纠偏 · {card.label}</strong><small>{card.concept_name}</small></header>
-    <h4>你的表述</h4><blockquote>{card.user_claim}</blockquote>
-    <h4>Agent 认知文档标准解读与举例</h4><CourseText text={card.accurate_explanation} />
-    <h4>参考依据</h4><CourseText text={card.item_statement} />
-    {card.citations.map(hit => "kind" in hit
-      ? <small key={"item-" + hit.item_id}>{hit.section_title} · 认知条目 #{hit.item_id}</small>
-      : <SourceCard key={hit.chunk_index} hit={hit} />)}
+    <CorrectionDetails card={card} />
     <button className="quiet" onClick={back}>我明白了，回左窗继续讲</button>
   </article>;
 }
@@ -164,13 +109,9 @@ export default function Workbench({
   const [ratio, setRatio] = useState(55),
     [collapsed, setCollapsed] = useState(false),
     [notice, setNotice] = useState(""),
-    [mobile, setMobile] = useState(session.guided && !session.left.some((m) => m.who === "听众") ? 1 : 0);
+    [mobile, setMobile] = useState(0);
   const [pending, setPending] = useState<(PendingTurn | null)[]>([null, null]),
-    [finishing, setFinishing] = useState(false),
-    [lessonPreview, setLessonPreview] = useState<string | null>(null),
-    [startingRetell, setStartingRetell] = useState(false);
-  const lessonReady = session.right.some((m) => m.lesson);
-  const canRetell = !session.guided || session.left.some((m) => m.who === "听众");
+    [finishing, setFinishing] = useState(false);
   const streams = useRef<(AbortController | null)[]>([null, null]);
   useEffect(() => () => streams.current.forEach((ctrl) => ctrl?.abort()), []);
   const [rubric, setRubric] = useState<CognitiveDoc | null>(null);
@@ -216,10 +157,7 @@ export default function Workbench({
     fields = useRef<(HTMLTextAreaElement | null)[]>([]),
     feeds = useRef<(HTMLDivElement | null)[]>([]);
   useEffect(() => {
-    feeds.current.forEach((el, side) => {
-      if (side === 1 && session.guided && !pending[1] && session.right.every((m) => m.lesson)) return;
-      el?.scrollTo(0, el.scrollHeight);
-    });
+    feeds.current.forEach((el) => el?.scrollTo(0, el.scrollHeight));
   }, [session.left.length, session.right.length, mobile, collapsed, pending]);
   function patch(change: Partial<Session>) {
     save((s) => ({
@@ -243,34 +181,24 @@ export default function Workbench({
     const ctrl = new AbortController();
     setLoadingHistory(true);
     setHistoryError(false);
-    setNotice("");
     sessionHistory(session.id, ctrl.signal)
       .then(async (history) => {
         if (ctrl.signal.aborted) return;
-        if (session.guided && !history.right.some((m) => m.lesson) && !history.closed) {
-          setLessonPreview("");
-          const { reply } = await stream(session.id, 1, "", ctrl.signal, setLessonPreview, "lesson");
-          history.right.push(reply);
-        } else if (!session.guided && !history.left.length && !history.closed) {
+        if (!history.left.length && !history.closed) {
           const { reply } = await stream(session.id, 0, "", ctrl.signal, () => {}, true);
           history.left.push(reply);
         }
-        if (ctrl.signal.aborted) return;
-        patch(history);
         const doc = await cognitiveDoc(c.id, session.id, ctrl.signal);
-        if (!ctrl.signal.aborted) setRubric(doc);
+        if (!ctrl.signal.aborted) { setRubric(doc); patch(history); }
       })
       .catch((e) => {
         if (!ctrl.signal.aborted) {
-          if (!modelRequired(e)) setNotice(e.message);
+          setNotice(e.message);
           setHistoryError(true);
         }
       })
       .finally(() => {
-        if (!ctrl.signal.aborted) {
-          setLessonPreview(null);
-          setLoadingHistory(false);
-        }
+        if (!ctrl.signal.aborted) setLoadingHistory(false);
       });
     return () => ctrl.abort();
   }, [online, session.id, reload]);
@@ -278,28 +206,8 @@ export default function Workbench({
     session.closed ||
     changingRole ||
     finishing ||
-    startingRetell ||
     loadingHistory ||
     historyError;
-  async function beginRetell() {
-    if (locked || streams.current[0] || !lessonReady || pending.some(Boolean)) return;
-    const ctrl = new AbortController();
-    streams.current[0] = ctrl;
-    setStartingRetell(true);
-    setNotice("");
-    try {
-      if (!(await canLearn("feynman")) || ctrl.signal.aborted) return;
-      const { reply } = await stream(session.id, 0, "", ctrl.signal, () => {}, true);
-      if (ctrl.signal.aborted) return;
-      patch({ left: [...session.left, reply] });
-      focus(0);
-    } catch (e) {
-      if (!ctrl.signal.aborted && !modelRequired(e)) setNotice((e as Error).message);
-    } finally {
-      streams.current[0] = null;
-      if (!ctrl.signal.aborted) setStartingRetell(false);
-    }
-  }
   async function changeRole(role: string) {
     if (!online || locked || pending.some(Boolean)) return;
     setChangingRole(true);
@@ -405,7 +313,7 @@ export default function Workbench({
   }
   function send(side: number, text: string) {
     text = text.trim();
-    if (!text || locked || (!side && (!canRetell || session.reviewCompleted))) return;
+    if (!text || locked || (!side && session.reviewCompleted)) return;
     if (online) void onlineSend(side, text);
     else void canLearn(side ? "encyclopedia" : "feynman");
   }
@@ -453,7 +361,7 @@ export default function Workbench({
           </button>
           <button
             className="primary"
-            disabled={locked || !canRetell || pending.some(Boolean)}
+            disabled={locked || pending.some(Boolean)}
             onClick={finish}
           >
             {session.closed
@@ -464,27 +372,14 @@ export default function Workbench({
           </button>
         </div>
       </div>
-      {session.guided && (
-        <div className="lesson-progress">
-          <div>
-            <strong>AI 讲解{n && ` · ${n.name}`}</strong>
-            <p>{canRetell ? "用自己的话复述，在左窗检验理解。" : "先在右窗理解概念和例子，准备好后再复述。"}</p>
-          </div>
-          {!canRetell && !session.closed && (
-            <button className="primary" disabled={locked || !lessonReady || pending.some(Boolean)} onClick={beginRetell}>
-              {startingRetell ? "正在准备复述…" : "开始费曼复述"} <ArrowRight />
-            </button>
-          )}
-        </div>
-      )}
       {session.review && <p className="review-state">{session.reviewCompleted ? "本轮复习已完成" : "正在复习选定条目"}</p>}
       {rubricOpen && rubric && <Rubric doc={rubric} review={startReview} busy={startingReview || pending.some(Boolean)} close={() => setRubricOpen(false)} />}
       {notice && <p role="status">{notice}</p>}
       {historyError && (
-        <button onClick={() => setReload((v) => v + 1)}>{session.guided && !lessonReady ? "重试 AI 讲解" : "刷新会话历史"}</button>
+        <button onClick={() => setReload((v) => v + 1)}>刷新会话历史</button>
       )}
       <div className="mobiletabs">
-        {["费曼讲解", session.guided ? "AI 讲解" : "百科查证"].map((t, i) => (
+        {["费曼讲解", "百科查证"].map((t, i) => (
           <button aria-pressed={mobile === i} onClick={() => focus(i)} key={t}>
             {t}
           </button>
@@ -540,7 +435,7 @@ export default function Workbench({
                 <div className="row between">
                   <h2>
                     {i ? <BookOpen /> : <MessagesSquare />}
-                    {i ? session.guided ? "AI 讲解与查证" : "百科溯源助教" : "费曼听众"}
+                    {i ? "百科溯源助教" : "费曼听众"}
                   </h2>
                   {i === 0 ? (
                     <select
@@ -566,7 +461,7 @@ export default function Workbench({
                 {i === 1 && pushCount > 0 && <p className="push-notice" role="status">已弹出 {pushCount} 条实时纠偏</p>}
                 <small>
                   {i
-                    ? session.guided ? "结合图谱和当前资料，可继续提问" : "优先查证当前资料"
+                    ? "优先查证当前资料"
                     : (online
                         ? ["未学习", "已掌握", "巩固中", "待补漏"]
                         : ["已掌握", "巩固中", "待补漏"]
@@ -587,20 +482,20 @@ export default function Workbench({
                   feeds.current[i] = el;
                 }}
               >
-                {!(i ? session.right : session.left).length && (!i || lessonPreview === null) && (
+                {!(i ? session.right : session.left).length && (
                   <div className="empty">
                     <BookOpen />
                     <h3>
                       {i
-                        ? session.guided ? "准备 AI 讲解" : "查证课程原文"
+                        ? "查证课程原文"
                         : loadingHistory
                           ? "正在恢复会话"
                           : "开始讲解"}
                     </h3>
                     <p>
                       {i
-                        ? session.guided ? "讲解会显示在这里。" : "输入概念名称，或从左窗带入一个追问。"
-                        : !canRetell ? "读完右窗的讲解后，点击「开始费曼复述」。" : n
+                        ? "输入概念名称，或从左窗带入一个追问。"
+                        : n
                           ? "用自己的话讲解「" + n.name + "」。"
                           : "围绕当前资料进行讲解。"}
                     </p>
@@ -610,23 +505,16 @@ export default function Workbench({
                   <CorrectionCard key={"push-" + m.id} card={m.correction} messageId={m.id!} arrivals={arrivals.current} back={() => focus(0)} />
                 ) : (
                   <article
-                    className={"msg " + (m.lesson ? "guided-lesson" : m.who === "我" ? "mine" : "")}
-                    key={m.id ? "message-" + m.id : j}
+                    className={"msg " + (m.who === "我" ? "mine" : "")}
+                    key={j}
                   >
-                    <small>{m.lesson ? "AI 老师" : m.who}</small>
+                    <small>{m.who}</small>
                     <CourseText text={m.text} />
                     {m.badge && (
                       <small className="pill">{displayBadge(m)}</small>
                     )}
                     {m.citations?.length ? (
-                      <details className="source-list">
-                        <summary>
-                          参考资料片段（共 {m.citations.length} 条）
-                        </summary>
-                        {m.citations.map((hit) => (
-                          <SourceCard key={hit.chunk_index} hit={hit} />
-                        ))}
-                      </details>
+                      <MessageSources citations={m.citations} />
                     ) : (
                       m.citation && (
                         <details>
@@ -671,19 +559,13 @@ export default function Workbench({
                         <ArrowRight />
                       </button>
                     )}
-                    {m.who === "百科" && canRetell && (
+                    {m.who === "百科" && (
                       <button className="quiet" onClick={() => focus(0)}>
                         回左窗继续讲
                       </button>
                     )}
                   </article>
                 ))}
-                {i === 1 && lessonPreview !== null && !lessonReady && (
-                  <article className="msg guided-lesson" aria-busy="true">
-                    <small>AI 老师</small>
-                    {lessonPreview ? <CourseText text={lessonPreview} /> : <p role="status">正在根据知识图谱组织讲解…</p>}
-                  </article>
-                )}
                 {pending[i] && (
                   <>
                     <article className="msg mine">
@@ -703,7 +585,7 @@ export default function Workbench({
                   ref={(el) => {
                     fields.current[i] = el;
                   }}
-                  readOnly={session.closed || (i === 0 && (!canRetell || session.reviewCompleted)) || !!pending[i]}
+                  readOnly={session.closed || (i === 0 && session.reviewCompleted) || !!pending[i]}
                   value={
                     pending[i]?.question === session.drafts[i].trim()
                       ? ""
@@ -731,7 +613,7 @@ export default function Workbench({
                 <button
                   className="send"
                   aria-label={i ? "提交查证" : "发送讲解"}
-                  disabled={locked || (i === 0 && (!canRetell || session.reviewCompleted)) || !!pending[i] || !session.drafts[i].trim()}
+                  disabled={locked || (i === 0 && session.reviewCompleted) || !!pending[i] || !session.drafts[i].trim()}
                   onClick={() => send(i, session.drafts[i])}
                 >
                   <ArrowUp />
