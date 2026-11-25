@@ -121,6 +121,7 @@ export type Report = {
   comment?: string;
 };
 export type Space = {
+  demoBuild?: string;
   courses: Course[];
   sessions: Session[];
   reports: Report[];

@@ -1,9 +1,39 @@
+from collections import Counter
+
 from pydantic import ValidationError
 import pytest
 from time import monotonic, sleep
 
 from test_local_accounts import ACCOUNTS, DOCS, auth
-from test_smoke import fixture_server
+from test_smoke import fixture_server, login
+
+
+def test_seeded_demo_uses_the_course_library_contract(fixture_server):
+    api = fixture_server
+    headers = login(api, "student", "123456")
+    courses = {doc["title"]: doc for doc in api.get(DOCS, headers=headers).json()}
+    assert set(courses) == {"机器学习基础：梯度下降与过拟合", "计算机网络"}
+    for title, node_count, edge_count in (
+        ("机器学习基础：梯度下降与过拟合", 8, 9),
+        ("计算机网络", 20, 34),
+    ):
+        course = courses[title]
+        assert course["is_library"] and course["library_id"] is None
+        doc_path = f"{DOCS}/{course['id']}"
+        graph = api.get(doc_path + "/graph", headers=headers).json()
+        assert len(graph["nodes"]) == node_count and len(graph["edges"]) == edge_count
+        archive = api.get(doc_path + "/memory/export", params={"format": "json"}, headers=headers)
+        assert archive.status_code == 200 and len(archive.json()["核心概念树"]) == node_count
+        if title == "计算机网络":
+            assert Counter(n["status"] for n in graph["nodes"]) == {
+                "mastered": 6, "learning": 5, "weak": 4, "unlearned": 5,
+            }
+            assert sum(bool(n["user_note"]) for n in graph["nodes"]) == 4
+            report = api.get(doc_path + "/cognitive-doc", headers=headers).json()
+            assert report["total"] == 40 and report["mastered_count"] == 17
+            cards = api.get(doc_path + "/due-reviews", headers=headers).json()
+            assert len(cards["due_items"]) == 12
+            assert all(card["mastery_score"] == 100 for card in cards["due_items"])
 
 
 def test_setup_returns_a_persisted_library_before_model_replies(fixture_server):

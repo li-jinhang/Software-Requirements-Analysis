@@ -80,7 +80,7 @@ def generate(db, user_id, request, profile):
     return persist_plan(db, user_id, request.topic.strip(), request.subject or "", plan)
 
 
-def persist_plan(db, user_id, title, subject, plan, *, is_library=False, document=None):
+def plan_source(title, plan):
     groups = defaultdict(list)
     for item in plan.cognitive_items:
         groups[item.concept_name].append(item)
@@ -92,7 +92,26 @@ def persist_plan(db, user_id, title, subject, plan, *, is_library=False, documen
                 i.statement + "\n\n判定要点：" + i.key_criteria for i in groups[node.concept_name]
             )
         )
-    source = "\n\n".join(sections)
+    return "\n\n".join(sections)
+
+
+def store_plan(db, doc_id, plan):
+    nodes = store_graph(db, doc_id, plan)
+    for order, item in enumerate(ordered_criteria(plan), 1):
+        db.add(
+            CognitiveItem(
+                doc_id=doc_id,
+                node_id=nodes[item.concept_name].id,
+                section_title=item.concept_name,
+                item_order=order,
+                statement=item.statement,
+                key_criteria=item.key_criteria,
+            )
+        )
+
+
+def persist_plan(db, user_id, title, subject, plan, *, is_library=False, document=None):
+    source = plan_source(title, plan)
     path = settings.data_dir / "uploads" / (uuid4().hex + ".md")
     doc = document if document is not None else Document(
         user_id=user_id,
@@ -110,18 +129,7 @@ def persist_plan(db, user_id, title, subject, plan, *, is_library=False, documen
         doc.library_setup = None
         db.add(doc)
         db.flush()
-        nodes = store_graph(db, doc.id, plan)
-        for order, item in enumerate(ordered_criteria(plan), 1):
-            db.add(
-                CognitiveItem(
-                    doc_id=doc.id,
-                    node_id=nodes[item.concept_name].id,
-                    section_title=item.concept_name,
-                    item_order=order,
-                    statement=item.statement,
-                    key_criteria=item.key_criteria,
-                )
-            )
+        store_plan(db, doc.id, plan)
         chunks = doc_parser.split_chunks(source)
         indexed_id = doc.id
         if document is not None:

@@ -24,6 +24,7 @@ export function write(id: string, s: Space) {
   // Server records are reloaded on login. Persist only edits that have not been sent.
   const stored: Space = id.startsWith("api:")
     ? {
+        demoBuild: s.demoBuild,
         courses: s.courses.map((c) => ({ ...c, links: [], nodes: c.nodes.filter((n) => n.syncedNote !== undefined && n.note !== n.syncedNote) })).filter((c) => c.nodes.length),
         reports: [],
         logs: [],

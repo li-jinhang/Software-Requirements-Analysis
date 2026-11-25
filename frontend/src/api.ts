@@ -676,7 +676,7 @@ export async function restoreSpace(
   userId: string,
   signal: AbortSignal,
 ): Promise<Space> {
-  const me = await json<{ username: string }>("/auth/me", { signal });
+  const me = await json<{ username: string; demo_build?: string }>("/auth/me", { signal });
   signal.throwIfAborted();
   if (userId !== "api:" + base + ":" + me.username) {
     window.dispatchEvent(new Event("fm:expired"));
@@ -712,6 +712,7 @@ export async function restoreSpace(
     drafts: ["", ""],
   }));
   return {
+    ...(me.demo_build ? { demoBuild: me.demo_build } : {}),
     courses,
     sessions,
     logs: bundles.flatMap((b) => b.logs),

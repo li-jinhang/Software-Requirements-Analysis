@@ -18,7 +18,7 @@ if __name__ == "__main__" and python.exists() and Path(sys.prefix).resolve() != 
 sys.path.insert(0, str(BACKEND))
 from fastapi.encoders import jsonable_encoder
 from sqlalchemy import inspect, select
-from app.db.database import Base, db_path
+from app.db.database import db_path
 from app.db.models import Document
 from app.main import app
 from app.services import data_export
@@ -62,11 +62,12 @@ def build(source, parent=OUTPUT.parent):
         with data_export.snapshot_session(snapshot) as db:
             snapshot_rows = data_export.snapshot_json(db)
             schema = inspect(db.connection())
-            expected = set(Base.metadata.tables)
+            tables = {model.__tablename__: model.__table__ for model in data_export.MODELS}
+            expected = set(tables)
             if set(snapshot_rows) != expected or set(schema.get_table_names()) != expected:
                 raise ValueError("交付快照与业务表清单不一致")
             for name, rows in snapshot_rows.items():
-                columns = set(Base.metadata.tables[name].columns.keys())
+                columns = set(tables[name].columns.keys())
                 if {c["name"] for c in schema.get_columns(name)} != columns:
                     raise ValueError(f"SQLite 快照字段不完整：{name}")
                 public_columns = columns - {"password_hash", "file_path"}

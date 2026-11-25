@@ -322,7 +322,13 @@ def test_startup_preserves_legacy_documents_and_library_links(tmp_path, monkeypa
             conn.exec_driver_sql("""
                 INSERT INTO documents VALUES
                     (4,1,'原笔记','数学','md','','pending','',7,'旧摘要','2025-02-01'),
-                    (9,1,'合集','数学','md','','pending','',0,'','2025-03-01')
+                    (9,1,'合集','数学','md','','pending','',0,'','2025-03-01'),
+                    (10,1,'机器学习基础：梯度下降与过拟合','机器学习','md','uploads/demo-course.md',
+                     'completed','',8,'演示摘要','2025-03-01'),
+                    (11,1,'机器学习基础：梯度下降与过拟合','机器学习','md','uploads/demo-course-fixture.md',
+                     'completed','',8,'演示摘要','2025-03-01'),
+                    (12,1,'机器学习基础：梯度下降与过拟合','机器学习','md','uploads/mine.md',
+                     'completed','',5,'自学资料','2025-03-01')
             """)
             if existing_column == "is_library":
                 conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN is_library BOOLEAN NOT NULL DEFAULT 0")
@@ -337,11 +343,13 @@ def test_startup_preserves_legacy_documents_and_library_links(tmp_path, monkeypa
             assert note.is_library is False and library.library_id is None
             assert library.is_library == (existing_column == "is_library")
             assert note.library_id == (9 if existing_column == "library_id" else None)
+            assert db.get(Document, 10).structured_summary == "演示摘要"
+            assert db.get(Document, 11).chunk_count == 8
             library.is_library, note.library_id = True, 9
 
         with TestClient(main.app), engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT id,is_library,library_id FROM documents ORDER BY id").all() == [
-                (4, 0, 9), (9, 1, None)]
+                (4, 0, 9), (9, 1, None), (10, 1, None), (11, 1, None), (12, 0, None)]
             assert [r[2] for r in conn.exec_driver_sql("PRAGMA index_info(ix_documents_library_id)")] == ["library_id"]
             assert any(r[2:5] == ("documents", "library_id", "id") and r[6] == "SET NULL"
                        for r in conn.exec_driver_sql("PRAGMA foreign_key_list(documents)"))

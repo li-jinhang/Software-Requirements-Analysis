@@ -364,15 +364,21 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
       restoreSpace(user.id, ctrl.signal)
         .then((remote) => {
           if (ctrl.signal.aborted || identity.current !== user.id) return;
-          save((local) => ({
-            ...remote,
-            courses: remote.courses.map((c) => preserveNotes(c, local.courses.find((d) => d.id === c.id))),
-            sessions: remote.sessions.map((s) => ({
-              ...s,
-              drafts:
-                local.sessions.find((v) => v.id === s.id)?.drafts || s.drafts,
-            })),
-          }));
+          if (remote.demoBuild && remote.demoBuild !== latest.current.demoBuild) {
+            clearWorkspaceCache(user.id);
+            setSid("");
+            setGuideId("");
+            save(() => remote);
+          } else {
+            save((local) => ({
+              ...remote,
+              courses: remote.courses.map((c) => preserveNotes(c, local.courses.find((d) => d.id === c.id))),
+              sessions: remote.sessions.map((s) => ({
+                ...s,
+                drafts: local.sessions.find((v) => v.id === s.id)?.drafts || s.drafts,
+              })),
+            }));
+          }
           setReady(user.id);
         })
         .catch((e) => {
