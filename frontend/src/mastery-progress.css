@@ -50,7 +50,7 @@
   min-width: 0;
   height: 6px;
   overflow: hidden;
-  border-radius: 8px;
+  border-radius: 99px;
   background: var(--mastery-bg);
 }
 .mastery-fill {
@@ -62,6 +62,7 @@
   border-radius: inherit;
   background: var(--mastery-ink);
   transform-origin: left;
+  transition: width 320ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .mastery-mark {
   display: grid;
@@ -73,6 +74,7 @@
   border-radius: 6px;
   color: var(--mastery-ink);
   background: var(--mastery-bg);
+  transition: background-color 160ms ease, color 160ms ease;
 }
 .mastery-mark::before {
   content: "";
@@ -83,8 +85,13 @@
 }
 
 [data-mastery="empty"] .mastery-track {
-  height: 3px;
-  background: repeating-linear-gradient(90deg, color-mix(in srgb, var(--muted) 65%, var(--canvas)) 0 4px, transparent 4px 9px);
+  height: 6px;
+  border: 1px solid var(--line);
+  background: repeating-linear-gradient(
+    -45deg,
+    color-mix(in srgb, var(--surface) 90%, transparent) 0 4px,
+    transparent 4px 8px
+  );
 }
 [data-mastery="empty"] .mastery-mark, [data-mastery="empty"] .mastery-mark::before { border-radius: 50%; }
 [data-mastery="empty"] .mastery-mark::before { border: 1px solid currentColor; background: transparent; }

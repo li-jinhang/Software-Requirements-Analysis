@@ -17,6 +17,9 @@ import {
   GraduationCap,
   ChevronsUpDown,
   RotateCcw,
+  Plus,
+  FileText,
+  MessagesSquare,
 } from "lucide-react";
 import {
   connected,
@@ -30,6 +33,7 @@ import {
   localModelSettings,
   refreshMemory,
   preserveNotes,
+  reviews,
   ApiError,
   modelSettingsApi,
   type TeachingPurpose,
@@ -37,7 +41,7 @@ import {
 import Library from "./Library";
 import LocalAccounts from "./LocalAccounts";
 const CapabilityCenter = lazy(() => import("./CapabilityCenter"));
-import { Concept, Course, Space, initial, roles } from "./model";
+import { Concept, Course, Space, initial, mean, roles } from "./model";
 import { User, student, admin, authenticate, clearWorkspaceCache, read, write } from "./storage";
 import { Dialog, WorkspaceFrame, type ColorTheme } from "./ui";
 import { newSession } from "./model";
@@ -322,7 +326,10 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
     ),
     [rid, setRid] = useState(""),
     [err, setErr] = useState(""),
-    [starting, setStarting] = useState(false);
+    [starting, setStarting] = useState(false),
+    [uploadTick, setUploadTick] = useState(0),
+    [dueCount, setDueCount] = useState(0),
+    [modelStatus, setModelStatus] = useState<{ ready: boolean; label: string } | null>(null);
   const online = user.id.startsWith("api:");
   const latest = useRef(space);
   const identity = useRef(user.id);
@@ -469,6 +476,46 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
       });
     return () => ctrl.abort();
   }, [c?.id, page, ready, user.id]);
+  useEffect(() => {
+    if (!online || ready !== user.id || !c || (c.parseStatus && c.parseStatus !== "completed")) {
+      setDueCount(0);
+      return;
+    }
+    const ctrl = new AbortController();
+    reviews.get(c.id, ctrl.signal)
+      .then((data) => {
+        if (!ctrl.signal.aborted) setDueCount(data.due_items.length);
+      })
+      .catch(() => {
+        if (!ctrl.signal.aborted) setDueCount(0);
+      });
+    return () => ctrl.abort();
+  }, [c?.id, page, ready, user.id, online]);
+  useEffect(() => {
+    if (!connected || !online || ready !== user.id || settings) return;
+    let alive = true;
+    const loadModel = async () => {
+      try {
+        if (localModelSettings) {
+          const s = await modelSettingsApi.read();
+          if (!alive) return;
+          const def = s.profiles.find((p) => p.id === s.bindings.default);
+          if (def) setModelStatus({ ready: true, label: def.model || def.name });
+          else if (s.environment_live) setModelStatus({ ready: true, label: "环境默认模型" });
+          else setModelStatus({ ready: false, label: "去配置模型" });
+        } else {
+          const active = await modelSettingsApi.active();
+          if (!alive) return;
+          const first = active.feynman || active.encyclopedia || active.extract || active.report;
+          setModelStatus(first ? { ready: true, label: first } : { ready: false, label: "去配置模型" });
+        }
+      } catch {
+        if (alive) setModelStatus(null);
+      }
+    };
+    void loadModel();
+    return () => { alive = false; };
+  }, [online, ready, user.id, settings]);
   function modelRequired(error: unknown) {
     if (!(error instanceof ApiError) || error.code !== "model_required")
       return false;
@@ -520,6 +567,31 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
   const [, title, PageIcon] = pageInfo;
   const isWorkspace = ["studio", "tutor", "graph", "review", "reports"].includes(currentPage);
   const links = pages.filter((p) => p[0] !== "admin" || user.admin);
+  const recentSessions = space.sessions.slice(0, 4);
+  function selectCourseFromRail(course: Course) {
+    setDoc(course.id);
+    if (currentPage === "tutor") {
+      const existingGuide = guideSessions.find((s) => s.doc === course.id);
+      if (existingGuide) { setGuideId(existingGuide.id); go("tutor"); return; }
+    } else if (currentPage === "studio") {
+      const existingStudio = practiceSessions.find((s) => s.doc === course.id && !s.closed);
+      if (existingStudio) { setSid(existingStudio.id); go("studio"); return; }
+    } else if (currentPage === "review") {
+      go("review");
+      return;
+    }
+    go("graph");
+  }
+  function openSessionFromRail(s: Space["sessions"][number]) {
+    setDoc(s.doc);
+    if (s.guided) {
+      setGuideId(s.id);
+      go("tutor");
+    } else {
+      setSid(s.id);
+      go("studio");
+    }
+  }
   if (online && ready !== user.id) {
     return (
       <AccountEntry theme={theme} toggleTheme={toggleTheme}>
@@ -543,19 +615,104 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
           <BookOpen aria-hidden="true" />
           <strong>智溯费曼</strong>
         </div>
-        <div className="navcaption">学习空间</div>
-        <nav aria-label="学习导航">
-          {links.map(([key, label, Icon]) => (
+        <div className="sidebar-scroll">
+          <div className="navcaption">学习空间</div>
+          <nav aria-label="学习导航">
+            {links.map(([key, label, Icon]) => (
+              <button
+                key={key}
+                aria-label={label}
+                aria-current={currentPage === key ? "page" : undefined}
+                onClick={() => go(key)}
+              >
+                <Icon />
+                <span className="truncate">{label}</span>
+                {key === "review" && dueCount > 0 && (
+                  <span className="nav-badge" aria-hidden="true">{dueCount}</span>
+                )}
+              </button>
+            ))}
+          </nav>
+
+          <div className="navcaption navcaption-row">
+            <span>我的课程</span>
             <button
-              key={key}
-              aria-current={currentPage === key ? "page" : undefined}
-              onClick={() => go(key)}
+              type="button"
+              className="icon-button nav-add"
+              aria-label="添加学习资料"
+              title="上传或新建课程"
+              onClick={() => {
+                go("library");
+                setUploadTick((t) => t + 1);
+              }}
             >
-              <Icon />
-              {label}
+              <Plus aria-hidden="true" />
             </button>
-          ))}
-        </nav>
+          </div>
+          <nav aria-label="我的课程">
+            {space.courses.map((course) => {
+              const avg = mean(course.nodes.map((n) => n.score));
+              const active = c?.id === course.id;
+              return (
+                <button
+                  key={course.id}
+                  type="button"
+                  aria-current={active ? "true" : undefined}
+                  title={course.title}
+                  onClick={() => selectCourseFromRail(course)}
+                >
+                  <FileText aria-hidden="true" />
+                  <span className="truncate">{course.title}</span>
+                  <span className="nav-meta">{avg}%</span>
+                </button>
+              );
+            })}
+            {!space.courses.length && <p className="nav-empty">暂无课程</p>}
+          </nav>
+
+          {recentSessions.length > 0 && (
+            <>
+              <div className="navcaption">最近学习</div>
+              <nav aria-label="最近学习">
+                {recentSessions.map((s) => {
+                  const course = space.courses.find((d) => d.id === s.doc);
+                  const node = course?.nodes.find((n) => n.id === s.focus);
+                  const sessionTitle = s.guided
+                    ? node
+                      ? `${node.name} · ${course?.title || "讲解"}`
+                      : course?.title || "AI 讲解"
+                    : `${course?.title || "费曼练习"} · ${s.role}`;
+                  const active = s.guided
+                    ? currentPage === "tutor" && guideSession?.id === s.id
+                    : currentPage === "studio" && sess?.id === s.id;
+                  return (
+                    <button
+                      key={s.id}
+                      type="button"
+                      aria-current={active ? "true" : undefined}
+                      title={sessionTitle}
+                      onClick={() => openSessionFromRail(s)}
+                    >
+                      {s.guided ? <GraduationCap aria-hidden="true" /> : <MessagesSquare aria-hidden="true" />}
+                      <span className="truncate">{sessionTitle}</span>
+                    </button>
+                  );
+                })}
+              </nav>
+            </>
+          )}
+        </div>
+        {online && modelStatus && (
+          <button
+            type="button"
+            className="sidebar-model"
+            title={modelStatus.ready ? `当前默认模型：${modelStatus.label}` : "点击前往配置模型"}
+            onClick={() => { setNav(false); setSettings(true); }}
+          >
+            <i className={"model-dot " + (modelStatus.ready ? "ready" : "missing")} aria-hidden="true" />
+            <span className="truncate">{modelStatus.label}</span>
+          </button>
+        )}
         <footer className="sidebar-footer">
           <div className="account">
             <button
@@ -617,6 +774,8 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
                 space={space}
                 id={rid}
                 select={setRid}
+                practice={begin}
+                guide={beginGuided}
                 history={
                   online
                     ? (id) => {
@@ -643,13 +802,29 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
                     const node = course?.nodes.find((concept) => concept.id === session.focus);
                     return { id: session.id, title: node ? `${node.name} · ${course?.title}` : course?.title || "AI 讲解" };
                   })}
-                  select={setGuideId} save={save} modelRequired={modelRequired} showReport={openReport}
+                  select={setGuideId}
+                  onSelectConcept={(concept) => {
+                    const existing = guideSessions.find((s) => s.doc === guideCourse.id && s.focus === concept.id);
+                    if (existing) setGuideId(existing.id);
+                    else void beginGuided(guideCourse, concept);
+                  }}
+                  starting={starting}
+                  save={save} modelRequired={modelRequired} showReport={openReport}
                   graph={() => { setDoc(guideCourse.id); go("graph"); }} />
               ) : (
                 <div className="chat-empty">
                   <span className="chat-avatar"><GraduationCap aria-hidden="true" /></span>
                   <h2>先听 AI 讲解</h2>
-                  <p>{c ? "从图谱中选一个还没掌握的知识点。" : "上传一份学习资料，生成图谱后开始讲解。"}</p>
+                  <p>{c ? "从图谱中选一个还没掌握的知识点，或直接从当前资料开启一课。" : "上传一份学习资料，生成图谱后开始讲解。"}</p>
+                  {c && c.nodes.some((n) => n.score < 80) && (
+                    <div className="tools" style={{ justifyContent: "center", marginTop: 8 }}>
+                      {c.nodes.filter((n) => n.score < 80).slice(0, 3).map((n) => (
+                        <button key={n.id} disabled={starting} onClick={() => void beginGuided(c, n)}>
+                          <GraduationCap aria-hidden="true" /> {n.name}
+                        </button>
+                      ))}
+                    </div>
+                  )}
                   <button className="primary" onClick={() => go(c ? "graph" : "library")}>
                     {c ? "前往知识图谱" : "前往资料库"}
                   </button>
@@ -715,6 +890,10 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
                 starting={starting}
                 canLearn={canLearn}
                 modelRequired={modelRequired}
+                uploadTick={uploadTick}
+                onOpenStudio={(id) => { setSid(id); go("studio"); }}
+                onOpenTutor={(id) => { setGuideId(id); go("tutor"); }}
+                onOpenGraph={(courseId) => { setDoc(courseId); go("graph"); }}
               />
             )}
           </Suspense>

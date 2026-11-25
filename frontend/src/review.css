@@ -1,7 +1,160 @@
-.review-deck,
-.view-review > .review-empty {
-  width: min(100%, 720px);
+.review-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 24px;
+  align-items: start;
+  width: 100%;
+  max-width: 1380px;
   margin-inline: auto;
+}
+.review-stage {
+  min-width: 0;
+}
+.review-stage .review-card,
+.review-stage .review-empty,
+.view-review > .review-empty {
+  width: min(100%, 780px);
+}
+.view-review > .review-empty {
+  margin-inline: auto;
+}
+.review-queue-rail {
+  min-width: 0;
+  display: grid;
+  gap: 14px;
+  padding-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+}
+@container workspace (min-width: 880px) {
+  .review-layout {
+    grid-template-columns: 300px minmax(0, 1fr);
+    gap: 28px;
+  }
+  .review-queue-rail {
+    position: sticky;
+    top: 16px;
+    padding-bottom: 0;
+    padding-inline-end: 24px;
+    border-bottom: 0;
+    border-inline-end: 1px solid var(--line);
+  }
+}
+.review-rail-head {
+  display: grid;
+  gap: 8px;
+}
+.review-rail-head h3 {
+  margin: 0;
+  font-size: 13px;
+  color: var(--muted);
+}
+.review-rail-stats {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+  padding: 8px 10px;
+  border-radius: 7px;
+  border: 1px solid var(--line);
+  background: var(--card);
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.review-rail-stats b {
+  display: block;
+  font: 600 14px var(--mono);
+  color: var(--ink);
+  margin-top: 2px;
+}
+.review-queue-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 4px;
+  max-height: 62dvh;
+  overflow-y: auto;
+  scrollbar-width: thin;
+}
+.review-queue-list button {
+  width: 100%;
+  justify-content: flex-start;
+  text-align: left;
+  gap: 9px;
+  padding: 8px 10px;
+  border-color: transparent;
+  background: transparent;
+}
+.review-queue-list button:enabled:hover {
+  background: var(--selected);
+}
+.review-queue-list button[aria-current="true"] {
+  background: var(--selected);
+  border-color: var(--line);
+  color: var(--ink);
+}
+.review-queue-idx {
+  font: 600 11px var(--mono);
+  color: var(--muted);
+  flex: none;
+}
+.review-queue-list div {
+  min-width: 0;
+  display: grid;
+}
+.review-queue-list strong {
+  font-size: 13px;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.review-queue-list small {
+  font-size: 11px;
+  color: var(--muted);
+}
+.review-unlock-list {
+  display: grid;
+  gap: 8px;
+}
+.review-unlock-list > p {
+  margin: 0 0 4px;
+}
+.review-unlock-item {
+  display: grid;
+  justify-items: stretch;
+  text-align: left;
+  gap: 4px;
+  padding: 10px 11px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.review-unlock-item:enabled:hover {
+  border-color: var(--control-line-hover);
+  background: var(--surface);
+}
+.review-unlock-item strong {
+  font-size: 13px;
+  font-weight: 600;
+}
+.review-unlock-item span {
+  font: 600 12px var(--mono);
+  color: var(--muted);
+}
+.review-unlock-item progress {
+  margin: 2px 0;
+  height: 3px;
+}
+.review-unlock-item small {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--accent);
+}
+.review-unlock-item svg {
+  width: 12px;
+  height: 12px;
 }
 .review-toolbar select {
   max-width: min(20vw, 190px);
@@ -9,21 +162,33 @@
 .review-toolbar .tools {
   flex-wrap: nowrap;
   gap: 2px;
+  padding: 2px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--line);
 }
 .review-toolbar button {
+  min-height: 25px;
   border-color: transparent;
   background: transparent;
-  padding: 3px 7px;
+  color: var(--muted);
+  padding: 2px 8px;
+  box-shadow: none;
 }
 .review-toolbar button[aria-pressed="true"] {
-  background: var(--selected);
+  background: var(--card);
+  border-color: var(--control-line);
+  color: var(--ink);
+  box-shadow: var(--shadow-sm);
 }
 .review-card {
   overflow-wrap: anywhere;
-  padding: 15px 17px;
-  border: 1px solid var(--line);
-  border-radius: 8px;
+  padding: 22px 24px;
+  border: 1px solid var(--control-line);
+  border-radius: 10px;
   background: var(--card);
+  box-shadow: var(--highlight-top), var(--shadow-sm);
+  transition: border-color 150ms var(--ease-snappy), box-shadow 150ms var(--ease-snappy);
 }
 .review-card > header,
 .review-card > footer {
@@ -31,42 +196,76 @@
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 .review-card > header {
   font-size: 12px;
   color: var(--muted);
+  padding-bottom: 10px;
+  border-bottom: 1px solid var(--line);
+}
+.review-card > header small {
+  padding: 1px 7px;
+  border-radius: 4px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  color: var(--ink);
+  font-weight: 500;
 }
 .review-card h2 {
-  font-size: 18px;
-  margin: 11px 0 4px;
+  font-size: 19px;
+  line-height: 1.4;
+  margin: 16px 0 6px;
 }
 .review-card > p {
   color: var(--muted);
+  font-size: 13.5px;
+  line-height: 1.6;
 }
 .review-card > footer {
-  margin-top: 14px;
-  padding-top: 8px;
+  margin-top: 20px;
+  padding-top: 14px;
   border-top: 1px solid var(--line);
 }
 .review-mastery {
+  font: 600 12px var(--mono);
   color: var(--green-ink);
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: var(--green-wash);
 }
 .review-again {
   color: var(--amber-ink);
+  background: var(--amber-wash);
+  border-color: color-mix(in srgb, var(--amber) 34%, var(--line));
+}
+.review-again:enabled:hover {
+  background: color-mix(in srgb, var(--amber) 18%, transparent);
+  border-color: var(--amber);
 }
 .review-answer {
-  border-left: 2px solid var(--control-line);
-  padding-left: 9px;
-  margin-top: 12px;
-  animation: show-answer 110ms ease-out;
+  border-left: 3px solid var(--accent);
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  border-radius: 0 7px 7px 0;
+  padding: 12px 14px;
+  margin-top: 16px;
+  animation: show-answer 180ms var(--ease-out);
+}
+.review-answer > small {
+  display: block;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: var(--accent);
+  margin-bottom: 4px;
 }
 @keyframes show-answer {
   from {
-    opacity: 0.4;
+    opacity: 0;
+    transform: translateY(4px);
   }
   to {
     opacity: 1;
+    transform: none;
   }
 }
 .review-answer :is(pre, table, .katex-display) {

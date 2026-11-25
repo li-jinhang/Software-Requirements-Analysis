@@ -1,9 +1,9 @@
 import { useEffect, useRef, useState } from "react";
-import { Clock, Layers3, RotateCcw, BookOpen, ListChecks } from "lucide-react";
+import { ArrowRight, Clock, Layers3, RotateCcw, BookOpen, ListChecks } from "lucide-react";
 import { reviews } from "./api";
 import { WorkspaceToolbar } from "./ui";
 import { CourseText } from "./LearningMessage";
-import type { Course, ReviewLists } from "./model";
+import type { Concept, Course, ReviewLists } from "./model";
 import "./review.css";
 
 const formatTime = new Intl.DateTimeFormat("zh-CN", {
@@ -18,7 +18,7 @@ function ReviewSteps() {
   </ol>;
 }
 
-function ReviewDeck({ course, assess }: { course: Course; assess: () => void }) {
+function ReviewDeck({ course, assess }: { course: Course; assess: (concept?: Concept) => void }) {
   const [queue, setQueue] = useState<ReviewLists | null>(null);
   const [scope, setScope] = useState<"due" | "all">("due");
   const [selected, setSelected] = useState<number>();
@@ -79,8 +79,10 @@ function ReviewDeck({ course, assess }: { course: Course; assess: () => void }) 
       outcome === "remembered" ? "已记录，复习计划已更新。" : "已安排 10 分钟后再复习。" );
   }
 
+  const closestNodes = [...course.nodes].sort((a, b) => b.score - a.score).slice(0, 6);
+
   return (
-    <div className="review-deck">
+    <div className="review-layout">
       {queue && (
         <WorkspaceToolbar><div className="review-toolbar toolbar-actions">
           <div className="tools" role="group" aria-label="复习范围">
@@ -97,49 +99,96 @@ function ReviewDeck({ course, assess }: { course: Course; assess: () => void }) 
           )}
         </div></WorkspaceToolbar>
       )}
-      {error && <div className="review-feedback"><p role="alert">{error}</p><button onClick={reload}>重新加载</button></div>}
-      {notice && <p className="review-feedback" role="status">{notice}</p>}
-      {!queue && !error && <p role="status">正在加载复习计划…</p>}
-      {card ? (
-        <article className="review-card" aria-busy={loading}>
-          <header>
-            <small>{dueNow ? "已到期" : "提前复习"}</small>
-            <span className="review-mastery">掌握度 {card.mastery_score}%</span>
-          </header>
-          <h2>{card.section_title}</h2>
-          <p>{points.length > 1 ? `回忆这个知识点的要点，再核对第 ${points.findIndex((item) => item.id === card.id) + 1} 条。` : "先用自己的话回忆这个知识点，再查看参考答案。"}</p>
-          {answerShown && (
-            <div className="review-answer" id="current-review-answer">
-              <small>参考答案</small>
-              <CourseText text={card.statement} />
+      <aside className="review-queue-rail" aria-label="复习队列与解锁进度">
+        <div className="review-rail-head">
+          <h3>{cards.length ? "复习队列" : "待解锁进度"}</h3>
+          {queue && (
+            <div className="review-rail-stats">
+              <span>到期 <b>{due.length}</b></span>
+              <span>已解锁 <b>{all.length}</b></span>
+              <span>已完成 <b>{handled.length}</b></span>
             </div>
           )}
-          <footer>
-            <div className="tools">
-              {answerShown ? (
-                <>
-                  <button className="primary" disabled={loading} onClick={() => record("remembered")}>记得</button>
-                  <button className="review-again" title="再来一次，10 分钟后复习" disabled={loading} onClick={() => record("again")}>需巩固</button>
-                </>
-              ) : <button className="primary" disabled={loading} onClick={() => setRevealed(card.id)}>查看答案</button>}
-              {dueNow && <button className="quiet" title="跳过本次，明天再复习" disabled={loading} onClick={() => void update(
-                (signal) => reviews.skip(course.id, card.id, signal), card.id, "已延到明天。",
-              )}>明天再复习</button>}
-            </div>
-            {utcDate && <small>下次复习 <time dateTime={utcDate}>{formatTime.format(new Date(utcDate))}</time></small>}
-          </footer>
-        </article>
-      ) : queue && (
-        <div className="box empty review-empty">
-          <RotateCcw aria-hidden="true" />
-          <h2>{!all.length ? "还没有可复习的知识点" : scope === "due" ? "当前没有待复习的到期卡片" : "本轮复习已完成"}</h2>
-          {!all.length ? (
-            <><ReviewSteps /><button className="primary" onClick={assess}>开始费曼练习</button></>
-          ) : scope === "due" && all.some((item) => !handled.includes(item.id)) ? (
-            <button className="primary" onClick={() => setScope("all")}>查看全部复习卡片</button>
-          ) : <p>到期提醒会按新的复习计划更新。</p>}
         </div>
-      )}
+        {cards.length ? (
+          <ul className="review-queue-list">
+            {cards.map((item, index) => (
+              <li key={item.id}>
+                <button
+                  type="button"
+                  aria-current={item.id === card?.id ? "true" : undefined}
+                  onClick={() => { setSelected(item.id); setRevealed(undefined); }}
+                >
+                  <span className="review-queue-idx">{String(index + 1).padStart(2, "0")}</span>
+                  <div>
+                    <strong>{item.section_title}</strong>
+                    <small>掌握度 {item.mastery_score}%</small>
+                  </div>
+                </button>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <div className="review-unlock-list">
+            <p className="meta">知识点掌握度达到 80% 后将自动进入艾宾浩斯复习队列。</p>
+            {closestNodes.map((n) => (
+              <button type="button" className="review-unlock-item" key={n.id} onClick={() => assess(n)}>
+                <div className="row between">
+                  <strong>{n.name}</strong>
+                  <span>{n.score}%</span>
+                </div>
+                <progress max={100} value={n.score} aria-label={n.name + "掌握度"} />
+                <small>{n.score >= 80 ? "去完成认知条目" : `还差 ${80 - n.score}% 解锁`} <ArrowRight aria-hidden="true" /></small>
+              </button>
+            ))}
+          </div>
+        )}
+      </aside>
+      <div className="review-stage">
+        {error && <div className="review-feedback"><p role="alert">{error}</p><button onClick={reload}>重新加载</button></div>}
+        {notice && <p className="review-feedback" role="status">{notice}</p>}
+        {!queue && !error && <p role="status">正在加载复习计划…</p>}
+        {card ? (
+          <article className="review-card" aria-busy={loading}>
+            <header>
+              <small>{dueNow ? "已到期" : "提前复习"}</small>
+              <span className="review-mastery">掌握度 {card.mastery_score}%</span>
+            </header>
+            <h2>{card.section_title}</h2>
+            <p>{points.length > 1 ? `回忆这个知识点的要点，再核对第 ${points.findIndex((item) => item.id === card.id) + 1} 条。` : "先用自己的话回忆这个知识点，再查看参考答案。"}</p>
+            {answerShown && (
+              <div className="review-answer" id="current-review-answer">
+                <small>参考答案</small>
+                <CourseText text={card.statement} />
+              </div>
+            )}
+            <footer>
+              <div className="tools">
+                {answerShown ? (
+                  <>
+                    <button className="primary" disabled={loading} onClick={() => record("remembered")}>记得</button>
+                    <button className="review-again" title="再来一次，10 分钟后复习" disabled={loading} onClick={() => record("again")}>需巩固</button>
+                  </>
+                ) : <button className="primary" disabled={loading} onClick={() => setRevealed(card.id)}>查看答案</button>}
+                {dueNow && <button className="quiet" title="跳过本次，明天再复习" disabled={loading} onClick={() => void update(
+                  (signal) => reviews.skip(course.id, card.id, signal), card.id, "已延到明天。",
+                )}>明天再复习</button>}
+              </div>
+              {utcDate && <small>下次复习 <time dateTime={utcDate}>{formatTime.format(new Date(utcDate))}</time></small>}
+            </footer>
+          </article>
+        ) : queue && (
+          <div className="box empty review-empty">
+            <RotateCcw aria-hidden="true" />
+            <h2>{!all.length ? "还没有可复习的知识点" : scope === "due" ? "当前没有待复习的到期卡片" : "本轮复习已完成"}</h2>
+            {!all.length ? (
+              <><ReviewSteps /><button className="primary" onClick={() => assess()}>开始费曼练习</button></>
+            ) : scope === "due" && all.some((item) => !handled.includes(item.id)) ? (
+              <button className="primary" onClick={() => setScope("all")}>查看全部复习卡片</button>
+            ) : <p>到期提醒会按新的复习计划更新。</p>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -149,7 +198,7 @@ export default function Review({ courses, course, online, select, assess, accoun
   course?: Course;
   online: boolean;
   select: (id: string) => void;
-  assess: (course: Course) => void;
+  assess: (course: Course, concept?: Concept) => void;
   account: () => void;
   library: () => void;
 }) {
@@ -163,7 +212,7 @@ export default function Review({ courses, course, online, select, assess, accoun
         </select>}
       </WorkspaceToolbar>
       {!online ? <div className="box empty review-empty"><h2>选择本机账号，查看自己的复习计划。</h2><ReviewSteps /><button className="primary" onClick={account}>选择本机账号</button></div>
-        : current ? <ReviewDeck key={current.id} course={current} assess={() => assess(current)} />
+        : current ? <ReviewDeck key={current.id} course={current} assess={(concept) => assess(current, concept)} />
           : <div className="box empty review-empty"><h2>先在资料库添加学习资料。</h2><ReviewSteps /><button className="primary" onClick={library}>前往资料库</button></div>}
     </>
   );

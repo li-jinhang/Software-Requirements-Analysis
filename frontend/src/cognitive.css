@@ -24,6 +24,11 @@
   background: var(--line);
   cursor: col-resize;
   touch-action: none;
+  transition: background-color 140ms var(--ease-snappy);
+}
+.splitter:hover,
+.splitter:focus-visible {
+  background: var(--accent);
 }
 .splitter::before {
   content: "";
@@ -46,15 +51,16 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  flex: 0 0 40px;
+  flex: 0 0 42px;
   min-width: 0;
-  padding-inline: 12px;
+  padding-inline: 14px;
   border-bottom: 1px solid var(--line);
+  background: var(--canvas);
 }
 .pane-header h2 {
   display: inline-flex;
   align-items: center;
-  gap: 5px;
+  gap: 6px;
   flex: none;
   font-size: 13px;
   line-height: 1;
@@ -66,9 +72,9 @@
 .pane-header select {
   height: 26px;
   padding-block: 1px;
-  padding-inline-start: 6px;
+  padding-inline-start: 8px;
   background-color: var(--surface);
-  border-color: transparent;
+  border-color: var(--line);
   font-size: 12px;
 }
 .pane-header > small {
@@ -133,7 +139,7 @@
   overflow: auto;
   overscroll-behavior: contain;
   scrollbar-width: thin;
-  padding: 12px clamp(10px, 1.4vw, 22px);
+  padding: 16px clamp(12px, 1.6vw, 24px);
 }
 .feed > .empty {
   height: 100%;
@@ -145,9 +151,9 @@
 .msg {
   min-width: 0;
   max-width: 100%;
-  margin: 0 0 15px;
+  margin: 0 0 18px;
   overflow-wrap: anywhere;
-  line-height: 1.6;
+  line-height: 1.66;
 }
 .msg > small {
   display: block;
@@ -160,11 +166,12 @@
 }
 .msg.mine {
   width: fit-content;
-  max-width: 90%;
+  max-width: 88%;
   margin-inline: auto 0;
-  padding: 7px 10px;
+  padding: 9px 12px;
   background: var(--surface);
-  border-radius: 6px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
 }
 .msg.mine > small:first-child {
   margin-bottom: 2px;
@@ -186,7 +193,7 @@
 .msg td,
 .msg th {
   border: 1px solid var(--line);
-  padding: 3px 5px;
+  padding: 4px 7px;
 }
 .msg pre,
 .katex-display {
@@ -194,37 +201,46 @@
 }
 .msg > .quiet {
   min-height: 26px;
-  padding: 2px 3px;
+  padding: 2px 8px;
   font-size: 12px;
-  margin-top: 3px;
+  margin-top: 6px;
+  color: var(--accent);
+  border-radius: 5px;
+}
+.msg > .quiet:enabled:hover {
+  background: var(--accent-wash);
   color: var(--accent);
 }
 .msg .pill {
   display: inline-block;
+  margin-top: 6px;
 }
 .composer {
-  margin: 0 10px 9px;
-  padding: 5px 7px;
+  margin: 0 12px 11px;
+  padding: 8px 10px 7px;
 }
 .composer > textarea {
-  height: 39px;
+  height: 42px;
+  padding: 2px 3px;
 }
 .composer-tools {
   display: flex;
   align-items: center;
-  gap: 7px;
-  margin-top: 2px;
+  gap: 8px;
+  margin-top: 4px;
 }
 .composer-tools .switch-pane {
   font-size: 12px;
-  padding: 2px 3px;
-  min-height: 24px;
+  padding: 3px 7px;
+  min-height: 25px;
+  border-radius: 5px;
 }
 .compose-hint {
   display: flex;
   align-items: center;
-  gap: 3px;
+  gap: 4px;
   font-size: 11px;
+  color: var(--subtle);
 }
 .compose-hint svg,
 .switch-pane svg {
@@ -232,20 +248,20 @@
   height: 12px;
 }
 .rubric-drawer {
-  background: var(--card);
-  scroll-padding-top: 88px;
+  background: var(--popover);
+  scroll-padding-top: 94px;
 }
 .rubric-drawer .dialog-content {
-  padding: 0 15px 16px;
+  padding: 0 18px 28px;
 }
 .rubric-drawer .dialog-heading {
   position: sticky;
   top: 0;
   z-index: 1;
-  margin: 0 -15px 10px;
-  padding: 9px 15px 10px;
+  margin: 0 -18px 12px;
+  padding: 12px 18px 11px;
   border-bottom: 1px solid var(--line);
-  background: var(--card);
+  background: var(--popover);
 }
 .rubric-drawer .dialog-heading h2 {
   font-size: 15px;
@@ -260,22 +276,27 @@
   color: var(--ink);
 }
 .rubric-overview progress {
-  margin: 4px 0 0;
-  height: 2px;
+  margin: 5px 0 0;
+  height: 4px;
 }
 .rubric-intro {
   color: var(--muted);
   font-size: 13px;
+  line-height: 1.6;
+  padding-bottom: 6px;
 }
 .rubric-drawer section h3 {
-  margin: 12px 0 0;
-  padding: 5px 0;
-  font-size: 13px;
+  margin: 16px 0 0;
+  padding: 7px 0;
+  font-size: 12.5px;
+  font-weight: 600;
+  color: var(--muted);
+  border-bottom: 1px solid var(--line);
 }
 .rubric-item {
   --mark: var(--muted);
-  padding: 8px 0;
-  border-top: 1px solid var(--line);
+  padding: 11px 0;
+  border-bottom: 1px solid var(--line);
 }
 .rubric-item.mastered {
   --mark: var(--green-ink);
@@ -293,41 +314,53 @@
   gap: 6px;
   flex-wrap: wrap;
 }
+.rubric-item header {
+  margin-bottom: 5px;
+}
 .rubric-item header b,
 .rubric-item header small {
   font-size: 11px;
   color: var(--mark);
 }
+.rubric-item header b {
+  padding: 1px 7px;
+  border-radius: 99px;
+  background: color-mix(in srgb, var(--mark) 11%, transparent);
+}
 .rubric-item header small {
   background: var(--accent-wash);
   color: var(--accent);
-  padding: 0 5px;
-  border-radius: 3px;
+  padding: 1px 6px;
+  border-radius: 4px;
 }
 .assess-item {
   margin-left: auto;
-  padding: 1px 6px;
+  padding: 2px 8px;
   min-height: 24px;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--ink);
+  border: 1px solid var(--control-line);
+  background: var(--field);
 }
 .rubric-item details {
   font-size: 12px;
   color: var(--muted);
   border: 0;
-  padding: 2px 0;
+  padding: 3px 0;
 }
 .rubric-note {
   font-size: 12px;
   color: var(--muted);
+  margin-top: 4px;
 }
 .rubric-note b {
   color: var(--mark);
 }
 .msg.correction-card {
   --annotation: var(--amber);
-  padding: 9px 12px;
-  border-left: 2px solid var(--annotation);
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--annotation) 24%, var(--line));
+  border-left: 3px solid var(--annotation);
   background: var(--amber-wash);
   border-radius: 0 6px 6px 0;
 }
@@ -337,7 +370,7 @@
 }
 .correction-card > header {
   align-items: baseline;
-  padding-bottom: 6px;
+  padding-bottom: 8px;
   border-bottom: 1px solid var(--line);
 }
 .correction-card header strong {
@@ -346,17 +379,34 @@
 }
 .correction-card > header small {
   margin-left: auto;
+  color: var(--muted);
 }
 .correction-card h4 {
-  margin: 10px 0 2px;
+  margin: 11px 0 3px;
   font-size: 12px;
   color: var(--muted);
 }
 .correction-card blockquote {
   margin: 0;
+  padding: 5px 9px;
+  border-radius: 4px;
+  background: color-mix(in srgb, var(--canvas) 55%, transparent);
+  border-inline-start: 2px solid var(--control-line);
 }
 .correction-card h4 + p {
   margin-top: 0;
+}
+.correction-card > button.quiet {
+  margin-top: 10px;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--control-line);
+  padding: 4px 10px;
+  border-radius: 6px;
+}
+.correction-card > button.quiet:enabled:hover {
+  background: var(--surface);
+  border-color: var(--control-line-hover);
 }
 .p0 .msg.mine {
   outline: 1px solid transparent;

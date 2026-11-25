@@ -1,5 +1,5 @@
 .source-list {
-  margin-block: 5px;
+  margin-block: 8px;
   padding: 4px 0;
   border: 0;
 }
@@ -7,18 +7,25 @@
   width: fit-content;
   font-size: 12px;
   color: var(--muted);
+  padding: 2px 6px;
+  border-radius: 5px;
+  transition: background-color 120ms var(--ease-snappy), color 120ms var(--ease-snappy);
 }
 .source-list > summary:hover {
   color: var(--ink);
+  background: var(--selected);
 }
 .source-card {
-  margin: 5px 0;
-  padding: 7px 0 3px 9px;
-  border-inline-start: 1px solid var(--control-line);
+  margin: 7px 0;
+  padding: 9px 11px;
+  background: color-mix(in srgb, var(--surface) 45%, transparent);
+  border: 1px solid var(--line);
+  border-inline-start: 2px solid var(--control-line-hover);
+  border-radius: 0 6px 6px 0;
   overflow-wrap: anywhere;
 }
 .source-card + .source-card {
-  border-top: 1px solid var(--line);
+  margin-top: 7px;
 }
 .source-card > header {
   display: flex;
@@ -33,18 +40,21 @@
 .source-card > header small,
 .inline-source {
   font-size: 11px;
+  font-weight: 500;
   color: var(--accent);
   background: var(--accent-wash);
-  border-radius: 3px;
-  padding: 0 4px;
+  border: 1px solid color-mix(in srgb, var(--accent) 22%, transparent);
+  border-radius: 4px;
+  padding: 0 5px;
 }
 .inline-source {
   white-space: nowrap;
   vertical-align: 0.06em;
+  margin-inline: 1px;
 }
 .source-card :is(h1, h2, h3, h4) {
   font-size: 13px;
-  margin: 5px 0;
+  margin: 6px 0 4px;
 }
 .source-card p {
   font-size: 13px;
@@ -58,9 +68,10 @@
   overflow-y: hidden;
 }
 .source-card .quiet {
-  padding: 0 3px;
+  padding: 0 6px;
   min-height: 24px;
   font-size: 12px;
+  margin-top: 4px;
 }
 .katex,
 .katex .mathnormal,
@@ -77,9 +88,12 @@
 }
 pre:has(.hljs) {
   overflow-x: auto;
-  padding: 8px 10px;
-  border-radius: 6px;
+  padding: 10px 12px;
+  border-radius: 8px;
   background: var(--surface);
+  border: 1px solid var(--line);
+  font-size: 12.5px;
+  line-height: 1.55;
 }
 .hljs {
   color: var(--ink);

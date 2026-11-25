@@ -30,12 +30,13 @@ dialog.settings-dialog {
   border-inline-end: 1px solid var(--line);
 }
 .settings-nav button {
+  position: relative;
   display: flex;
   justify-content: start;
   width: 100%;
-  height: 30px;
+  height: 31px;
   margin-bottom: 2px;
-  padding-inline: 8px;
+  padding-inline: 10px;
   background: transparent;
   border: 0;
   color: var(--muted);
@@ -44,6 +45,7 @@ dialog.settings-dialog {
   color: var(--ink);
   background: var(--selected);
   font-weight: 600;
+  box-shadow: inset 0 0 0 1px var(--line);
 }
 .settings-panel {
   padding: 14px 17px;
@@ -141,12 +143,16 @@ dialog.settings-dialog {
   justify-content: space-between;
   flex-wrap: wrap;
   min-width: 0;
-  padding: 8px 4px;
-  border-bottom: 1px solid var(--line);
+  margin-block: 3px;
+  padding: 9px 10px;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  transition: background-color 120ms var(--ease-snappy), border-color 120ms var(--ease-snappy);
 }
 .model-card[data-active="true"],
 .model-card:hover {
   background: var(--selected);
+  border-color: var(--line);
 }
 .model-identity {
   min-width: 0;
@@ -156,20 +162,25 @@ button.model-select {
   padding: 0;
   border: 0;
   background: transparent;
+  box-shadow: none;
   justify-content: start;
   color: var(--ink);
   text-align: start;
   font-size: 13px;
 }
+button.model-select:enabled:hover {
+  background: transparent;
+}
 .model-select::after {
   content: "";
   position: absolute;
   inset: 0;
-  border-radius: 4px;
+  border-radius: 7px;
   cursor: pointer;
 }
 .model-select:focus-visible {
   outline: 0;
+  box-shadow: none;
 }
 .model-select:focus-visible::after {
   outline: 2px solid var(--accent);
@@ -185,15 +196,19 @@ button.model-select {
 }
 .model-info small {
   font-size: 11px;
+  color: var(--muted);
 }
 .model-icon {
   display: grid;
   place-items: center;
   flex: none;
-  width: 28px;
+  width: 30px;
   height: 24px;
   color: var(--muted);
-  font: 11px var(--mono);
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 5px;
+  font: 600 10.5px var(--mono);
 }
 .model-actions {
   position: relative;
@@ -205,12 +220,16 @@ button.model-select {
 .model-actions button {
   pointer-events: auto;
   min-height: 26px;
-  padding: 2px 5px;
+  padding: 2px 7px;
   font-size: 12px;
 }
 .model-active {
   color: var(--green-ink);
+  background: var(--green-wash);
+  padding: 2px 7px;
+  border-radius: 99px;
   font-size: 11px;
+  font-weight: 500;
 }
 .model-actions .model-remove {
   color: var(--red-ink);
@@ -224,14 +243,25 @@ dialog.model-editor {
 .model-editor-modes {
   display: flex;
   flex-wrap: wrap;
-  gap: 4px;
+  gap: 2px;
+  padding: 3px;
+  border-radius: 7px;
+  background: var(--surface);
+  border: 1px solid var(--line);
 }
 .model-editor-modes button {
   flex: 1;
+  min-height: 27px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--muted);
+  box-shadow: none;
 }
 .model-editor-modes button[aria-pressed="true"] {
   color: var(--ink);
-  border-color: var(--muted);
+  background: var(--card);
+  border-color: var(--control-line);
+  box-shadow: var(--shadow-sm);
 }
 .model-editor .model-key-clear {
   display: flex;

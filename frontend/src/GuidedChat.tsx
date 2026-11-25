@@ -1,9 +1,9 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUp, BookOpen, GraduationCap, MessagesSquare, Workflow } from "lucide-react";
+import { ArrowUp, BookOpen, GraduationCap, MessagesSquare, PanelRightClose, PanelRightOpen, Workflow } from "lucide-react";
 import { ApiError, refreshMemory, remoteReport, sessionHistory, setPersona, stream } from "./api";
-import { WorkspaceToolbar } from "./ui";
+import { relationLabel, WorkspaceToolbar } from "./ui";
 import { CorrectionDetails, CourseText, MessageSources } from "./LearningMessage";
-import { roles, type Course, type Message, type Session, type Space } from "./model";
+import { roles, status, type Concept, type Course, type CourseCitation, type Message, type Session, type Space } from "./model";
 
 type Pending = { kind: "lesson" | "ask" | "opening" | "retell"; prompt?: string; text: string };
 
@@ -36,16 +36,19 @@ const ChatMessage = memo(function ChatMessage({ message }: { message: Message })
   );
 });
 
-export default function GuidedChat({ session, course, historyOptions, select, graph, save, modelRequired, showReport }: {
+export default function GuidedChat({ session, course, historyOptions, select, onSelectConcept, starting = false, graph, save, modelRequired, showReport }: {
   session: Session;
   course: Course;
   historyOptions: { id: string; title: string }[];
   select: (id: string) => void;
+  onSelectConcept?: (concept: Concept) => void;
+  starting?: boolean;
   graph: () => void;
   save: (update: (space: Space) => Space) => void;
   modelRequired: (error: unknown) => boolean;
   showReport: (id: string) => void;
 }) {
+  const [outlineOpen, setOutlineOpen] = useState(true);
   const [pending, setPending] = useState<Pending | null>(null);
   const [busy, setBusy] = useState(true);
   const [ready, setReady] = useState(false);
@@ -208,9 +211,19 @@ export default function GuidedChat({ session, course, historyOptions, select, gr
   const disabled = busy || !ready || !lessonReady || session.closed;
   const inputLabel = mode ? "向 AI 老师提问" : "费曼复述内容";
   const pendingRole = pending?.kind === "opening" || pending?.kind === "retell" ? "听众" : "百科";
+  const relatedLinks = useMemo(() => target ? course.links.filter((l) => l.to === target.id || l.from === target.id) : [], [course.links, target?.id]);
+  const lessonCitations = useMemo(() => {
+    const map = new Map<string, CourseCitation>();
+    for (const m of messages) {
+      for (const hit of m.citations || []) {
+        map.set(`${hit.doc_title}:${hit.chunk_index}`, hit);
+      }
+    }
+    return [...map.values()].slice(0, 6);
+  }, [messages]);
 
   return (
-    <section className="guided-chat" aria-label="AI 讲解会话">
+    <section className={"guided-chat" + (outlineOpen ? " with-outline" : "")} aria-label="AI 讲解会话">
       <WorkspaceToolbar>
         <div className="chat-heading" title={course.title}>
           <BookOpen aria-hidden="true" /><span className="truncate">{course.title}</span>
@@ -221,65 +234,133 @@ export default function GuidedChat({ session, course, historyOptions, select, gr
           </select>}
           <button onClick={graph}><Workflow aria-hidden="true" /> 选知识点</button>
           {enoughPractice && !session.closed && <button disabled={disabled} onClick={finish}>生成报告</button>}
+          <button className="compact-command" aria-pressed={outlineOpen} onClick={() => setOutlineOpen((v) => !v)} title={outlineOpen ? "收起课程脉络" : "展开课程脉络"}>
+            {outlineOpen ? <PanelRightClose aria-hidden="true" /> : <PanelRightOpen aria-hidden="true" />}<span>课程脉络</span>
+          </button>
         </div>
       </WorkspaceToolbar>
 
-      <div className="chat-feed" tabIndex={0} aria-label="讲解消息" ref={feed} onScroll={(e) => {
-        const area = e.currentTarget;
-        followBottom.current = area.scrollHeight - area.scrollTop - area.clientHeight < 96;
-      }}>
-        <div className="chat-thread">
-          <h2 className="lesson-title">{target?.name || "AI 讲解"}</h2>
-          {!messages.length && !pending && busy && <p className="chat-system" role="status">正在恢复讲解会话…</p>}
-          {messages.map((message) => <ChatMessage key={message.id} message={message} />)}
-          {pending?.prompt && <ChatMessage message={{ who: "我", text: pending.prompt }} />}
-          {pending && (
-            <div aria-busy="true">
-              {pending.text
-                ? <ChatMessage message={{ who: pendingRole, text: pending.text }} />
-                : <p className="chat-thinking" role="status">{pending.kind === "lesson" ? "正在准备入门讲解…" : "正在回复…"}</p>}
-            </div>
+      <div className="guided-main">
+        <div className="chat-feed" tabIndex={0} aria-label="讲解消息" ref={feed} onScroll={(e) => {
+          const area = e.currentTarget;
+          followBottom.current = area.scrollHeight - area.scrollTop - area.clientHeight < 96;
+        }}>
+          <div className="chat-thread">
+            <h2 className="lesson-title">{target?.name || "AI 讲解"}</h2>
+            {!messages.length && !pending && busy && <p className="chat-system" role="status">正在恢复讲解会话…</p>}
+            {messages.map((message) => <ChatMessage key={message.id} message={message} />)}
+            {pending?.prompt && <ChatMessage message={{ who: "我", text: pending.prompt }} />}
+            {pending && (
+              <div aria-busy="true">
+                {pending.text
+                  ? <ChatMessage message={{ who: pendingRole, text: pending.text }} />
+                  : <p className="chat-thinking" role="status">{pending.kind === "lesson" ? "正在准备入门讲解…" : "正在回复…"}</p>}
+              </div>
+            )}
+          </div>
+        </div>
+
+        <div className="chat-footer">
+          {error && <p className="chat-error" role="alert">{error}</p>}
+          {notice && <p className="chat-system" role="status">{notice}</p>}
+          {!ready && !busy && <button onClick={restore}>{lessonReady ? "恢复会话" : "重试讲解"}</button>}
+          {session.closed ? <p className="chat-system">会话已结束</p> : (
+            <form className="chat-composer reply-box" onSubmit={(event) => { event.preventDefault(); send(); }}>
+              <textarea ref={field} aria-label={inputLabel} placeholder={mode ? "关于这一课，你还想问什么？" : "用自己的话讲一讲…"}
+                value={pending?.prompt ? "" : session.drafts[mode]} rows={2} readOnly={disabled}
+                onChange={(event) => writeDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key !== "Enter" || event.shiftKey || event.altKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
+                  event.preventDefault();
+                  if (!event.repeat) send();
+                }} />
+              <div className="chat-composer-tools">
+                <div className="chat-modes" role="group" aria-label="发言方式">
+                  <button type="button" aria-pressed={mode === 1} disabled={disabled} onClick={() => chooseMode(1)}>提问</button>
+                  <button type="button" aria-pressed={mode === 0} disabled={disabled} onClick={() => chooseMode(0)}>
+                    {retellStarted ? "费曼复述" : "开始费曼复述"}
+                  </button>
+                  {mode === 0 && <select value={session.role} aria-label="听众角色" disabled={disabled} onChange={(e) => {
+                    const role = e.target.value;
+                    void run(async (signal) => {
+                      await setPersona(session.id, role);
+                      if (!signal.aborted) await loadHistory(signal);
+                    });
+                  }}>
+                    {roles.map((role) => <option key={role}>{role}</option>)}
+                  </select>}
+                </div>
+                <button className="primary chat-send" type="submit" aria-label="发送" disabled={disabled || !session.drafts[mode].trim()}>
+                  <ArrowUp aria-hidden="true" />
+                </button>
+              </div>
+            </form>
           )}
         </div>
       </div>
 
-      <div className="chat-footer">
-        {error && <p className="chat-error" role="alert">{error}</p>}
-        {notice && <p className="chat-system" role="status">{notice}</p>}
-        {!ready && !busy && <button onClick={restore}>{lessonReady ? "恢复会话" : "重试讲解"}</button>}
-        {session.closed ? <p className="chat-system">会话已结束</p> : (
-          <form className="chat-composer reply-box" onSubmit={(event) => { event.preventDefault(); send(); }}>
-            <textarea ref={field} aria-label={inputLabel} placeholder={mode ? "关于这一课，你还想问什么？" : "用自己的话讲一讲…"}
-              value={pending?.prompt ? "" : session.drafts[mode]} rows={2} readOnly={disabled}
-              onChange={(event) => writeDraft(event.target.value)}
-              onKeyDown={(event) => {
-                if (event.key !== "Enter" || event.shiftKey || event.altKey || event.nativeEvent.isComposing || event.nativeEvent.keyCode === 229) return;
-                event.preventDefault();
-                if (!event.repeat) send();
-              }} />
-            <div className="chat-composer-tools">
-              <div className="chat-modes" role="group" aria-label="发言方式">
-                <button type="button" aria-pressed={mode === 1} disabled={disabled} onClick={() => chooseMode(1)}>提问</button>
-                <button type="button" aria-pressed={mode === 0} disabled={disabled} onClick={() => chooseMode(0)}>
-                  {retellStarted ? "费曼复述" : "开始费曼复述"}
-                </button>
-                {mode === 0 && <select value={session.role} aria-label="听众角色" disabled={disabled} onChange={(e) => {
-                  const role = e.target.value;
-                  void run(async (signal) => {
-                    await setPersona(session.id, role);
-                    if (!signal.aborted) await loadHistory(signal);
-                  });
-                }}>
-                  {roles.map((role) => <option key={role}>{role}</option>)}
-                </select>}
+      {outlineOpen && (
+        <aside className="guided-outline" aria-label="课程脉络栏">
+          <div className="guided-outline-head">
+            <h3>课程脉络</h3>
+            <small>{course.nodes.length} 个知识点</small>
+          </div>
+          <ul className="outline-nodes">
+            {course.nodes.map((node) => {
+              const stateLabel = status(node, []);
+              const current = node.id === target?.id;
+              return (
+                <li key={node.id}>
+                  <button
+                    type="button"
+                    disabled={starting || !onSelectConcept || current}
+                    aria-current={current ? "true" : undefined}
+                    onClick={() => onSelectConcept?.(node)}
+                  >
+                    <i className={"outline-dot " + (node.score >= 80 ? "high" : node.score >= 40 ? "mid" : node.score > 0 ? "low" : "unlearned")} aria-hidden="true" />
+                    <span className="truncate">{node.name}</span>
+                    <small>{node.score}% · {stateLabel}</small>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {relatedLinks.length > 0 && (
+            <section className="outline-block">
+              <h4>前置与关联概念</h4>
+              <div className="outline-links">
+                {relatedLinks.map((l) => {
+                  const otherId = l.from === target?.id ? l.to : l.from;
+                  const other = course.nodes.find((n) => n.id === otherId);
+                  if (!other) return null;
+                  return (
+                    <button key={JSON.stringify([l.from, l.to, l.label])} type="button" disabled={starting || !onSelectConcept}
+                      onClick={() => onSelectConcept?.(other)}>
+                      <small>{l.to === target?.id ? "前置 · " : ""}{relationLabel(l.label)}</small>
+                      <span>{other.name}</span>
+                    </button>
+                  );
+                })}
               </div>
-              <button className="primary chat-send" type="submit" aria-label="发送" disabled={disabled || !session.drafts[mode].trim()}>
-                <ArrowUp aria-hidden="true" />
-              </button>
-            </div>
-          </form>
-        )}
-      </div>
+            </section>
+          )}
+          <section className="outline-block">
+            <h4>参考来源速览</h4>
+            {lessonCitations.length ? (
+              <ul className="outline-sources">
+                {lessonCitations.map((hit) => (
+                  <li key={`${hit.doc_title}-${hit.chunk_index}`}>
+                    <strong>{hit.doc_title} · 片段 #{hit.chunk_index}</strong>
+                    <p>{hit.snippet.replace(/^#+\s*/gm, "").slice(0, 96)}{hit.snippet.length > 96 ? "…" : ""}</p>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="meta">{target?.summary || "生成讲解后将自动汇总课件参考片段。"}</p>
+            )}
+          </section>
+        </aside>
+      )}
     </section>
   );
 }

@@ -10,7 +10,7 @@ import {
   UploadCloud,
   GraduationCap,
 } from "lucide-react";
-import { Course, Space, archive, mean, status } from "./model";
+import { Concept, Course, Space, archive, mean, status } from "./model";
 import {
   generateCourse,
   uploadRemote,
@@ -26,11 +26,15 @@ type Props = {
   online: boolean;
   space: Space;
   save: (fn: (s: Space) => Space) => void;
-  start: (c: Course) => void;
-  guide: (c: Course) => void;
+  start: (c: Course, n?: Concept) => void;
+  guide: (c: Course, n?: Concept) => void;
   starting: boolean;
   canLearn: (purpose: TeachingPurpose) => Promise<boolean>;
   modelRequired: (error: unknown) => boolean;
+  uploadTick?: number;
+  onOpenStudio?: (id: string) => void;
+  onOpenTutor?: (id: string) => void;
+  onOpenGraph?: (courseId: string) => void;
 };
 export default function Library({
   online,
@@ -41,6 +45,10 @@ export default function Library({
   starting,
   canLearn,
   modelRequired,
+  uploadTick = 0,
+  onOpenStudio,
+  onOpenTutor,
+  onOpenGraph,
 }: Props) {
   const [query, setQuery] = useState(""),
     [subject, setSubject] = useState(""),
@@ -55,6 +63,18 @@ export default function Library({
   const [topic, setTopic] = useState("");
   const [topicSubject, setTopicSubject] = useState("");
   const [dragging, setDragging] = useState(false);
+  async function openUploadModal() {
+    if (!(await canLearn("extract"))) return;
+    setError("");
+    setDragging(false);
+    setUpload(true);
+  }
+  async function openTopicModal() {
+    if (await canLearn("extract")) { setError(""); setTopicOpen(true); }
+  }
+  useEffect(() => {
+    if (uploadTick > 0) void openUploadModal();
+  }, [uploadTick]);
   function chooseFile(next?: File) {
     setFile(next);
     setFailedId(undefined);
@@ -84,6 +104,13 @@ export default function Library({
         c.title.toLowerCase().includes(query.toLowerCase()) &&
         (!subject || c.subject === subject),
     );
+  const weakConcepts = courses.flatMap((c) =>
+    c.nodes
+      .filter((n) => status(n, space.logs) === "待补漏" || n.score < 60)
+      .map((n) => ({ course: c, node: n, label: status(n, space.logs) }))
+  ).sort((a, b) => a.node.score - b.node.score).slice(0, 5);
+  const activePractice = space.sessions.find((s) => !s.guided && !s.closed);
+  const activeGuide = space.sessions.find((s) => s.guided && !s.closed);
   useEffect(() => {
     if (!online || !doc) return;
     const ctrl = new AbortController();
@@ -133,55 +160,205 @@ export default function Library({
       <div className="pagehead">
         <h1>学习资料库</h1>
         <div className="tools">
-        <button onClick={async () => {
-          if (await canLearn("extract")) { setError(""); setTopicOpen(true); }
-        }}><NotebookPen aria-hidden="true" />输入知识点生成</button>
+        <button onClick={() => void openTopicModal()}><NotebookPen aria-hidden="true" />输入知识点生成</button>
         <button
           className="primary"
-          onClick={async () => {
-            if (!(await canLearn("extract"))) return;
-            setError("");
-            setDragging(false);
-            setUpload(true);
-          }}
+          onClick={() => void openUploadModal()}
         >
           <Plus />
           上传资料
         </button>
         </div>
       </div>
-      <dl className="library-metrics" aria-label="资料库统计">
-        <div><dt>学习资料</dt><dd>{courses.length}<small>份</small></dd></div>
-        <div><dt>知识节点</dt><dd>{nodes.length}<small>个</small></dd></div>
-        <div><dt>平均掌握度</dt><dd>{mean(nodes.map(n => n.score))}<small>%</small></dd></div>
-      </dl>
-      <div className="sectionhead">
-        <h2>
-          全部资料 <small>{visible.length}</small>
-        </h2>
-        <div className="tools">
-          <label className="search">
-            <Search />
-            <input
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="搜索资料…"
-              aria-label="搜索资料"
-            />
-          </label>
-          <select
-            aria-label="学科筛选"
-            value={subject}
-            onChange={(e) => setSubject(e.target.value)}
-          >
-            <option value="">全部学科</option>
-            {[...new Set(courses.map((c) => c.subject))].map((s) => (
-              <option key={s}>{s}</option>
-            ))}
-          </select>
+      <div className="library-layout">
+        <div className="library-main">
+          <div className="sectionhead">
+            <h2>
+              全部资料 <small>{visible.length}</small>
+            </h2>
+            <div className="tools">
+              <label className="search">
+                <Search />
+                <input
+                  value={query}
+                  onChange={(e) => setQuery(e.target.value)}
+                  placeholder="搜索资料…"
+                  aria-label="搜索资料"
+                />
+              </label>
+              <select
+                aria-label="学科筛选"
+                value={subject}
+                onChange={(e) => setSubject(e.target.value)}
+              >
+                <option value="">全部学科</option>
+                {[...new Set(courses.map((c) => c.subject))].map((s) => (
+                  <option key={s}>{s}</option>
+                ))}
+              </select>
+            </div>
+          </div>
+          {!upload && !topicOpen && !doc && error && <p role="alert">{error}</p>}
+          <div className="cards">
+            {visible.map((c) => {
+              const avg = mean(c.nodes.map((n) => n.score));
+              return (
+                <article className="card" key={c.id}>
+                  <div className="cardbody">
+                    <div className="row between meta">
+                      <span className="subject-tag"><BookOpen aria-hidden="true" />{c.subject}</span>
+                      <span className="format-mark"><FileText aria-hidden="true" />{c.format}</span>
+                    </div>
+                    <h2>{c.title}</h2>
+                    <p className="meta">
+                      {c.nodes.length} 个知识点 ·{" "}
+                      {c.parseStatus === "failed"
+                        ? c.error || "解析失败"
+                        : !c.parseStatus || c.parseStatus === "completed"
+                          ? "已解析"
+                          : "解析中"}
+                    </p>
+                    <div className="row between meta">
+                      <span>掌握度</span>
+                      <b>{avg}%</b>
+                    </div>
+                    <progress aria-label="资料掌握度" value={avg} max="100" />
+                    <footer>
+                      {c.parseStatus === "failed" ? (
+                        <button
+                          disabled={busy}
+                          onClick={async () => {
+                            setBusy(true);
+                            try {
+                              const course = await retryRemote(c.id);
+                              save((s) => ({
+                                ...s,
+                                courses: s.courses.map((d) =>
+                                  d.id === course.id ? course : d,
+                                ),
+                              }));
+                            } catch (e) {
+                              if (!modelRequired(e)) setError((e as Error).message);
+                            } finally {
+                              setBusy(false);
+                            }
+                          }}
+                        >
+                          重新解析
+                        </button>
+                      ) : (
+                        <>
+                          <button className="primary" disabled={starting || !c.nodes.some((n) => n.score < 80)}
+                            onClick={() => guide(c)}>
+                            <GraduationCap /> 先听 AI 讲解
+                          </button>
+                          <button disabled={starting || !c.nodes.length} onClick={() => start(c)}>
+                            <BookOpen /> 开讲
+                          </button>
+                        </>
+                      )}
+                      <button
+                        disabled={!c.nodes.length}
+                        className="quiet"
+                        onClick={() => {
+                          setError("");
+                          setDetail(c.id);
+                        }}
+                      >
+                        记忆档案
+                        <ArrowUpRight />
+                      </button>
+                    </footer>
+                  </div>
+                </article>
+              );
+            })}
+            {visible.length > 0 && (
+              <article className="card card-add-placeholder" aria-label="添加学习资料">
+                <div className="cardbody">
+                  <span className="placeholder-icon" aria-hidden="true"><Plus /></span>
+                  <h3>添加学习资料</h3>
+                  <p className="meta">支持上传 PDF、DOCX、MD、TXT，或按知识点直接生成认知文档。</p>
+                  <div className="tools">
+                    <button type="button" onClick={() => void openUploadModal()}>
+                      <UploadCloud aria-hidden="true" /> 上传文件
+                    </button>
+                    <button type="button" onClick={() => void openTopicModal()}>
+                      <NotebookPen aria-hidden="true" /> 按知识点生成
+                    </button>
+                  </div>
+                </div>
+              </article>
+            )}
+          </div>
+          {!visible.length && (
+            <div className="box empty">
+              <BookOpen aria-hidden="true" />
+              <h3>{query || subject ? "没有符合条件的资料" : "还没有学习资料"}</h3>
+              <p>{query || subject ? "尝试更换关键词或清除学科筛选条件。" : "上传一份资料，或输入知识点自动生成认知文档。"}</p>
+              {(query || subject) && (
+                <button onClick={() => { setQuery(""); setSubject(""); }}>清除筛选</button>
+              )}
+            </div>
+          )}
         </div>
+        <aside className="library-aside" aria-label="学习概览">
+          <div className="aside-section">
+            <h3>学习概览</h3>
+            <dl className="library-metrics" aria-label="资料库统计">
+              <div><dt>学习资料</dt><dd>{courses.length}<small>份</small></dd></div>
+              <div><dt>知识节点</dt><dd>{nodes.length}<small>个</small></dd></div>
+              <div><dt>平均掌握度</dt><dd>{mean(nodes.map(n => n.score))}<small>%</small></dd></div>
+            </dl>
+          </div>
+          {(activePractice || activeGuide || courses[0]) && (
+            <div className="aside-section">
+              <h3>最近学习入口</h3>
+              <div className="aside-actions">
+                {activePractice && onOpenStudio && (
+                  <button className="aside-link" onClick={() => onOpenStudio(activePractice.id)}>
+                    <span>继续费曼教学 · {courses.find(d => d.id === activePractice.doc)?.title || "当前会话"}</span>
+                    <ArrowRight aria-hidden="true" />
+                  </button>
+                )}
+                {activeGuide && onOpenTutor && (
+                  <button className="aside-link" onClick={() => onOpenTutor(activeGuide.id)}>
+                    <span>继续 AI 讲解 · {courses.find(d => d.id === activeGuide.doc)?.title || "当前讲解"}</span>
+                    <ArrowRight aria-hidden="true" />
+                  </button>
+                )}
+                {courses[0] && onOpenGraph && (
+                  <button className="aside-link" onClick={() => onOpenGraph(courses[0].id)}>
+                    <span>查看知识图谱 · {courses[0].title}</span>
+                    <ArrowUpRight aria-hidden="true" />
+                  </button>
+                )}
+              </div>
+            </div>
+          )}
+          <div className="aside-section">
+            <h3>薄弱知识点速览</h3>
+            {weakConcepts.length ? (
+              <ul className="aside-weak-list">
+                {weakConcepts.map(({ course, node, label }) => (
+                  <li key={node.id} className="aside-weak-item">
+                    <div className="aside-weak-info">
+                      <strong>{node.name}</strong>
+                      <small>{course.title} · {label} · {node.score}%</small>
+                    </div>
+                    <div className="aside-weak-btns">
+                      <button className="quiet" disabled={starting} onClick={() => guide(course, node)} title="听 AI 讲解">讲解</button>
+                      <button className="quiet" disabled={starting} onClick={() => start(course, node)} title="去双窗开讲">开讲</button>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            ) : (
+              <p className="meta">暂无明显薄弱知识点，继续保持巩固节奏。</p>
+            )}
+          </div>
+        </aside>
       </div>
-      {!upload && !topicOpen && !doc && error && <p role="alert">{error}</p>}
       {topicOpen && <Dialog title="按知识点生成认知文档" close={() => { if (!busy) setTopicOpen(false); }}>
         <form onSubmit={e => { e.preventDefault(); void generate(); }}>
           <label>知识点名称<input required data-initial-focus maxLength={150} value={topic}
@@ -194,82 +371,6 @@ export default function Library({
           </button>
         </form>
       </Dialog>}
-      <div className="cards">
-        {visible.map((c) => {
-          const avg = mean(c.nodes.map((n) => n.score));
-          return (
-            <article className="card" key={c.id}>
-              <div className="cardbody">
-                <div className="row between meta">
-                  <span className="subject-tag"><BookOpen aria-hidden="true" />{c.subject}</span>
-                  <span className="format-mark"><FileText aria-hidden="true" />{c.format}</span>
-                </div>
-                <h2>{c.title}</h2>
-                <p className="meta">
-                  {c.nodes.length} 个知识点 ·{" "}
-                  {c.parseStatus === "failed"
-                    ? c.error || "解析失败"
-                    : !c.parseStatus || c.parseStatus === "completed"
-                      ? "已解析"
-                      : "解析中"}
-                </p>
-                <div className="row between meta">
-                  <span>掌握度</span>
-                  <b>{avg}%</b>
-                </div>
-                <progress aria-label="资料掌握度" value={avg} max="100" />
-                <footer>
-                  {c.parseStatus === "failed" ? (
-                    <button
-                      disabled={busy}
-                      onClick={async () => {
-                        setBusy(true);
-                        try {
-                          const course = await retryRemote(c.id);
-                          save((s) => ({
-                            ...s,
-                            courses: s.courses.map((d) =>
-                              d.id === course.id ? course : d,
-                            ),
-                          }));
-                        } catch (e) {
-                          if (!modelRequired(e)) setError((e as Error).message);
-                        } finally {
-                          setBusy(false);
-                        }
-                      }}
-                    >
-                      重新解析
-                    </button>
-                  ) : (
-                    <>
-                      <button className="primary" disabled={starting || !c.nodes.some((n) => n.score < 80)}
-                        onClick={() => guide(c)}>
-                        <GraduationCap /> 先听 AI 讲解
-                      </button>
-                      <button disabled={starting || !c.nodes.length} onClick={() => start(c)}>
-                        <BookOpen /> 开讲
-                      </button>
-                    </>
-                  )}
-                  <button
-                    disabled={!c.nodes.length}
-                    className="quiet"
-                    onClick={() => {
-                      setError("");
-                      setDetail(c.id);
-                    }}
-                  >
-                    记忆档案
-                    <ArrowUpRight />
-                  </button>
-                </footer>
-              </div>
-            </article>
-          );
-        })}
-      </div>
-      {!visible.length && <p className="empty">没有符合条件的资料。</p>}
       {upload && (
         <Dialog
           title="上传学习资料"
