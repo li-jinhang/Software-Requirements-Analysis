@@ -124,7 +124,7 @@ def node(t):
         return public(db.get(KnowledgeNode, 1))
 
 
-@pytest.mark.parametrize("persona,phrase", [("child", "生活"), ("peer", "适用条件"), ("examiner", "关键前提")])
+@pytest.mark.parametrize("persona,phrase", [("child", "平时什么时候"), ("peer", "解决什么问题"), ("examiner", "换个思路")])
 def test_opening_personas_replay_and_no_scoring(teaching, persona, phrase):
     t = teaching
     assert t.api.patch("/api/v1/sessions/1/persona", json={"persona_type": persona}).status_code == 200
@@ -133,6 +133,34 @@ def test_opening_personas_replay_and_no_scoring(teaching, persona, phrase):
     assert all(kind != "memory_update" for kind, _ in result)
     count = len(history(t))
     assert opening(t)[-1] == result[-1] and len(history(t)) == count
+    assert node(t)["mastery_score"] == 0
+
+
+def test_opening_uses_the_study_point_as_context_without_reciting_it(teaching):
+    from app.db.models import CognitiveItem
+
+    t = teaching
+    with t.factory.begin() as db:
+        db.add(CognitiveItem(doc_id=1, node_id=1, section_title="梯度下降",
+                             item_order=1, statement=SOURCE, key_criteria="解释方向"))
+    question = "我想到一个山坡，要是每次都迈很大一步，还能走到最低的地方吗？"
+    calls = []
+
+    def reply(messages, schema=None, on_chunk=None):
+        calls.append(json.loads(messages[-1]["content"]))
+        assert "这是开场" in messages[0]["content"]
+        assert schema is None
+        on_chunk(question)
+        return question
+
+    t.monkeypatch.setattr(t.model, "offline", lambda: False)
+    t.monkeypatch.setattr(t.model, "request", reply)
+    result = opening(t)
+    assert calls[0]["topic"] == "梯度下降"
+    assert calls[0]["study_point"] == SOURCE and not calls[0]["latest_explanation"]
+    assert [event["delta"] for kind, event in result if kind == "token"] == [question]
+    assert [message["content"] for message in history(t)] == [question]
+    assert opening(t) == result and len(calls) == 1
     assert node(t)["mastery_score"] == 0
 
 
@@ -185,7 +213,7 @@ def test_special_branches_do_not_score(teaching, text, kind):
     last = history(t)[-1]
     assert last["meta_json"]["input_kind"] == kind
     assert "retrieve" not in last["meta_json"]["graph_nodes"]
-    assert "查证" in last["content"] if kind == "stuck" else "回到" in last["content"]
+    assert "查查资料" in last["content"] if kind == "stuck" else "我刚才还在想" in last["content"]
     assert node(t)["mastery_score"] == 0
 
 
@@ -376,6 +404,9 @@ def test_actual_transport_json_repair_and_token_stream_over_local_http(teaching)
             server.shutdown()
             thread.join()
     assert len(calls) == 3 and calls[-1]["stream"] is True
+    dialogue = json.loads(calls[-1]["messages"][-1]["content"])
+    assert dialogue["latest_explanation"] == ANSWER
+    assert dialogue["curiosity_hint"] == "学习率过大时的收敛性"
     assert result[-1][0] == "done" and node(t)["mastery_score"] > 0
     assert "还一定收敛吗？" in history(t)[-1]["content"]
     assert history(t)[-1]["meta_json"]["graph_nodes"].count("repair") == 1

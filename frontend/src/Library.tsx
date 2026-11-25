@@ -12,6 +12,7 @@ import {
   Trash2,
   LibraryBig,
   Workflow,
+  Download,
 } from "lucide-react";
 import { Concept, Course, Space, archive, mean, status } from "./model";
 import {
@@ -22,11 +23,14 @@ import {
   ApiError,
   retryRemote,
   exportMemory,
+  importLibrary,
+  exportLibrary,
   refreshMemory,
   type TeachingPurpose,
 } from "./api";
 import { Dialog, relationLabel } from "./ui";
 import CourseLibrarySetup from "./CourseLibrarySetup";
+import { MasteryMeter, MasteryProgress } from "./MasteryProgress";
 import "./library.css";
 
 const setupLabels: Record<string, string> = {
@@ -79,6 +83,9 @@ export default function Library({
   const [dragging, setDragging] = useState(false);
   const [setupOpen, setSetupOpen] = useState<string>();
   const [libraryId, setLibraryId] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
+  const [archiveFile, setArchiveFile] = useState<File>();
+  const [exporting, setExporting] = useState(false);
 
   function saveCourse(course: Course) {
     save(s => ({
@@ -94,6 +101,37 @@ export default function Library({
     setQuery("");
     setSubject("");
     if (course.parseStatus === "completed") setLibraryId(course.id);
+  }
+  async function importArchive() {
+    if (!archiveFile || busy) return;
+    setBusy(true);
+    setError("");
+    try {
+      const courses = await importLibrary(archiveFile);
+      const imported = new Set(courses.map(course => course.id));
+      save(s => ({ ...s, courses: [...courses, ...s.courses.filter(course => !imported.has(course.id))] }));
+      setImportOpen(false);
+      setArchiveFile(undefined);
+      setQuery("");
+      setSubject("");
+      setLibraryId(courses[0].id);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
+  async function downloadArchive(course: Course) {
+    if (busy || exporting) return;
+    setExporting(true);
+    setError("");
+    try {
+      await exportLibrary(course);
+    } catch (e) {
+      setError((e as Error).message);
+    } finally {
+      setExporting(false);
+    }
   }
   async function retryCourse(course: Course) {
     setBusy(true);
@@ -153,6 +191,7 @@ export default function Library({
     else sources.set(course.libraryId, [course]);
   }
   const topLevel = courses.filter(c => !c.libraryId);
+  const averageMastery = mean(nodes.map(n => n.score));
   const needle = query.trim().toLowerCase();
   const visible = topLevel.filter(
       (c) =>
@@ -227,6 +266,9 @@ export default function Library({
         <div className="tools">
           <button onClick={() => void openTopicModal()}><NotebookPen aria-hidden="true" />输入知识点生成</button>
           <button onClick={() => void openUploadModal()}><UploadCloud aria-hidden="true" /> 上传资料</button>
+          <button disabled={!online || busy} onClick={() => { setError(""); setArchiveFile(undefined); setImportOpen(true); }}>
+            <UploadCloud aria-hidden="true" /> 导入资料库
+          </button>
           <button className="primary" disabled={!online} onClick={() => setSetupOpen("")}>
             <Plus aria-hidden="true" /> 新建资料库
           </button>
@@ -260,7 +302,7 @@ export default function Library({
               </select>
             </div>
           </div>
-          {!upload && !topicOpen && !doc && !library && error && <p role="alert">{error}</p>}
+          {!upload && !topicOpen && !importOpen && !doc && !library && error && <p role="alert">{error}</p>}
           <div className="cards">
             {visible.map((c) => {
               const avg = mean(c.nodes.map((n) => n.score));
@@ -268,35 +310,34 @@ export default function Library({
               return (
                 <article className="card" key={c.id}>
                   <div className="cardbody">
-                    <div className="row between meta">
-                      <span className="subject-tag">
-                        {c.isLibrary ? <LibraryBig aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
-                        {c.isLibrary ? "课程资料库" : c.subject}
-                      </span>
-                      <div className="card-meta-actions">
-                        <span className="format-mark" aria-live={c.isLibrary ? "polite" : undefined}>
-                          {c.isLibrary
-                            ? setupStatus || (c.nodes.length ? "AI 课程框架" : "空白框架")
-                            : <><FileText aria-hidden="true" />{c.format}</>}
-                        </span>
-                        {onDelete && (
-                          <button
-                            type="button"
-                            className="icon-button card-delete"
-                            aria-label="删除资料"
-                            title={"删除「" + c.title + "」"}
-                            disabled={c.parseStatus === "processing"}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              onDelete(c);
-                            }}
-                          >
-                            <Trash2 aria-hidden="true" />
-                          </button>
-                        )}
+                    {!c.isLibrary ? (
+                      <div className="row between meta">
+                        <span className="subject-tag"><BookOpen aria-hidden="true" />{c.subject}</span>
+                        <span className="format-mark"><FileText aria-hidden="true" />{c.format}</span>
                       </div>
+                    ) : setupStatus && (
+                      <div className="row meta">
+                        <span className="format-mark" aria-live="polite">{setupStatus}</span>
+                      </div>
+                    )}
+                    <div className="card-heading">
+                      <h2>{c.title}</h2>
+                      {onDelete && (
+                        <button
+                          type="button"
+                          className="icon-button card-delete"
+                          aria-label="删除资料"
+                          title={"删除「" + c.title + "」"}
+                          disabled={c.parseStatus === "processing"}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            onDelete(c);
+                          }}
+                        >
+                          <Trash2 aria-hidden="true" />
+                        </button>
+                      )}
                     </div>
-                    <h2>{c.title}</h2>
                     <p className="meta">
                       {setupStatus ? (
                         c.parseStatus === "processing" ? "可继续使用工作台，完成后会更新图谱。"
@@ -309,11 +350,7 @@ export default function Library({
                           ? "已解析"
                           : "解析中"}</>}
                     </p>
-                    {c.nodes.length > 0 && <><div className="row between meta">
-                      <span>掌握度</span>
-                      <b>{avg}%</b>
-                    </div>
-                    <progress aria-label="资料掌握度" value={avg} max="100" /></>}
+                    {c.nodes.length > 0 && <MasteryProgress score={avg} label="资料掌握度" />}
                     <footer>
                       {c.isLibrary ? (
                         <>
@@ -336,10 +373,10 @@ export default function Library({
                         <>
                           <button className="primary" disabled={starting || !c.nodes.some((n) => n.score < 80)}
                             onClick={() => guide(c)}>
-                            <GraduationCap /> 先听 AI 讲解
+                            <GraduationCap /> 听AI讲
                           </button>
                           <button disabled={starting || !c.nodes.length} onClick={() => start(c)}>
-                            <BookOpen /> 开讲
+                            <BookOpen /> 讲给AI
                           </button>
                         </>
                       )}
@@ -394,12 +431,18 @@ export default function Library({
             <dl className="library-metrics" aria-label="资料库统计">
               <div><dt>学习资料</dt><dd>{courses.length}<small>份</small></dd></div>
               <div><dt>知识节点</dt><dd>{nodes.length}<small>个</small></dd></div>
-              <div><dt>平均掌握度</dt><dd>{mean(nodes.map(n => n.score))}<small>%</small></dd></div>
+              <div>
+                <dt>平均掌握度</dt>
+                <dd>
+                  {averageMastery}<small>%</small>
+                  <MasteryMeter score={averageMastery} label="资料库平均掌握度" compact />
+                </dd>
+              </div>
             </dl>
           </div>
           {(activePractice || activeGuide || recentGraph) && (
             <div className="aside-section">
-              <h3>最近学习入口</h3>
+              <h3>最近学习</h3>
               <div className="aside-actions">
                 {activePractice && onOpenStudio && (
                   <button className="aside-link" onClick={() => onOpenStudio(activePractice.id)}>
@@ -423,7 +466,7 @@ export default function Library({
             </div>
           )}
           <div className="aside-section">
-            <h3>薄弱知识点速览</h3>
+            <h3>薄弱知识</h3>
             {weakConcepts.length ? (
               <ul className="aside-weak-list">
                 {weakConcepts.map(({ course, node, label }) => (
@@ -433,8 +476,8 @@ export default function Library({
                       <small>{course.title} · {label} · {node.score}%</small>
                     </div>
                     <div className="aside-weak-btns">
-                      <button className="quiet" disabled={starting} onClick={() => guide(course, node)} title="听 AI 讲解">讲解</button>
-                      <button className="quiet" disabled={starting} onClick={() => start(course, node)} title="去双窗开讲">开讲</button>
+                      <button className="quiet" disabled={starting} onClick={() => guide(course, node)}>听AI讲</button>
+                      <button className="quiet" disabled={starting} onClick={() => start(course, node)}>讲给AI</button>
                     </div>
                   </li>
                 ))}
@@ -475,14 +518,18 @@ export default function Library({
             )}</p>
             {library.parseStatus === "pending" && <button onClick={() => setSetupOpen(library.id)}>补充课程信息</button>}
             {library.parseStatus === "failed" && <button disabled={busy} onClick={() => void retryCourse(library)}>重新生成</button>}
-            {library.nodes.length > 0 && (
-              <div className="tools">
+            <div className="tools">
+              {library.nodes.length > 0 && <>
                 {onOpenGraph && <button className="primary" onClick={() => onOpenGraph(library.id)}>查看知识图谱</button>}
-                <button disabled={starting || !library.nodes.some(n => n.score < 80)} onClick={() => guide(library)}>先听 AI 讲解</button>
-                <button disabled={starting} onClick={() => start(library)}>开讲</button>
+                <button disabled={starting || !library.nodes.some(n => n.score < 80)} onClick={() => guide(library)}>听AI讲</button>
+                <button disabled={starting} onClick={() => start(library)}>讲给AI</button>
                 <button onClick={() => { setError(""); setDetail(library.id); }}>记忆档案</button>
-              </div>
-            )}
+              </>}
+              {online && <button disabled={busy || exporting || library.parseStatus !== "completed" || sources.get(library.id)?.some(s => s.parseStatus === "processing")}
+                onClick={() => void downloadArchive(library)}>
+                <Download aria-hidden="true" /> {exporting ? "正在导出…" : "导出资料库"}
+              </button>}
+            </div>
           </section>
           <section className="course-sources" aria-label="补充资料">
             <div className="row between">
@@ -505,8 +552,8 @@ export default function Library({
                   {source.parseStatus === "failed" && <button disabled={busy} onClick={() => void retryCourse(source)}>重新解析</button>}
                   {source.nodes.length > 0 && <>
                     {onOpenGraph && <button onClick={() => onOpenGraph(source.id)}>查看图谱</button>}
-                    <button disabled={starting || !source.nodes.some(n => n.score < 80)} onClick={() => guide(source)}>先听 AI 讲解</button>
-                    <button disabled={starting} onClick={() => start(source)}>开讲</button>
+                    <button disabled={starting || !source.nodes.some(n => n.score < 80)} onClick={() => guide(source)}>听AI讲</button>
+                    <button disabled={starting} onClick={() => start(source)}>讲给AI</button>
                     <button onClick={() => { setError(""); setDetail(source.id); }}>记忆档案</button>
                   </>}
                 </div>
@@ -514,6 +561,28 @@ export default function Library({
             ))}
             {!sources.get(library.id)?.length && <p className="meta">还没有补充资料。</p>}
           </section>
+        </Dialog>
+      )}
+      {importOpen && (
+        <Dialog title="导入资料库" close={() => { if (!busy) setImportOpen(false); }}>
+          <form onSubmit={(e) => { e.preventDefault(); void importArchive(); }}>
+            <label className="filepick">
+              <input className="visually-hidden" type="file" accept=".zip,application/zip"
+                aria-label="选择资料库 ZIP 文件" disabled={busy} onChange={(e) => {
+                  setArchiveFile(e.currentTarget.files?.[0]);
+                  setError("");
+                  e.currentTarget.value = "";
+                }} />
+              <span className="upload-icon" aria-hidden="true"><UploadCloud /></span>
+              <strong aria-live="polite">{archiveFile?.name || "选择资料库 ZIP 文件"}</strong>
+              <span>最大 512 MB</span>
+            </label>
+            <p className="meta">导入后在当前账号新建一份资料库。</p>
+            {error && <p role="alert">{error}</p>}
+            <button className="primary" disabled={!archiveFile || busy}>
+              {busy ? "正在导入…" : "导入"}
+            </button>
+          </form>
         </Dialog>
       )}
       {upload && (

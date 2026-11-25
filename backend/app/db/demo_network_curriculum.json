@@ -1,0 +1,391 @@
+{
+  "structured_summary": "面向大学本科《计算机网络》入门学习者，假设已具备基本计算机操作能力和二进制知识，不依赖特定教材或学校进度。按网络基础 → 数据链路 → 网络层 → 传输层 → 应用、安全与综合实践的顺序展开。以一次网页访问串联各层协议，通过 IPv4 子网计算、逐跳转发推演、ping 与 traceroute 诊断，以及本地抓包验证学习成果。抓包练习区分明文 HTTP 与 HTTPS，并明确采用 TCP 的实验场景。不把高级路由协议配置或厂商设备认证作为核心内容。",
+  "nodes": [
+    {
+      "concept_name": "模块一：网络基础",
+      "summary": "建立分层通信模型，并用物理传输和性能指标解释数据经过网络时的基本约束。",
+      "key_points": [
+        "分层模型解释数据如何封装，物理层解释封装后的比特如何经介质传输。",
+        "链路速率影响发送时延和吞吐量上限，但不能单独决定端到端性能。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "分层模型与封装",
+      "summary": "OSI 七层参考模型用于描述网络功能；TCP/IP 模型用于组织互联网协议，两者并非逐层一一对应。",
+      "key_points": [
+        "发送端逐层封装，接收端逐层解封装；链路层还可添加帧尾。",
+        "HTTP 消息、TCP 报文段、IP 数据报和以太网帧是不同层次的数据单位。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "物理层与比特传输",
+      "summary": "物理层规定如何通过铜缆、光纤或无线介质发送和接收表示比特的信号。",
+      "key_points": [
+        "编码或调制建立比特与信号之间的映射。",
+        "链路速率通常以比特每秒表示，不等于应用实际获得的数据传输速率。"
+      ],
+      "importance": 3
+    },
+    {
+      "concept_name": "时延与吞吐量",
+      "summary": "时延衡量数据传递所需的时间，吞吐量衡量单位时间内实际传递的数据量。",
+      "key_points": [
+        "逐跳时延包括处理、排队、发送和传播；发送时延等于数据长度除以链路速率，传播时延取决于距离和传播速度。",
+        "端到端吞吐量受瓶颈链路约束，还可能受到竞争流量和协议开销影响。"
+      ],
+      "importance": 4
+    },
+    {
+      "concept_name": "模块二：数据链路",
+      "summary": "解释相邻网络接口之间如何传送帧，以及交换机如何在局域网内转发以太网帧。",
+      "key_points": [
+        "成帧和差错检测使接收端能划分传输单位并识别受损帧。",
+        "以太网帧中的源、目的 MAC 地址分别为交换机学习和转发提供依据。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "成帧与差错检测",
+      "summary": "成帧为链路上的数据划定边界，差错检测用于发现传输中发生的比特错误。",
+      "key_points": [
+        "帧格式定义了地址、载荷和校验等字段的位置或解析方式。",
+        "以太网使用基于 CRC 的帧校验序列；发现错误不等于能纠正错误或保证重传。"
+      ],
+      "importance": 4
+    },
+    {
+      "concept_name": "以太网与交换",
+      "summary": "以太网定义局域网中的帧格式和相关传输规范；二层交换机根据 MAC 地址转发帧。",
+      "key_points": [
+        "交换机由入站帧的源 MAC 地址学习端口，按目的 MAC 地址查表转发。",
+        "在同一二层广播域内，广播帧和目的地址未知的单播帧通常向除入端口外的相关端口泛洪。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "模块三：网络层",
+      "summary": "从 IP 地址和前缀出发，推演数据报如何选择下一跳、封装到当前链路并逐跳到达目的地。",
+      "key_points": [
+        "前缀匹配决定下一跳，ARP 则在支持它的 IPv4 链路上提供该下一跳的 MAC 地址。",
+        "NAT 解释边界处地址或端口的变化，ICMP 反馈帮助解释转发失败或探测结果。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "IPv4、IPv6 与 CIDR 子网",
+      "summary": "IPv4 地址长 32 位，IPv6 地址长 128 位；前缀长度表示地址开头用于匹配网络的位数。",
+      "key_points": [
+        "在 IPv4 中，将地址与子网掩码按位与可得网络地址；划分等长子网时，可借用主机位延长前缀。",
+        "普通 IPv4 广播子网的可分配范围不含网络地址和广播地址；/31 点到点链路与 /32 主机路由需单独处理，IPv6 没有广播地址。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "ARP 与下一跳地址解析",
+      "summary": "ARP 在以太网等支持 ARP 的链路上，将本地下一跳的 IPv4 地址解析为链路层地址。",
+      "key_points": [
+        "直连交付时解析目的主机地址，经网关转发时解析网关地址，而不是远端主机地址。",
+        "IPv6 用基于 ICMPv6 的邻居发现进行地址解析，不使用 ARP。"
+      ],
+      "importance": 4
+    },
+    {
+      "concept_name": "路由、转发与 NAT",
+      "summary": "路由负责形成可达路径信息，转发依据转发表逐包选择出接口和下一跳；NAT 在网络边界转换地址。",
+      "key_points": [
+        "转发时对目的 IP 执行最长前缀匹配；没有更具体匹配时可使用已配置的默认路由。",
+        "常见 IPv4 地址与端口转换可让多个内部连接共享一个公网地址，并借助映射将返回流量交给对应内部端点。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "ICMP 与连通性诊断",
+      "summary": "ICMP 承载差错报告和诊断消息；ping 与 traceroute 可从不同角度观察连通性和转发路径。",
+      "key_points": [
+        "ping 使用回显请求与应答估计往返时延；无应答也可能是过滤或限速，不能据此认定主机离线。",
+        "traceroute 逐步增大 IPv4 TTL 或 IPv6 跳数限制，以中间路由器返回的超时消息识别路径；星号表示该探测未收到预期响应。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "模块四：传输层",
+      "summary": "解释端口如何区分应用通信，以及 UDP 和 TCP 如何在 IP 之上提供不同的传输服务。",
+      "key_points": [
+        "先比较 UDP 数据报与 TCP 字节流，再用握手和可靠传输机制解释 TCP 的服务特性。",
+        "流量控制保护接收端，拥塞控制调节发送方给网络施加的负载，两者共同约束 TCP 发送。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "端口与 UDP",
+      "summary": "端口号帮助主机将传输层数据交给对应应用；UDP 提供无连接、保留消息边界的数据报服务。",
+      "key_points": [
+        "UDP 不建立连接，也不保证交付、按序到达或去重。",
+        "需要可靠性或拥塞控制时，使用 UDP 的上层协议需要自行实现相应机制。"
+      ],
+      "importance": 4
+    },
+    {
+      "concept_name": "TCP 连接、可靠性与控制",
+      "summary": "TCP 通过三次握手建立连接，提供可靠、有序的字节流；正常关闭时用 FIN 分别结束两个方向的数据发送。",
+      "key_points": [
+        "序列号、确认和重传用于恢复丢失数据并维持有序交付；应用不能从 TCP 字节流直接推断消息边界。",
+        "接收窗口反映接收端可接纳的数据量，拥塞窗口约束网络中未确认的数据量，发送端受两者共同约束。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "模块五：应用、安全与综合实践",
+      "summary": "以网页访问为主线，将网络配置、域名解析、网页协议、安全机制和诊断工具串联起来。",
+      "key_points": [
+        "主机先获得或预设网络配置；在未命中缓存的常见场景中，域名解析为后续连接提供目的地址。",
+        "TLS 保护通信内容，防火墙执行通信策略；抓包用于验证实际发生的协议交互。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "DHCP 与 DNS",
+      "summary": "DHCP 可自动向主机提供网络配置；DNS 是分布式命名系统，可将域名解析为 IP 地址等记录。",
+      "key_points": [
+        "常见 DHCPv4 配置包括租用的地址、子网掩码、默认网关和 DNS 解析器地址。",
+        "DNS 的 A 和 AAAA 记录分别提供 IPv4 和 IPv6 地址；缓存命中时不一定发生新的网络查询。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "HTTP、HTTPS 与 TLS",
+      "summary": "HTTP 采用请求—响应模型；HTTPS 使用 TLS 保护 HTTP 通信。",
+      "key_points": [
+        "客户端用方法和目标发起请求，服务器用状态码和响应内容表明处理结果。",
+        "TLS 提供机密性和完整性，通常通过证书验证服务器身份；HTTP/3 使用集成 TLS 的 QUIC，而非 TCP。"
+      ],
+      "importance": 5
+    },
+    {
+      "concept_name": "防火墙基础",
+      "summary": "防火墙按策略决定哪些网络通信可以通过，可部署在主机或网络边界。",
+      "key_points": [
+        "常见策略可依据源和目的地址、传输协议、端口及连接状态作出允许或阻断决定。",
+        "防火墙与 TLS 的作用不同：流量获准通过不代表已加密，流量加密也不代表有权通过。"
+      ],
+      "importance": 4
+    },
+    {
+      "concept_name": "网页访问推演与本地抓包",
+      "summary": "在授权的本地环境中抓包，将 DNS 查询、TCP 握手和 HTTP 请求与报文的层级及先后顺序对应起来。",
+      "key_points": [
+        "练习时选用未命中缓存的常规 DNS 查询和基于 TCP 的明文 HTTP，识别查询与应答、SYN／SYN-ACK／ACK，以及请求方法。",
+        "改用 HTTPS 对照观察：普通抓包不能直接读取加密的 HTTP 请求；连通异常时可结合子网和路由判断，以及 ping 与 traceroute 的结果定位问题。"
+      ],
+      "importance": 5
+    }
+  ],
+  "edges": [
+    {
+      "source": "模块一：网络基础",
+      "target": "分层模型与封装",
+      "relation_type": "contains",
+      "description": "建立后续各层共用的协议与封装术语。"
+    },
+    {
+      "source": "模块一：网络基础",
+      "target": "物理层与比特传输",
+      "relation_type": "contains",
+      "description": "说明比特如何由实际介质承载。"
+    },
+    {
+      "source": "模块一：网络基础",
+      "target": "时延与吞吐量",
+      "relation_type": "contains",
+      "description": "建立分析网络性能的基础指标。"
+    },
+    {
+      "source": "模块二：数据链路",
+      "target": "成帧与差错检测",
+      "relation_type": "contains",
+      "description": "介绍链路层的数据单位和基本校验机制。"
+    },
+    {
+      "source": "模块二：数据链路",
+      "target": "以太网与交换",
+      "relation_type": "contains",
+      "description": "用典型局域网解释帧格式和二层转发。"
+    },
+    {
+      "source": "模块三：网络层",
+      "target": "IPv4、IPv6 与 CIDR 子网",
+      "relation_type": "contains",
+      "description": "建立地址、前缀和子网计算基础。"
+    },
+    {
+      "source": "模块三：网络层",
+      "target": "ARP 与下一跳地址解析",
+      "relation_type": "contains",
+      "description": "解释 IPv4 下一跳如何获得链路层地址。"
+    },
+    {
+      "source": "模块三：网络层",
+      "target": "路由、转发与 NAT",
+      "relation_type": "contains",
+      "description": "介绍逐跳转发和网络边界的地址转换。"
+    },
+    {
+      "source": "模块三：网络层",
+      "target": "ICMP 与连通性诊断",
+      "relation_type": "contains",
+      "description": "通过控制消息解释常见探测结果。"
+    },
+    {
+      "source": "模块四：传输层",
+      "target": "端口与 UDP",
+      "relation_type": "contains",
+      "description": "建立端到端应用分用和无连接传输的概念。"
+    },
+    {
+      "source": "模块四：传输层",
+      "target": "TCP 连接、可靠性与控制",
+      "relation_type": "contains",
+      "description": "解释面向连接的可靠字节流及其发送约束。"
+    },
+    {
+      "source": "模块五：应用、安全与综合实践",
+      "target": "DHCP 与 DNS",
+      "relation_type": "contains",
+      "description": "说明主机如何获得网络配置并解析域名。"
+    },
+    {
+      "source": "模块五：应用、安全与综合实践",
+      "target": "HTTP、HTTPS 与 TLS",
+      "relation_type": "contains",
+      "description": "介绍网页请求与响应及其传输保护。"
+    },
+    {
+      "source": "模块五：应用、安全与综合实践",
+      "target": "防火墙基础",
+      "relation_type": "contains",
+      "description": "介绍网络访问策略及其作用边界。"
+    },
+    {
+      "source": "模块五：应用、安全与综合实践",
+      "target": "网页访问推演与本地抓包",
+      "relation_type": "contains",
+      "description": "用本地可观测的流量检验跨层理解。"
+    },
+    {
+      "source": "分层模型与封装",
+      "target": "成帧与差错检测",
+      "relation_type": "prerequisite",
+      "description": "先有封装和层次概念，才能区分链路帧的校验字段与上层载荷。"
+    },
+    {
+      "source": "物理层与比特传输",
+      "target": "时延与吞吐量",
+      "relation_type": "prerequisite",
+      "description": "用链路速率和信号传播解释发送时延与传播时延的区别。"
+    },
+    {
+      "source": "成帧与差错检测",
+      "target": "以太网与交换",
+      "relation_type": "prerequisite",
+      "description": "先识别以太网帧的基本结构，再理解交换机如何使用其中的地址字段。"
+    },
+    {
+      "source": "以太网与交换",
+      "target": "ARP 与下一跳地址解析",
+      "relation_type": "prerequisite",
+      "description": "理解 MAC 地址和广播域后，才能解释 ARP 请求如何传播以及应答结果如何用于封帧。"
+    },
+    {
+      "source": "IPv4、IPv6 与 CIDR 子网",
+      "target": "ARP 与下一跳地址解析",
+      "relation_type": "prerequisite",
+      "description": "先区分 IP 地址与本地链路范围，再判断应解析直连目的主机还是网关。"
+    },
+    {
+      "source": "IPv4、IPv6 与 CIDR 子网",
+      "target": "路由、转发与 NAT",
+      "relation_type": "prerequisite",
+      "description": "最长前缀匹配需要先理解地址和前缀如何确定匹配范围。"
+    },
+    {
+      "source": "ARP 与下一跳地址解析",
+      "target": "路由、转发与 NAT",
+      "relation_type": "applies_to",
+      "description": "IPv4 路由查表选定以太网下一跳后，可用 ARP 或其缓存结果取得封帧所需的目的 MAC 地址。"
+    },
+    {
+      "source": "路由、转发与 NAT",
+      "target": "ICMP 与连通性诊断",
+      "relation_type": "prerequisite",
+      "description": "理解逐跳转发后，才能将超时和不可达反馈与可能的转发位置对应。"
+    },
+    {
+      "source": "时延与吞吐量",
+      "target": "ICMP 与连通性诊断",
+      "relation_type": "applies_to",
+      "description": "用时延构成解释 ping 的往返时间，避免将其直接当作单向时延或吞吐量。"
+    },
+    {
+      "source": "分层模型与封装",
+      "target": "端口与 UDP",
+      "relation_type": "prerequisite",
+      "description": "先区分网络层和传输层，才能理解为什么 IP 地址和端口承担不同的分用任务。"
+    },
+    {
+      "source": "端口与 UDP",
+      "target": "TCP 连接、可靠性与控制",
+      "relation_type": "prerequisite",
+      "description": "先掌握端口和通信端点，再识别 TCP 握手属于哪条连接。"
+    },
+    {
+      "source": "端口与 UDP",
+      "target": "TCP 连接、可靠性与控制",
+      "relation_type": "contrast",
+      "description": "比较保留消息边界的无连接数据报与面向连接的可靠字节流。"
+    },
+    {
+      "source": "IPv4、IPv6 与 CIDR 子网",
+      "target": "DHCP 与 DNS",
+      "relation_type": "prerequisite",
+      "description": "掌握地址和子网概念后，才能解释 DHCP 提供的配置参数及 DNS 地址记录的用途。"
+    },
+    {
+      "source": "端口与 UDP",
+      "target": "防火墙基础",
+      "relation_type": "prerequisite",
+      "description": "理解传输协议和端口后，才能读懂基于这些字段的过滤规则。"
+    },
+    {
+      "source": "TCP 连接、可靠性与控制",
+      "target": "网页访问推演与本地抓包",
+      "relation_type": "prerequisite",
+      "description": "根据连接建立机制识别三次握手并确定应用数据从何处开始。"
+    },
+    {
+      "source": "DHCP 与 DNS",
+      "target": "网页访问推演与本地抓包",
+      "relation_type": "applies_to",
+      "description": "用解析器配置、查询记录类型和返回地址解释抓包中可见的 DNS 交互。"
+    },
+    {
+      "source": "HTTP、HTTPS 与 TLS",
+      "target": "网页访问推演与本地抓包",
+      "relation_type": "prerequisite",
+      "description": "先理解请求格式和 TLS 的可见性边界，才能正确解读明文与加密会话。"
+    },
+    {
+      "source": "ICMP 与连通性诊断",
+      "target": "网页访问推演与本地抓包",
+      "relation_type": "applies_to",
+      "description": "在网页访问失败时，用往返探测和路径探测辅助区分基础连通性问题与应用问题。"
+    },
+    {
+      "source": "防火墙基础",
+      "target": "网页访问推演与本地抓包",
+      "relation_type": "applies_to",
+      "description": "将策略过滤作为解释无应答的可能原因，并用已知规则或日志核实，而不只凭抓包下结论。"
+    }
+  ]
+}

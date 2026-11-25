@@ -11,7 +11,7 @@ import {
   BookOpen,
   Backpack,
   UsersRound,
-  ClipboardCheck,
+  Lightbulb,
   ChevronRight,
   Settings as SettingsIcon,
   GraduationCap,
@@ -65,9 +65,9 @@ const Graph = lazy(() =>
   Admin = lazy(() => import("./Admin"));
 const pages = [
   ["library", "学习资料库", LibraryBig],
-  ["tutor", "AI 讲解", GraduationCap],
-  ["studio", "双窗工作台", PanelsTopLeft],
   ["graph", "知识图谱", Workflow],
+  ["tutor", "AI讲解师", GraduationCap],
+  ["studio", "费曼学习", PanelsTopLeft],
   ["review", "复习", RotateCcw],
   ["reports", "历史报告", Files],
   ["admin", "后台数据中心", ChartNoAxesColumn],
@@ -364,15 +364,21 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
       restoreSpace(user.id, ctrl.signal)
         .then((remote) => {
           if (ctrl.signal.aborted || identity.current !== user.id) return;
-          save((local) => ({
-            ...remote,
-            courses: remote.courses.map((c) => preserveNotes(c, local.courses.find((d) => d.id === c.id))),
-            sessions: remote.sessions.map((s) => ({
-              ...s,
-              drafts:
-                local.sessions.find((v) => v.id === s.id)?.drafts || s.drafts,
-            })),
-          }));
+          if (remote.demoBuild && remote.demoBuild !== latest.current.demoBuild) {
+            clearWorkspaceCache(user.id);
+            setSid("");
+            setGuideId("");
+            save(() => remote);
+          } else {
+            save((local) => ({
+              ...remote,
+              courses: remote.courses.map((c) => preserveNotes(c, local.courses.find((d) => d.id === c.id))),
+              sessions: remote.sessions.map((s) => ({
+                ...s,
+                drafts: local.sessions.find((v) => v.id === s.id)?.drafts || s.drafts,
+              })),
+            }));
+          }
           setReady(user.id);
         })
         .catch((e) => {
@@ -987,17 +993,8 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
               ) : (
                 <div className="chat-empty">
                   <span className="chat-avatar"><GraduationCap aria-hidden="true" /></span>
-                  <h2>先听 AI 讲解</h2>
-                  <p>{c ? "从图谱中选一个还没掌握的知识点，或直接从当前资料开启一课。" : "上传一份学习资料，生成图谱后开始讲解。"}</p>
-                  {c && c.nodes.some((n) => n.score < 80) && (
-                    <div className="tools" style={{ justifyContent: "center", marginTop: 8 }}>
-                      {c.nodes.filter((n) => n.score < 80).slice(0, 3).map((n) => (
-                        <button key={n.id} disabled={starting} onClick={() => void beginGuided(c, n)}>
-                          <GraduationCap aria-hidden="true" /> {n.name}
-                        </button>
-                      ))}
-                    </div>
-                  )}
+                  <h2>听AI讲</h2>
+                  <p>{c ? "在知识图谱中选择一个尚未掌握的知识点。" : "上传一份学习资料，生成图谱后开始讲解。"}</p>
                   <button className="primary" onClick={() => go(c ? "graph" : "library")}>
                     {c ? "前往知识图谱" : "前往资料库"}
                   </button>
@@ -1163,14 +1160,14 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
             <legend>听众角色</legend>
             <div className="persona-options">
               {roles.map((r, i) => {
-                const Icon = [Backpack, UsersRound, ClipboardCheck][i] || BookOpen;
+                const Icon = [Backpack, UsersRound, Lightbulb][i] || BookOpen;
                 return <label className="persona" key={r}>
                   <input type="radio" className="persona-radio" name="listener" value={r}
                     aria-label={r} aria-describedby={"listener-hint-" + i}
                     checked={role === r} onChange={() => setRole(r)} />
                   <Icon aria-hidden="true" />
                   <strong>{r}</strong>
-                  <small id={"listener-hint-" + i}>{["用生活例子讲明白", "一起推敲概念联系", "追问边界与依据"][i]}</small>
+                  <small id={"listener-hint-" + i}>{["对术语和用法好奇", "想弄明白你刚说的那一步", "会联想到别的情形"][i]}</small>
                 </label>;
               })}
             </div>

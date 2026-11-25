@@ -28,6 +28,21 @@ def button(page, name):
     return page.get_by_role("button", name=name, exact=True)
 
 
+def start_demo_practice(page):
+    drawer = page.get_by_role("dialog", name="课程资料库", exact=True)
+    if drawer.is_visible():
+        button(drawer, "讲给AI").click()
+        return
+    card = page.locator(".card").filter(has_text="机器学习基础：梯度下降与过拟合")
+    expect(card).to_be_visible()
+    open_library = button(card, "打开资料库")
+    if open_library.is_visible():
+        open_library.click()
+        button(drawer, "讲给AI").click()
+    else:
+        button(card, "讲给AI").click()
+
+
 def check_account_gate(browser):
     root = os.environ.get("FM_FRONTEND", "http://127.0.0.1:5173")
     page = browser.new_page()
@@ -222,7 +237,7 @@ def run(browser):
             button(drawer, label).click()
         assert export.value.ok and event.value.path().stat().st_size > 0
     drawer.get_by_label("关闭", exact=True).click()
-    page.locator(".card").filter(has_text=title).get_by_role("button", name="开讲").click()
+    button(page.locator(".card").filter(has_text=title), "讲给AI").click()
     with page.expect_response(lambda r: r.url.endswith("/sessions") and r.request.method == "POST") as created:
         button(page, "开始教学").click()
     assert created.value.status == 201
@@ -231,7 +246,7 @@ def run(browser):
     role_selector = page.locator(".p0").get_by_label("听众角色")
     expect(role_selector).to_be_enabled()
     with page.expect_response(lambda r: r.url.endswith("/persona")) as changed:
-        role_selector.select_option("严苛考官")
+        role_selector.select_option("爱琢磨的同学")
     assert changed.value.json()["persona_type"] == "examiner"
     def truncate_done(route):
         response = route.fetch()
@@ -254,7 +269,7 @@ def run(browser):
         page.reload()
     history = restored.value.json()
     expect(page.get_by_label("讲解内容")).to_have_value("未发送的草稿")
-    expect(page.get_by_label("听众角色")).to_have_value("严苛考官")
+    expect(page.get_by_label("听众角色")).to_have_value("爱琢磨的同学")
     answers = [m for m in history if m["sender_role"] == "assistant"]
     assert len(answers) == 4  # opening, two teaching replies and one manual lookup
     for message in answers:
@@ -298,7 +313,7 @@ def run(browser):
                 && r.left >= graph.left && r.right <= graph.right;
         });
     }""")
-    button(page, "双窗工作台").click()
+    button(page, "费曼学习").click()
     with page.expect_response(lambda r: r.url.endswith("/report") and r.request.method == "POST") as report:
         button(page, "结束并生成报告").click()
     assert report.value.json()["session_id"] == session_id

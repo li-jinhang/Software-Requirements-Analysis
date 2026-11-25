@@ -862,7 +862,7 @@ button.account-delete:enabled:hover {
 }
 @container workspace (min-width: 956px) {
   .library-layout {
-    grid-template-columns: minmax(0, 1fr) 300px;
+    grid-template-columns: minmax(0, 1fr) 336px;
     gap: 28px;
   }
   .library-aside {
@@ -1018,7 +1018,6 @@ button.account-delete:enabled:hover {
   box-shadow: none;
 }
 
-.library-metrics,
 .stats {
   display: flex;
   align-items: center;
@@ -1031,16 +1030,16 @@ button.account-delete:enabled:hover {
   border: 1px solid var(--line);
   border-radius: 8px;
   background: var(--card);
-  padding: 10px 0;
+  padding: 16px 0;
   margin: 0;
 }
 .library-metrics > div {
+  min-width: 0;
   display: grid;
-  gap: 2px;
+  align-content: start;
+  gap: 6px;
   padding-inline: 12px;
-}
-.library-metrics > div:first-child {
-  padding-inline-start: 12px;
+  overflow-wrap: anywhere;
 }
 .stat {
   display: inline-flex;
@@ -1060,6 +1059,9 @@ button.account-delete:enabled:hover {
   font-size: 11.5px;
   color: var(--muted);
 }
+.library-metrics dt {
+  font-size: 13px;
+}
 .library-metrics dd,
 .stat strong {
   font: 600 16px/1.25 var(--mono);
@@ -1070,6 +1072,12 @@ button.account-delete:enabled:hover {
   font: 11.5px var(--font-ui);
   color: var(--muted);
   margin-left: 2px;
+}
+.library-metrics dd {
+  font-size: 24px;
+}
+.library-metrics .mastery-meter {
+  margin-top: 7px;
 }
 .cards {
   display: grid;
@@ -1158,11 +1166,6 @@ button.account-delete:enabled:hover {
   color: var(--muted);
   font-size: 12px;
 }
-.card-meta-actions {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
 .card-delete {
   width: 24px;
   height: 24px;
@@ -1231,8 +1234,21 @@ button.danger:enabled:hover {
   background: var(--surface);
   border: 1px solid var(--line);
 }
-.card h2 {
-  margin: 11px 0 4px;
+.card-heading {
+  display: flex;
+  align-items: start;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+.cardbody > .meta + .card-heading {
+  margin-top: 8px;
+}
+.card-heading > .card-delete {
+  flex: none;
+}
+.card-heading h2 {
+  margin: 0;
   font-size: 15px;
   line-height: 1.4;
   font-weight: 600;
@@ -1793,7 +1809,7 @@ details label {
     gap: 5px;
   }
   .library-metrics {
-    justify-content: space-between;
+    padding-block: 14px;
   }
   .library-metrics > div {
     padding-inline: 6px;
@@ -1801,7 +1817,10 @@ details label {
   }
   .library-metrics dt,
   .library-metrics dd small {
-    font-size: 11px;
+    font-size: 12px;
+  }
+  .library-metrics dd {
+    font-size: 20px;
   }
   .sectionhead {
     gap: 6px;

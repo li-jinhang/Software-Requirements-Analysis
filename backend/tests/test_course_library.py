@@ -1,9 +1,42 @@
+from collections import Counter
+from io import BytesIO
+import json
+from zipfile import ZipFile
+
 from pydantic import ValidationError
 import pytest
 from time import monotonic, sleep
 
 from test_local_accounts import ACCOUNTS, DOCS, auth
-from test_smoke import fixture_server
+from test_smoke import events, fixture_server, login
+
+
+def test_seeded_demo_uses_the_course_library_contract(fixture_server):
+    api = fixture_server
+    headers = login(api, "student", "123456")
+    courses = {doc["title"]: doc for doc in api.get(DOCS, headers=headers).json()}
+    assert set(courses) == {"机器学习基础：梯度下降与过拟合", "计算机网络"}
+    for title, node_count, edge_count in (
+        ("机器学习基础：梯度下降与过拟合", 8, 9),
+        ("计算机网络", 20, 34),
+    ):
+        course = courses[title]
+        assert course["is_library"] and course["library_id"] is None
+        doc_path = f"{DOCS}/{course['id']}"
+        graph = api.get(doc_path + "/graph", headers=headers).json()
+        assert len(graph["nodes"]) == node_count and len(graph["edges"]) == edge_count
+        archive = api.get(doc_path + "/memory/export", params={"format": "json"}, headers=headers)
+        assert archive.status_code == 200 and len(archive.json()["核心概念树"]) == node_count
+        if title == "计算机网络":
+            assert Counter(n["status"] for n in graph["nodes"]) == {
+                "mastered": 6, "learning": 5, "weak": 4, "unlearned": 5,
+            }
+            assert sum(bool(n["user_note"]) for n in graph["nodes"]) == 4
+            report = api.get(doc_path + "/cognitive-doc", headers=headers).json()
+            assert report["total"] == 40 and report["mastered_count"] == 17
+            cards = api.get(doc_path + "/due-reviews", headers=headers).json()
+            assert len(cards["due_items"]) == 12
+            assert all(card["mastery_score"] == 100 for card in cards["due_items"])
 
 
 def test_setup_returns_a_persisted_library_before_model_replies(fixture_server):
@@ -76,6 +109,67 @@ def test_library_source_keeps_owner_and_membership_after_backup(fixture_server):
     [new_library] = [doc for doc in documents if doc["is_library"]]
     [new_source] = [doc for doc in documents if not doc["is_library"]]
     assert new_library["id"] != library["id"] and new_source["library_id"] == new_library["id"]
+
+
+def test_library_zip_round_trip_preserves_content_and_resets_learning(fixture_server):
+    api = fixture_server
+    owner = login(api, "student", "123456")
+    recipient = auth(api.post(ACCOUNTS, json={"name": "接收资料库"}))
+    library = next(doc for doc in api.get(DOCS, headers=owner).json() if doc["title"] == "计算机网络")
+    path = DOCS + "/course-libraries"
+    export = path + f"/{library['id']}/export"
+    source_text = "# 滑动窗口控制\n\n发送方基于接收窗口限制在途数据并控制发送速率。".encode()
+    uploaded = api.post(DOCS + "/upload", headers=owner, data={"library_id": library["id"]},
+                        files={"file": ("滑动窗口控制.md", source_text)})
+    assert uploaded.status_code == 201, uploaded.text
+    source_id = uploaded.json()["id"]
+    assert api.get(export, headers=recipient).status_code == 404
+    assert api.get(path + f"/{source_id}/export", headers=owner).status_code == 404
+    exported = api.get(export, headers=owner)
+    assert exported.status_code == 200, exported.text
+    assert exported.headers["Content-Type"] == "application/zip"
+    with ZipFile(BytesIO(exported.content)) as archive:
+        bundle = json.loads(archive.read("library.json"))
+        assert set(bundle) == {"version", "library", "sources"}
+        assert len(bundle["library"]["nodes"]) == 20 and len(bundle["library"]["edges"]) == 34
+        assert not {"mastery_score", "user_note", "status"}.intersection(bundle["library"]["nodes"][0])
+        assert not {"user_evidence", "issue_note", "review_count"}.intersection(bundle["library"]["items"][0])
+        assert archive.read(f"sources/{source_id}.md") == source_text
+
+    def import_zip(content):
+        return api.post(path + "/import", headers=recipient, files={"file": ("课程.zip", content)})
+
+    assert import_zip(b"invalid ZIP").status_code == 422
+    assert api.get(DOCS, headers=recipient).json() == []
+    imported = import_zip(exported.content)
+    assert imported.status_code == 201, imported.text
+    result = imported.json()
+    copy = result["library"]["document"]
+    [source] = result["sources"]
+    assert copy["id"] != library["id"] and copy["title"] == library["title"]
+    assert copy["structured_summary"] == library["structured_summary"]
+    assert source["document"]["id"] != source_id and source["document"]["library_id"] == copy["id"]
+    assert source["graph"]["nodes"]
+    graph = result["library"]["graph"]
+    fresh_ids = {node["id"] for node in graph["nodes"]}
+    assert fresh_ids.isdisjoint(node["id"] for node in bundle["library"]["nodes"])
+    assert all(edge[ref] in fresh_ids for edge in graph["edges"] for ref in ("source_node_id", "target_node_id"))
+    assert all(node["status"] == "unlearned" and not node["mastery_score"] and not node["user_note"] for node in graph["nodes"])
+    rubric = api.get(f"{DOCS}/{copy['id']}/cognitive-doc", headers=recipient).json()
+    assert rubric["total"] == 40 and rubric["mastered_count"] == 0
+    assert all(i["node_id"] in fresh_ids for section in rubric["sections"] for i in section["items"])
+    sessions = DOCS.rsplit("/", 1)[0] + "/sessions"
+    assert api.get(sessions, headers=recipient).json() == []
+    convo = api.post(sessions, headers=recipient, json={"doc_id": copy["id"], "persona_type": "peer"})
+    lookup = api.post(f"{sessions}/{convo.json()['id']}/encyclopedia/stream", headers=recipient,
+                      json={"content": "滑动窗口控制"})
+    hits = next(data["citations"] for kind, data in events(lookup) if kind == "citation")
+    assert any(hit["doc_title"] == "滑动窗口控制" for hit in hits)
+
+    again = import_zip(exported.content)
+    assert again.status_code == 201
+    assert again.json()["library"]["document"]["title"] == "计算机网络（导入）"
+    assert api.get(DOCS + f"/{copy['id']}", headers=owner).status_code == 404
 
 
 def test_curriculum_requires_connected_modules_and_acyclic_prerequisites(monkeypatch):

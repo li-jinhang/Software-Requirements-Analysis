@@ -11,7 +11,7 @@ from app.core.config import settings
 from app.services.model_connection import ModelConnection, AuthenticationRejected
 from app.services.model_profiles import ModelError, require_profile
 from .schemas import Assessment, ItemIssue, ItemMark
-from .prompts import ASSESS, FOLLOWUP, PERSONAS
+from .prompts import ASSESS, FOLLOWUP, PERSONAS, opening
 
 log = logging.getLogger(__name__)
 
@@ -161,23 +161,30 @@ def assess(state, schema, correction=False):
 
 
 def followup(state, persona):
+    item = state.get("next_item")
+    node = state["node"]
+    topic = item["section_title"] if item else node["concept_name"]
     if offline():
-        from .prompts import opening
-        yield "（本地规则演示）" + opening(state["node"]["concept_name"], persona)
+        yield opening(topic, persona)
         return
+    is_opening = state.get("kind") == "opening"
+    targeted = state.get("targeted_assessment")
     payload = {
-        "node": state["node"], "content": state["content"],
-        "next_item": state.get("next_item"),
-        "assessment": state.get("assessment"),
-        "assessment_error": state.get("assessment_error", ""),
+        "topic": topic, "explained_concept": node["concept_name"], "reference_summary": node["summary"],
+        "latest_explanation": state["content"],
+        "study_point": item["statement"] if item else None,
+        "curiosity_hint": (state.get("assessment") or {}).get("followup_focus"),
         "history": recent_history(state),
-        "weaknesses": state["memory"].get("weaknesses", [])[-20:],
-        "citations": state.get("citations", []),
     }
+    label, style = PERSONAS[persona]
+    instructions = FOLLOWUP + f"\n你是{label}，{style}"
+    if is_opening:
+        instructions += "\n这是开场，先因为这个主题的一个具体细节感到好奇，再问一句。"
+    if targeted:
+        payload["prior_difficulty"] = item.get("issue_note") if item else None
+        instructions += "\n只围绕 study_point 发问。用新的具体情境切入，避免把原句或答案读给对方。"
     messages = [
-        {"role": "system", "content": FOLLOWUP + "\n角色：" + PERSONAS[persona] +
-         ("\n复测模式：只考 next_item。换用一个具体生活场景、边界或反例发问；参考其上次 issue_note，"
-          "不要照读条目、直接给出答案或重复历史问题。" if state.get("targeted_assessment") else "")},
+        {"role": "system", "content": instructions},
         {"role": "user", "content": json.dumps(payload, ensure_ascii=False, default=str)},
     ]
     from langgraph.config import get_stream_writer
@@ -189,5 +196,11 @@ def followup(state, persona):
         emitted.append(delta)
         writer(Token(delta=delta))
 
-    text = request(messages, schema=None, on_chunk=forward)
+    try:
+        text = request(messages, schema=None, on_chunk=forward)
+    except TeachingModelError:
+        if not is_opening or targeted or emitted:
+            raise
+        yield opening(topic, persona)
+        return
     yield StreamedText(text) if emitted else text

@@ -114,7 +114,8 @@ def test_correction_is_committed_before_followup_and_advances_on_repair(
                     key_criteria="解释方向",
                 )
             )
-    assert "第1项" in "".join(d["delta"] for k, d in opening(t) if k == "token")
+    first_question = "".join(d["delta"] for k, d in opening(t) if k == "token")
+    assert "梯度下降" in first_question and "第1项：沿负梯度更新" not in first_question
     claim = "梯度下降沿正梯度更新。"
 
     def assess(state, *args):

@@ -34,6 +34,13 @@ class RetiredAccountId(Base):
     id: Mapped[PK]
 
 
+class DemoWorkspace(Base):
+    __tablename__ = "demo_workspace"
+    id: Mapped[PK]
+    user_id: Mapped[int | None] = mapped_column(ForeignKey("users.id", ondelete="SET NULL"))
+    build_id: Mapped[str]
+
+
 def next_account_id(db):
     """Call under the SQLite write lock so retired IDs cannot be issued again."""
     latest = db.scalar(select(func.max(User.id))) or 0

@@ -79,7 +79,7 @@ def run():
         errors = []
         page.on("pageerror", lambda error: errors.append(str(error)))
         page.goto(url)
-        from online_sync import login
+        from online_sync import login, start_demo_practice
         login(page, "student", "123456")
         btn = lambda name: page.get_by_role("button", name=name, exact=True)
         lectures = [
@@ -90,7 +90,7 @@ def run():
             if i:
                 page.get_by_role("button", name=re.compile("更换资料")).click()
             else:
-                btn("开讲").first.click()
+                start_demo_practice(page)
             page.get_by_label("目标知识点").select_option(label="梯度下降" if i else "损失函数")
             btn("开始教学").click()
             page.get_by_label("讲解内容").fill(explanation + question)

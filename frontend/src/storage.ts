@@ -1,4 +1,4 @@
-import { Space, initial } from "./model";
+import { Space, initial, roles } from "./model";
 export type User = { id: string; name: string; admin: boolean };
 export const student: User = {
     id: "demo-student",
@@ -7,6 +7,7 @@ export const student: User = {
   },
   admin: User = { id: "demo-admin", name: "演示管理员", admin: true };
 const prefix = "feynman.workspace.v1.";
+const previousRoles = ["启蒙小学生", "互助同窗", "严苛考官"];
 export function clearWorkspaceCache(id: string) {
   localStorage.removeItem(prefix + id);
   sessionStorage.removeItem("fm.active:" + id);
@@ -15,7 +16,18 @@ export function clearWorkspaceCache(id: string) {
 
 export function read(id: string): Space {
   const v = localStorage.getItem(prefix + id);
-  try { if (v) return JSON.parse(v); } catch { /* A broken cache can be rebuilt. */ }
+  try {
+    if (v) {
+      const space: Space = JSON.parse(v);
+      return {
+        ...space,
+        sessions: space.sessions.map(session => ({
+          ...session,
+          role: roles[previousRoles.indexOf(session.role)] ?? session.role,
+        })),
+      };
+    }
+  } catch { /* A broken cache can be rebuilt. */ }
   return id === student.id
       ? initial()
       : { courses: [], reports: [], sessions: [], logs: [] };
@@ -24,6 +36,7 @@ export function write(id: string, s: Space) {
   // Server records are reloaded on login. Persist only edits that have not been sent.
   const stored: Space = id.startsWith("api:")
     ? {
+        demoBuild: s.demoBuild,
         courses: s.courses.map((c) => ({ ...c, links: [], nodes: c.nodes.filter((n) => n.syncedNote !== undefined && n.note !== n.syncedNote) })).filter((c) => c.nodes.length),
         reports: [],
         logs: [],

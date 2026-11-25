@@ -1,6 +1,9 @@
 """Phase-two offline regressions. No provider credentials or network needed."""
 
 from pathlib import Path
+import os
+import subprocess
+import sys
 from types import SimpleNamespace
 
 import pytest
@@ -31,6 +34,32 @@ def test_hybrid_recovers_exact_term_outside_vector_candidates(term, source):
     vector_only = {0: 0.98}
     hits = hybrid_rank(term, rows, vector_only, 1)
     assert hits[0]["chunk_index"] == 1 and 0 <= hits[0]["score"] <= 1
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows HNSW path encoding")
+def test_chroma_persists_index_under_unicode_project_path(tmp_path):
+    project = tmp_path / "课程项目"
+    project.mkdir()
+    env = {
+        **os.environ,
+        "DATA_DIR": str(project / "data"),
+        "PYTHONPATH": str(Path(__file__).resolve().parents[1]),
+    }
+    # Force HNSW to write its binary files, then reopen the index in a fresh process.
+    writes = (
+        "from app.services import rag_store\n"
+        "rag_store.index(1, 'course', [f'TCP segment {i}' for i in range(1150)])\n"
+    )
+    reads = (
+        "from app.services import rag_store\n"
+        "assert rag_store.collection().count() == 1150\n"
+        "assert rag_store.search(1, 'TCP segment 1100')[0]['chunk_index'] == 1100\n"
+    )
+    for command in (writes, reads):
+        result = subprocess.run([sys.executable, "-c", command], cwd=project, env=env,
+                                capture_output=True, text=True, encoding="utf-8", errors="replace",
+                                timeout=60)
+        assert result.returncode == 0, result.stderr
 
 
 def test_sql_prerequisites_and_cross_session_history():
@@ -322,7 +351,13 @@ def test_startup_preserves_legacy_documents_and_library_links(tmp_path, monkeypa
             conn.exec_driver_sql("""
                 INSERT INTO documents VALUES
                     (4,1,'原笔记','数学','md','','pending','',7,'旧摘要','2025-02-01'),
-                    (9,1,'合集','数学','md','','pending','',0,'','2025-03-01')
+                    (9,1,'合集','数学','md','','pending','',0,'','2025-03-01'),
+                    (10,1,'机器学习基础：梯度下降与过拟合','机器学习','md','uploads/demo-course.md',
+                     'completed','',8,'演示摘要','2025-03-01'),
+                    (11,1,'机器学习基础：梯度下降与过拟合','机器学习','md','uploads/demo-course-fixture.md',
+                     'completed','',8,'演示摘要','2025-03-01'),
+                    (12,1,'机器学习基础：梯度下降与过拟合','机器学习','md','uploads/mine.md',
+                     'completed','',5,'自学资料','2025-03-01')
             """)
             if existing_column == "is_library":
                 conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN is_library BOOLEAN NOT NULL DEFAULT 0")
@@ -337,11 +372,13 @@ def test_startup_preserves_legacy_documents_and_library_links(tmp_path, monkeypa
             assert note.is_library is False and library.library_id is None
             assert library.is_library == (existing_column == "is_library")
             assert note.library_id == (9 if existing_column == "library_id" else None)
+            assert db.get(Document, 10).structured_summary == "演示摘要"
+            assert db.get(Document, 11).chunk_count == 8
             library.is_library, note.library_id = True, 9
 
         with TestClient(main.app), engine.connect() as conn:
             assert conn.exec_driver_sql("SELECT id,is_library,library_id FROM documents ORDER BY id").all() == [
-                (4, 0, 9), (9, 1, None)]
+                (4, 0, 9), (9, 1, None), (10, 1, None), (11, 1, None), (12, 0, None)]
             assert [r[2] for r in conn.exec_driver_sql("PRAGMA index_info(ix_documents_library_id)")] == ["library_id"]
             assert any(r[2:5] == ("documents", "library_id", "id") and r[6] == "SET NULL"
                        for r in conn.exec_driver_sql("PRAGMA foreign_key_list(documents)"))

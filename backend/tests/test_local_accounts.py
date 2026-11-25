@@ -37,19 +37,26 @@ def test_local_accounts_round_trip_without_cross_account_access(server):
         entries = {name: archive.read(name) for name in archive.namelist()}
     manifest = json.loads(entries["account.json"])
     assert manifest["name"] == "演示学生"
-    assert len(manifest["documents"]) == 1 and manifest["documents"][0]["chunks"]
+    originals = {doc["title"]: doc for doc in manifest["documents"]}
+    assert set(originals) == {"机器学习基础：梯度下降与过拟合", "计算机网络"}
+    assert all(doc["chunks"] and f"sources/{doc['id']}.md" in entries for doc in originals.values())
     assert "password_hash" not in entries["account.json"].decode()
-    assert "sources/1.md" in entries
 
     imported = server.post(ACCOUNTS + "/import", files={"file": ("student.zip", backup.content)})
     restored = auth(imported)
     assert imported.json()["user"]["nickname"] == "演示学生（导入）"
     assert server.get(DOCS + "/1", headers=restored).status_code == 404
-    [copy] = server.get(DOCS, headers=restored).json()
-    assert copy["id"] != 1 and copy["chunk_count"] == manifest["documents"][0]["chunk_count"]
+    copies = {doc["title"]: doc for doc in server.get(DOCS, headers=restored).json()}
+    assert set(copies) == set(originals)
+    for title, copy in copies.items():
+        source = originals[title]
+        assert copy["id"] != source["id"] and copy["chunk_count"] == source["chunk_count"]
+        graph = server.get(f"{DOCS}/{copy['id']}/graph", headers=restored).json()
+        for key in ("nodes", "edges"):
+            assert len(graph[key]) == sum(row["doc_id"] == source["id"] for row in manifest[key])
+    copy = copies["机器学习基础：梯度下降与过拟合"]
     path = f"{DOCS}/{copy['id']}"
     graph = server.get(path + "/graph", headers=restored).json()
-    assert len(graph["nodes"]) == len(manifest["nodes"]) and len(graph["edges"]) == len(manifest["edges"])
     node = graph["nodes"][0]
     report_session = server.get(SESSIONS, headers=restored).json()[0]["id"]
     report_path = f"{SESSIONS}/{report_session}"
@@ -60,7 +67,8 @@ def test_local_accounts_round_trip_without_cross_account_access(server):
     assert server.get(DOCS + "/1/graph", headers=original).json()["nodes"][0]["user_note"] != "副本笔记"
     assert server.get(path + "/graph", headers=empty).status_code == 404
     with ZipFile(BytesIO(server.get(ACCOUNTS + "/export", headers=restored).content)) as archive:
-        assert archive.read(f"sources/{copy['id']}.md") == entries["sources/1.md"]
+        for title, copy in copies.items():
+            assert archive.read(f"sources/{copy['id']}.md") == entries[f"sources/{originals[title]['id']}.md"]
 
     roster = server.get(ACCOUNTS).json()
     manifest["nodes"][0]["doc_id"] = -1
@@ -77,6 +85,7 @@ def test_delete_requires_exact_confirmation_and_removes_only_current_account(ser
     roster = server.get(ACCOUNTS).json()
     student_id = next(account["id"] for account in roster if account["username"] == "student")
     original = auth(server.post(f"{ACCOUNTS}/{student_id}/activate", json={"password": "123456"}))
+    original_docs = server.get(DOCS, headers=original).json()
     backup = server.get(ACCOUNTS + "/export", headers=original)
     backup.raise_for_status()
     uploads = server.data_dir / "uploads"
@@ -88,8 +97,9 @@ def test_delete_requires_exact_confirmation_and_removes_only_current_account(ser
         "name": "账号私有连接", "url": "http://127.0.0.1:1/mcp", "token": "account-private-key",
     })
     assert private_server.status_code == 201, private_server.text
-    [new_source] = set(uploads.iterdir()) - sources
-    [doc] = server.get(DOCS, headers=headers).json()
+    new_sources = set(uploads.iterdir()) - sources
+    docs = server.get(DOCS, headers=headers).json()
+    assert len(new_sources) == len(docs) == len(original_docs) == 2
     [session] = server.get(SESSIONS, headers=headers).json()
     endpoint = ACCOUNTS + "/current"
     exact = {"confirmation": "确认删除"}
@@ -98,8 +108,8 @@ def test_delete_requires_exact_confirmation_and_removes_only_current_account(ser
                           headers={**headers, "Origin": "https://outside.example"}).status_code == 403
     for invalid in ({}, {"confirmation": "确认"}, {"confirmation": "确认删除 "}, {**exact, "id": student_id}):
         assert server.request("DELETE", endpoint, headers=headers, json=invalid).status_code == 422
-    assert server.get(DOCS, headers=headers).json() == [doc]
-    assert new_source.is_file()
+    assert server.get(DOCS, headers=headers).json() == docs
+    assert all(source.is_file() for source in new_sources)
 
     response = server.request("DELETE", endpoint, headers=headers, json=exact)
     assert response.status_code == 204, response.text
@@ -107,15 +117,17 @@ def test_delete_requires_exact_confirmation_and_removes_only_current_account(ser
     assert server.get(DOCS, headers=headers).status_code == 401
     with sqlite3.connect(server.data_dir / "capabilities" / "private.sqlite3") as extensions:
         assert extensions.execute("SELECT COUNT(*) FROM servers WHERE owner=?", (deleted_id,)).fetchone() == (0,)
-    assert not new_source.exists() and all(source.is_file() for source in sources)
-    assert not (server.data_dir / f".delete-{doc['id']}.pending").exists()
+    assert all(not source.exists() for source in new_sources) and all(source.is_file() for source in sources)
+    assert all(not (server.data_dir / f".delete-{doc['id']}.pending").exists() for doc in docs)
     with sqlite3.connect(server.data_dir / "feynman.db") as db:
-        for table, column, value in [("users", "id", deleted_id), ("documents", "id", doc["id"]),
-                                     ("knowledge_nodes", "doc_id", doc["id"]), ("sessions", "id", session["id"]),
+        for doc in docs:
+            assert db.execute("SELECT COUNT(*) FROM documents WHERE id=?", (doc["id"],)).fetchone() == (0,)
+            assert db.execute("SELECT COUNT(*) FROM knowledge_nodes WHERE doc_id=?", (doc["id"],)).fetchone() == (0,)
+        for table, column, value in [("users", "id", deleted_id), ("sessions", "id", session["id"]),
                                      ("messages", "session_id", session["id"]),
                                      ("diagnostic_reports", "session_id", session["id"])]:
             assert db.execute(f"SELECT COUNT(*) FROM {table} WHERE {column}=?", (value,)).fetchone() == (0,)
-    assert len(server.get(DOCS, headers=original).json()) == 1
+    assert server.get(DOCS, headers=original).json() == original_docs
     assert len(server.get(SESSIONS, headers=original).json()) == 1
     registered = server.post("/api/v1/auth/register", json={
         "username": "replacement", "nickname": "新注册账号", "password": "test-pass-123",

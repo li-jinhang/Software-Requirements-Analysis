@@ -1,19 +1,23 @@
 from app.schemas.responses import CognitiveDocOut, DocumentOut, NodeOut, GraphOut, ContextOut, LearningStep, ReviewListsOut
 from pathlib import Path
+from tempfile import NamedTemporaryFile
 from typing import Literal
 from uuid import uuid4
+from zipfile import BadZipFile
 from fastapi import APIRouter, BackgroundTasks, Depends, Form, UploadFile, HTTPException, Response
-from fastapi.responses import JSONResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.encoders import jsonable_encoder
 from pydantic import BaseModel
 from sqlalchemy import select, update
+from starlette.background import BackgroundTask
 from app.core.security import current_user
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models import CognitiveItem, Document, KnowledgeNode, public
 from app.schemas import Note, ReviewFeedback, TimeAdvance
-from app.services import cognitive, course_library, memory_service as memory, review
+from app.services import cognitive, course_library, library_archive, memory_service as memory, review
 from app.services.model_profiles import require_profile
+from app.services.portable_archive import MAX_BACKUP
 
 router = APIRouter(prefix="/documents", tags=["资料"])
 LIMIT = 20 * 1024**2
@@ -72,6 +76,11 @@ class CreatedLibrary(BaseModel):
     graph: GraphOut
 
 
+class ImportedLibrary(BaseModel):
+    library: CreatedLibrary
+    sources: list[CreatedLibrary]
+
+
 @router.post("/course-libraries", status_code=201, response_model=CreatedLibrary)
 def create_library(body: course_library.LibraryName, db=Depends(get_db), user=Depends(current_user)):
     doc = Document(
@@ -81,6 +90,44 @@ def create_library(body: course_library.LibraryName, db=Depends(get_db), user=De
     db.add(doc)
     db.commit()
     return {"document": public(doc), "graph": {"nodes": [], "edges": []}}
+
+
+@router.get("/course-libraries/{id}/export")
+def export_library(id: int, db=Depends(get_db), user=Depends(current_user)):
+    db.connection().exec_driver_sql("BEGIN")
+    library = owned(db, Document, id, user)
+    if not library.is_library:
+        raise HTTPException(404, "课程资料库不存在")
+    with NamedTemporaryFile(suffix=".zip", delete=False) as file:
+        path = Path(file.name)
+    title = library.title
+    exported = False
+    try:
+        library_archive.export_library(db, library, path)
+        exported = True
+    except library_archive.LibraryBusy as exc:
+        raise HTTPException(409, str(exc)) from exc
+    except (ValueError, OSError) as exc:
+        raise HTTPException(422, "无法导出资料库，请检查原始文件、索引和包大小。") from exc
+    finally:
+        db.rollback()
+        if not exported:
+            path.unlink(missing_ok=True)
+    return FileResponse(
+        path, filename=f"{title}.资料库.zip", media_type="application/zip",
+        headers={"Cache-Control": "no-store"}, background=BackgroundTask(path.unlink, missing_ok=True),
+    )
+
+
+@router.post("/course-libraries/import", status_code=201, response_model=ImportedLibrary)
+def import_library(file: UploadFile, db=Depends(get_db), user=Depends(current_user)):
+    if file.size is not None and file.size > MAX_BACKUP:
+        raise HTTPException(413, "资料库压缩包超过 512 MB。")
+    try:
+        library, *sources = library_archive.import_library(db, user, file.file)
+    except (BadZipFile, KeyError, ValueError, OSError, RuntimeError) as exc:
+        raise HTTPException(422, "无法导入，请选择有效的资料库 ZIP 文件。") from exc
+    return {"library": library, "sources": sources}
 
 
 @router.post("/course-libraries/clarify", response_model=course_library.ScopeDecision)

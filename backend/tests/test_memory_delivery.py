@@ -158,7 +158,7 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
     from fastapi.testclient import TestClient
     from app.api.v1 import admin
     from app.db.database import Base
-    from app.db.models import CognitiveItem, Document, KnowledgeNode, Message, RetiredAccountId
+    from app.db.models import CognitiveItem, DemoWorkspace, Document, KnowledgeNode, Message, RetiredAccountId
     from app.services import extension_store, model_profiles
     from scripts import export_submission_data as package
 
@@ -185,6 +185,7 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
     db.get(Document, 1).library_id = 2
     db.get(Document, 2).is_library = True
     db.add(RetiredAccountId(id=19))
+    db.add(DemoWorkspace(id=1, user_id=1, build_id="private-demo-build-fixture"))
     db.get(KnowledgeNode, 1).user_note = f"不应导出 {key}、{mcp_token} 或 {access}"
     db.add(CognitiveItem(doc_id=1, node_id=1, section_title="基础", item_order=1,
                          statement="认识前提", key_criteria="解释前提", user_evidence=key,
@@ -223,7 +224,9 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
         "hash-sentinel",
         "unknown-meta-private",
         "private-extra-table",
+        "private-demo-build-fixture",
     )
+    business_tables = set(Base.metadata.tables) - {"demo_workspace"}
     with TestClient(app) as client:
         for fmt in ("json", "db"):
             response = client.get("/api/v1/admin/export/" + fmt)
@@ -231,7 +234,7 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
             assert not any(s.encode() in response.content for s in forbidden)
             assert not copies[-1].parent.exists()
             if fmt == "json":
-                assert set(response.json()) == set(Base.metadata.tables)
+                assert set(response.json()) == business_tables
                 assert response.json()["retired_account_ids"] == [{"id": 19}]
                 assert response.json()["documents"][0]["library_id"] == 2
                 assert response.json()["documents"][1]["is_library"] is True
@@ -271,7 +274,7 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
     with closing(sqlite3.connect(out / "feynman_sanitized.db")) as copy:
         assert copy.execute("SELECT review_count,skip_count FROM cognitive_items").fetchone() == (3, 1)
     snapshot = json.loads((out / "backend_data_snapshot.json").read_bytes())
-    assert set(snapshot) == set(Base.metadata.tables)
+    assert set(snapshot) == business_tables
     assert snapshot["retired_account_ids"] == [{"id": 19}]
     assert {"review_stage", "last_reviewed_at", "next_review_at", "review_count", "skip_count"} <= snapshot["cognitive_items"][0].keys()
     assert len(list((out / "sample_docs").glob("*.md"))) >= 2

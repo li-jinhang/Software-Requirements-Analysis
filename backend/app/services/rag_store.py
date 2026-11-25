@@ -1,6 +1,7 @@
 import hashlib
 import logging
 import math
+import os
 import re
 from functools import lru_cache
 from collections import Counter
@@ -17,8 +18,17 @@ log = logging.getLogger(__name__)
 
 @lru_cache
 def client():
+    path = str(settings.data_dir / "chroma_db")
+    if os.name == "nt" and not path.isascii():
+        # The pinned HNSW writer cannot persist binary indexes on non-ASCII Windows paths.
+        try:
+            relative = os.path.relpath(path)
+        except ValueError:  # The data directory can be on a different drive.
+            relative = path
+        if relative.isascii():
+            path = relative
     return chromadb.PersistentClient(
-        path=str(settings.data_dir / "chroma_db"),
+        path=path,
         settings=ChromaSettings(anonymized_telemetry=False),
     )
 

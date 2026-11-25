@@ -23,6 +23,11 @@ function eventStream(frames) {
 }
 const send = (callback = () => {}) => api.stream("2", 0, "我的讲解", new AbortController().signal, callback);
 
+test("unreachable API reports a readable connection error", async () => {
+  globalThis.fetch = async () => { throw new TypeError("Failed to fetch"); };
+  await assert.rejects(send(), /未能连接到服务/);
+});
+
 test("deletion sends the exact confirmation for the signed-in account only", async () => {
   const calls = [];
   api.token("fixture-account-token");
@@ -97,7 +102,7 @@ test("guided lesson uses the recommended target and restores the saved teacher m
     }
     throw Error(url);
   };
-  assert.deepEqual(await api.createGuidedSession("3", "互助同窗"), { id: "2", target: "5" });
+  assert.deepEqual(await api.createGuidedSession("3", "同班同学"), { id: "2", target: "5" });
   const previews = [];
   const { reply, scores } = await api.stream("2", 1, "", new AbortController().signal,
     text => previews.push(text), "lesson");
@@ -128,9 +133,9 @@ test("opening, focus, persona and notes match backend contracts", async () => {
     return url.endsWith("/stream") ? eventStream(frame("done", { message_id: 1 })) : response({ id: 2 });
   };
   api.token("test-token");
-  await api.createRemote("3", "严苛考官", "4");
+  await api.createRemote("3", "爱琢磨的同学", "4");
   await api.stream("2", 0, "", new AbortController().signal, () => {}, true);
-  await api.setPersona("2", "互助同窗");
+  await api.setPersona("2", "同班同学");
   await api.syncNote("3", "4", "复习边界");
   assert.deepEqual(JSON.parse(requests[0].body), { doc_id: 3, persona_type: "examiner", node_id: 4 });
   assert.match(requests[1].url, /2\/opening\/stream$/);
@@ -167,7 +172,7 @@ test("server workspace restores focus and system messages with authoritative rol
   assert.equal(space.courses[0].nodes[0].syncedNote, "原笔记");
   const history = await api.sessionHistory("2");
   assert.equal(history.left[0].who, "系统");
-  assert.equal(history.role, "严苛考官");
+  assert.equal(history.role, "爱琢磨的同学");
 });
 
 test("memory refresh preserves unsynced notes and exports use real server paths", async () => {

@@ -7,7 +7,7 @@ import tempfile
 
 from playwright.sync_api import expect, sync_playwright
 from live_lookup import ROOT, port, serve
-from online_sync import login
+from online_sync import login, start_demo_practice
 
 
 def run():
@@ -57,7 +57,7 @@ def run():
         page.goto(url)
         button = lambda name: page.get_by_role("button", name=name, exact=True)
         login(page, "student", "123456")
-        button("开讲").first.click()
+        start_demo_practice(page)
         button("开始教学").click()
         rubric = page.get_by_role("button", name="Agent 认知文档", exact=False)
         rubric.click()
@@ -84,7 +84,7 @@ def run():
 
         button("复习").click()
         expect(page.get_by_role("heading", name="还没有可复习的知识点", exact=True)).to_be_visible()
-        button("双窗工作台").click()
+        button("费曼学习").click()
         page.set_viewport_size({"width": 390, "height": 844})
         rubric.click()
         button("考核此条").first.click()

@@ -20,6 +20,7 @@ from app.services.model_profiles import ModelError, ModelRequired, require_profi
 from app.agents.contracts import AgentInput, MemoryUpdate, Citation, Token, Done, TurnMetadata, Preview, EVENT_NAMES
 from app.agents.contracts import CognitiveUpdate, EncyclopediaPush
 from app.agents.teaching.model import TeachingModelError
+from app.agents.teaching.prompts import PERSONAS
 
 router = APIRouter(prefix="/sessions", tags=["会话"])
 _guards = WeakValueDictionary()
@@ -94,10 +95,10 @@ def persona(id: int, body: PersonaChange, db=Depends(get_db), user=Depends(curre
         s = owned(db, Session, id, user)
         lock_active(db, id)
         if s.persona_type != body.persona_type:
-            labels = {"child": "启蒙小学生", "peer": "互助同窗", "examiner": "严苛考官"}
+            label, _ = PERSONAS[body.persona_type]
             s.persona_type = body.persona_type
             db.add(Message(session_id=id, window_type="feynman", sender_role="system",
-                           content="听众已切换为" + labels[body.persona_type],
+                           content="听众已切换为" + label,
                            meta_json=json.dumps({"persona_type": body.persona_type})))
         db.commit()
         return public(s)

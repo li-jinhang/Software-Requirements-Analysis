@@ -38,7 +38,15 @@ async function request(
   if (useSession && token()) headers.set("Authorization", "Bearer " + token());
   if (opts.body && !(opts.body instanceof FormData))
     headers.set("Content-Type", "application/json");
-  const res = await fetch(base + "/api/v1" + path, { ...opts, headers });
+  let res: Response;
+  try {
+    res = await fetch(base + "/api/v1" + path, { ...opts, headers });
+  } catch (error) {
+    if (error instanceof TypeError && !opts.signal?.aborted) {
+      throw new ApiError("未能连接到服务，请检查连接后重试。");
+    }
+    throw error;
+  }
   if (!res.ok) {
     const msg = await res.json().catch(() => ({}));
     const detail = msg.detail;
@@ -264,6 +272,18 @@ type CreatedLibrary = { document: DocumentRow; graph: Memory };
 export async function createLibrary(title: string) {
   const result = await json<CreatedLibrary>(libraryPath, post({ title }));
   return mapCourse(result.document, result.graph);
+}
+export async function importLibrary(file: File) {
+  const body = new FormData();
+  body.set("file", file);
+  const { library, sources } = await json<{ library: CreatedLibrary; sources: CreatedLibrary[] }>(
+    libraryPath + "/import", { method: "POST", body },
+  );
+  return [library, ...sources].map(({ document, graph }) => mapCourse(document, graph));
+}
+export async function exportLibrary(course: Course) {
+  const response = await request(`${libraryPath}/${course.id}/export`);
+  download(`${course.title}.资料库.zip`, await response.blob(), "application/zip");
 }
 export async function startLibrarySetup(title: string, requirements: string) {
   const doc = await json<DocumentRow>(libraryPath + "/setup", post({ title, requirements }));
@@ -676,7 +696,7 @@ export async function restoreSpace(
   userId: string,
   signal: AbortSignal,
 ): Promise<Space> {
-  const me = await json<{ username: string }>("/auth/me", { signal });
+  const me = await json<{ username: string; demo_build?: string }>("/auth/me", { signal });
   signal.throwIfAborted();
   if (userId !== "api:" + base + ":" + me.username) {
     window.dispatchEvent(new Event("fm:expired"));
@@ -712,6 +732,7 @@ export async function restoreSpace(
     drafts: ["", ""],
   }));
   return {
+    ...(me.demo_build ? { demoBuild: me.demo_build } : {}),
     courses,
     sessions,
     logs: bundles.flatMap((b) => b.logs),

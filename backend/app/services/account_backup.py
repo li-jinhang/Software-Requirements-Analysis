@@ -1,17 +1,14 @@
 """Portable backups of one local account, with fresh IDs on restore."""
 
 from contextlib import suppress
-from pathlib import Path
 import json
-import shutil
 from typing import Literal
 from uuid import uuid4
-from zipfile import ZIP_DEFLATED, ZipFile
+from zipfile import ZipFile
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import select
 
-from app.core.config import settings
 from app.db.models import (
     CognitiveItem, DiagnosticReport, Document, KnowledgeEdge, KnowledgeNode,
     Message, Session, User, WeaknessLog, next_account_id, public,
@@ -21,12 +18,12 @@ from app.schemas.responses import (
     WeaknessOut,
 )
 from app.services import rag_store
+from app.services.portable_archive import (
+    MAX_BACKUP, MAX_MANIFEST, restore_source, saved_chunks, source_file, verify_entries, write_archive,
+)
 
 
 MANIFEST = "account.json"
-MAX_BACKUP = 512 * 1024**2
-MAX_MANIFEST = 64 * 1024**2
-MAX_SOURCE = 20 * 1024**2
 
 
 class SavedDocument(DocumentOut):
@@ -84,19 +81,11 @@ def export_account(db, user, path):
 
     files = {}
     documents = []
-    uploads = (settings.data_dir / "uploads").resolve()
     for row in db.scalars(select(Document).where(Document.user_id == user.id).order_by(Document.id)):
-        source = Path(row.file_path).resolve()
-        has_source = source.is_relative_to(uploads) and source.is_file()
-        result = rag_store.collection().get(where={"doc_id": row.id}, include=["documents", "metadatas"])
-        chunks = [
-            text for _, text in sorted(zip(
-                (meta["chunk_index"] for meta in result["metadatas"]), result["documents"]
-            ))
-        ]
-        doc = SavedDocument(**public(row), has_source=has_source, chunks=chunks)
+        source = source_file(row)
+        doc = SavedDocument(**public(row), has_source=source is not None, chunks=saved_chunks(row.id))
         documents.append(doc)
-        if has_source:
+        if source is not None:
             files[doc.entry()] = source
     backup = AccountBackup(
         version=1, name=user.nickname, documents=documents,
@@ -109,27 +98,7 @@ def export_account(db, user, path):
         reports=rows(DiagnosticReport, DiagnosticReport.session_id.in_(sessions)),
     )
     db.commit()
-    data = backup.model_dump_json().encode("utf-8")
-    with ZipFile(path, "w", compression=ZIP_DEFLATED) as archive:
-        archive.writestr(MANIFEST, data)
-        for name, source in files.items():
-            archive.write(source, name)
-        verify_entries(archive, backup)
-    if path.stat().st_size > MAX_BACKUP:
-        raise ValueError("账号备份超过 512 MB。")
-
-
-def verify_entries(archive, backup):
-    infos = archive.infolist()
-    expected = {MANIFEST, *(doc.entry() for doc in backup.documents if doc.has_source)}
-    if len(infos) != len(expected) or {entry.filename for entry in infos} != expected:
-        raise ValueError("备份包含重复、缺失或无法识别的文件。")
-    if (
-        sum(entry.file_size for entry in infos) > MAX_BACKUP
-        or any(entry.file_size > (MAX_MANIFEST if entry.filename == MANIFEST else MAX_SOURCE)
-               for entry in infos)
-    ):
-        raise ValueError("账号备份超过文件大小限制。")
+    write_archive(path, MANIFEST, backup.model_dump_json().encode("utf-8"), files)
 
 
 def import_account(db, file):
@@ -139,7 +108,7 @@ def import_account(db, file):
             if archive.getinfo(MANIFEST).file_size > MAX_MANIFEST:
                 raise ValueError("备份索引过大。")
             backup = AccountBackup.model_validate_json(archive.read(MANIFEST))
-            verify_entries(archive, backup)
+            verify_entries(archive, MANIFEST, (doc.entry() for doc in backup.documents if doc.has_source))
             db.connection().exec_driver_sql("BEGIN IMMEDIATE")
             user = new_account(db, backup.name, imported=True)
             restore(db, user, archive, backup, paths, indexed)
@@ -169,17 +138,13 @@ def restore(db, user, archive, backup, paths, indexed):
         return rows
 
     def document_values(record):
-        path = settings.data_dir / "uploads" / (uuid4().hex + "." + record.file_type)
-        if record.has_source:
-            paths.append(path)
-            with path.open("xb") as dest, archive.open(record.entry()) as source:
-                shutil.copyfileobj(source, dest)
+        path = restore_source(archive, record.entry() if record.has_source else None, record.file_type, paths)
         values = record.model_dump(exclude={"id", "user_id", "has_source", "chunks", "library_id"})
         if record.parse_status == "processing" or (record.parse_status == "pending" and not record.library_setup):
             values.update(parse_status="failed", error_message=(
                 "导入后可重新生成" if record.library_setup else "导入后可重新解析"
             ))
-        return {**values, "user_id": user.id, "file_path": str(path), "chunk_count": len(record.chunks)}
+        return {**values, "user_id": user.id, "file_path": path, "chunk_count": len(record.chunks)}
 
     docs = insert(Document, backup.documents, document_values)
     for record in backup.documents:

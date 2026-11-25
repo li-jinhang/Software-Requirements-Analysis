@@ -182,25 +182,20 @@ def respond(state: TeachingState, runtime: Runtime[TeachingRuntime]):
         chunks = ["本轮定向考核已完成。可以查看认知条目的评估结果。"]
         question_kind = "complete"
     elif state["cognitive_items"] and not state["next_item"]:
-        chunks = ["这份认知文档的条目已全部掌握，可以结束本次教学并查看诊断报告。"]
+        chunks = ["我把前后的几个地方对上了，谢谢你讲给我听。"]
         question_kind = "complete"
     elif state["kind"] == "opening":
         item = state["next_item"]
-        if item and state.get("targeted_assessment"):
+        if item:
             chunks = model.followup(state, turn.persona_type)
-        elif item:
-            question = {"child": "你能打个生活中的比方，让我听懂这句话吗？",
-                        "peer": "你能用自己的话，解释这句话背后的道理吗？",
-                        "examiner": "请通过一个具体情形说明这条结论的依据。"}[turn.persona_type]
-            chunks = [f"我们先看「{item['section_title']}」里的一句：\n\n{item['statement']}\n\n{question}"]
         else:
             chunks = [opening(node["concept_name"], turn.persona_type)]
         question_kind = "deep"
     elif state["kind"] == "stuck":
-        chunks = [f"没关系，我们先查证「{node['concept_name']}」。点击“去右侧查证”，看过原文后再用自己的话讲一遍，好吗？"]
+        chunks = [f"我也还没弄清楚。要不要一起查查资料是怎么说「{node['concept_name']}」的？"]
         question_kind = "lookup"
     elif state["kind"] == "off_topic":
-        chunks = [f"我们先回到「{node['concept_name']}」。你能说说它的含义，并举一个例子吗？"]
+        chunks = [f"我刚才还在想「{node['concept_name']}」。它在什么情况下会用上呀？"]
         question_kind = "redirect"
     else:
         question_kind = "deep" if state.get("assessment") else "clarify"

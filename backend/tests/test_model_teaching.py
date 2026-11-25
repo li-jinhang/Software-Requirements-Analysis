@@ -118,7 +118,7 @@ def test_model_processing_and_binding_isolation(server):
                 self.end_headers()
                 cut = reply.index("模型") + 2
                 self.chunk(reply[:cut])
-                if context.get("content") == "中断测试":
+                if context.get("latest_explanation") == "中断测试":
                     return
                 assert release_reply.wait(timeout=10), "reply preview was not forwarded"
                 self.chunk(reply[cut:])

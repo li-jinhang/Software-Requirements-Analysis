@@ -4,6 +4,7 @@ import { reviews } from "./api";
 import { WorkspaceToolbar } from "./ui";
 import { CourseText } from "./LearningMessage";
 import type { Concept, Course, ReviewLists } from "./model";
+import { MasteryMeter } from "./MasteryProgress";
 import "./review.css";
 
 const formatTime = new Intl.DateTimeFormat("zh-CN", {
@@ -12,7 +13,7 @@ const formatTime = new Intl.DateTimeFormat("zh-CN", {
 
 function ReviewSteps() {
   return <ol className="review-steps" aria-label="复习三步">
-    <li><BookOpen aria-hidden="true" /><strong>听讲解或费曼开讲</strong><small>用自己的话讲清概念</small></li>
+    <li><BookOpen aria-hidden="true" /><strong>听AI讲或讲给AI</strong><small>用自己的话讲清概念</small></li>
     <li><ListChecks aria-hidden="true" /><strong>掌握度 ≥80%</strong><small>已掌握条目自动进入复习库</small></li>
     <li><Clock aria-hidden="true" /><strong>间隔回忆巩固</strong><small>按艾宾浩斯间隔复习</small></li>
   </ol>;
@@ -137,7 +138,7 @@ function ReviewDeck({ course, assess }: { course: Course; assess: (concept?: Con
                   <strong>{n.name}</strong>
                   <span>{n.score}%</span>
                 </div>
-                <progress max={100} value={n.score} aria-label={n.name + "掌握度"} />
+                <MasteryMeter score={n.score} label={n.name + "掌握度"} compact motion="focus" />
                 <small>{n.score >= 80 ? "去完成认知条目" : `还差 ${80 - n.score}% 解锁`} <ArrowRight aria-hidden="true" /></small>
               </button>
             ))}

@@ -78,7 +78,7 @@ def run():
         assert created.value.status == 201, (created.value.status, created.value.text()[:300])
         print("生成课程", round(time.monotonic() - started, 1), "s", flush=True)
         page.locator(".card").filter(has_text="有序数组上的二分查找").get_by_role(
-            "button", name="开讲"
+            "button", name="讲给AI", exact=True
         ).click()
         button("开始教学").click()
         trigger = page.get_by_role("button", name="Agent 认知文档", exact=False)

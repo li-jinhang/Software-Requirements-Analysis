@@ -121,13 +121,14 @@ export type Report = {
   comment?: string;
 };
 export type Space = {
+  demoBuild?: string;
   courses: Course[];
   sessions: Session[];
   reports: Report[];
   logs: Weak[];
 };
 export const uid = () => crypto.randomUUID();
-export const roles = ["启蒙小学生", "互助同窗", "严苛考官"];
+export const roles = ["刚入门的同学", "同班同学", "爱琢磨的同学"];
 export const mean = (nums: number[]) =>
   Math.round(nums.reduce((a, b) => a + b, 0) / (nums.length || 1));
 export function course(
@@ -245,7 +246,7 @@ export function initial(): Space {
           [0, 2, "特化"],
         ],
       ),
-    ],
+    ].map((sample) => ({ ...sample, isLibrary: true })),
     sessions: [],
     reports: [],
     logs: [],

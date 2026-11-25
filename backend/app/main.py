@@ -1,4 +1,6 @@
 from contextlib import asynccontextmanager
+import logging
+from chromadb.errors import InternalError as ChromaInternalError
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
 from app.services.model_profiles import ModelError, ModelRequired
@@ -78,6 +80,12 @@ app.add_middleware(
 @app.exception_handler(ModelError)
 async def model_error(request, exc):
     return JSONResponse(status_code=exc.status_code, content={"detail": str(exc)})
+
+
+@app.exception_handler(ChromaInternalError)
+async def index_error(request, exc):
+    logging.getLogger(__name__).error("资料索引访问失败", exc_info=exc)
+    return JSONResponse(status_code=503, content={"detail": "暂时无法读取资料索引，请稍后重试。"})
 
 
 @app.exception_handler(ModelRequired)

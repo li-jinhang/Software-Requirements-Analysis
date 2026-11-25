@@ -2,7 +2,7 @@
 import os
 
 from playwright.sync_api import expect, sync_playwright
-from online_sync import login
+from online_sync import login, start_demo_practice
 
 
 def run(browser):
@@ -17,8 +17,11 @@ def run(browser):
 
     prompt = page.get_by_role("dialog", name="请配置模型", exact=True)
     login(page, "student")
-    for action in ("开讲", "上传资料", "输入知识点生成"):
-        button(action).first.click()
+    for action in ("上传资料", "输入知识点生成", "讲给AI"):
+        if action == "讲给AI":
+            start_demo_practice(page)
+        else:
+            button(action).first.click()
         expect(prompt).to_be_visible()
         button("前往模型配置", prompt).click()
         settings = page.get_by_role("dialog", name="设置", exact=True)
@@ -31,7 +34,7 @@ def run(browser):
         "base_url": "http://127.0.0.1:1/v1",
     }).json()["id"]
     try:
-        button("开讲").first.click()
+        start_demo_practice(page)
         button("开始教学").click()
         left = page.get_by_label("讲解内容")
         expect(left).to_be_visible()

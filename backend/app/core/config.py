@@ -21,6 +21,7 @@ class Settings(BaseSettings):
     embedding_api_key: SecretStr = SecretStr("")
     jwt_secret: SecretStr = SecretStr("")
     seed_demo: bool = True
+    demo_build_id: str = ""  # Set to a release ID when deploying separate frontend/backend artifacts.
     cors_origins: list[str] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",

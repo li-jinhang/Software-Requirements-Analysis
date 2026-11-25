@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import {
   BaseEdge,
   Background,
@@ -15,6 +15,7 @@ import {
   useStore,
   type Edge,
   type EdgeProps,
+  type Node,
 } from "@xyflow/react";
 import "@xyflow/react/dist/style.css";
 import * as echarts from "echarts/core";
@@ -26,12 +27,15 @@ import { dimensions } from "./model";
 import { relationLabel, WorkspaceToolbar, type ColorTheme } from "./ui";
 import { CourseText } from "./LearningMessage";
 import "./insights.css";
-import { ArrowRight, GraduationCap, LayoutGrid, RotateCcw, Search, Trash2 } from "lucide-react";
-import { MasteryLegend, MasteryProgress, masteryForScore } from "./MasteryProgress";
+import { ArrowLeft, ArrowRight, GraduationCap, LayoutGrid, RotateCcw, Search, Trash2 } from "lucide-react";
+import { MasteryMeter, MasteryProgress, masteryForScore } from "./MasteryProgress";
+import { graphNeighborhood, neighborhoodPositions } from "./graphNeighborhood";
 echarts.use([RadarChart, RadarComponent, CanvasRenderer]);
 const graphFit = { padding: 0.18, minZoom: 0.025, maxZoom: 1.2 };
 const rowSpacing = 168;
 const colSpacing = 264;
+const graphMoveMs = 280;
+type LearningGraphNode = Node<{ label: ReactNode }>;
 
 function nodeBox(node: ReturnType<typeof useInternalNode>) {
   const w = node?.measured?.width ?? 164;
@@ -189,23 +193,62 @@ function graphPositions(concepts: Concept[], links: Link[], groupByModule: boole
   return positions;
 }
 
-function FitLoadedGraph({ layout }: { layout: string }) {
+function prefersReducedMotion() {
+  return typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+}
+
+function useGraphNodes(target: LearningGraphNode[], focusId: string | undefined) {
+  const [nodes, setNodes, change] = useNodesState(target);
+  const [moving, setMoving] = useState(false);
+  const displayed = useRef(nodes);
+  const previousFocus = useRef(focusId);
+  useLayoutEffect(() => { displayed.current = nodes; }, [nodes]);
+  useLayoutEffect(() => {
+    const switched = previousFocus.current !== focusId;
+    previousFocus.current = focusId;
+    if (!switched || prefersReducedMotion()) {
+      setMoving(false);
+      setNodes(target);
+      return;
+    }
+    const from = new Map(displayed.current.map((node) => [node.id, node.position]));
+    const start = performance.now();
+    let frame = 0;
+    setMoving(true);
+    const draw = (now: number) => {
+      const time = Math.max(0, Math.min(1, (now - start) / graphMoveMs));
+      const t = 1 - (1 - time) ** 3;
+      setNodes(time === 1 ? target : target.map((node) => {
+        const origin = from.get(node.id);
+        if (!origin) return { ...node, style: { opacity: t } };
+        return { ...node, position: {
+          x: origin.x + (node.position.x - origin.x) * t,
+          y: origin.y + (node.position.y - origin.y) * t,
+        } };
+      }));
+      if (time < 1) frame = requestAnimationFrame(draw);
+      else setMoving(false);
+    };
+    draw(start);
+    return () => cancelAnimationFrame(frame);
+  }, [target, focusId, setNodes]);
+  return { nodes, setNodes, change, moving };
+}
+
+function FitLoadedGraph({ layout, moving }: { layout: string; moving: boolean }) {
   const ready = useNodesInitialized();
   const { fitView } = useReactFlow();
   const width = useStore((state) => state.width);
   const height = useStore((state) => state.height);
   useEffect(() => {
-    if (!ready || !width || !height) return;
-    const reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
-    let inner = 0;
-    const outer = requestAnimationFrame(() => {
-      inner = requestAnimationFrame(() => void fitView({ ...graphFit, duration: reduced ? 0 : 200 }));
-    });
-    return () => {
-      cancelAnimationFrame(outer);
-      cancelAnimationFrame(inner);
-    };
-  }, [ready, layout, fitView, width, height]);
+    if (!ready || !width || !height || moving) return;
+    const reduced = prefersReducedMotion();
+    const timer = window.setTimeout(
+      () => void fitView({ ...graphFit, duration: reduced ? 0 : 215 }),
+      reduced ? 0 : 65,
+    );
+    return () => window.clearTimeout(timer);
+  }, [ready, layout, fitView, width, height, moving]);
   return null;
 }
 
@@ -228,16 +271,34 @@ export function Graph({
 }) {
   const [query, setQuery] = useState(""),
     [includeNeighbors, setIncludeNeighbors] = useState(true),
-    [selected, setSelected] = useState(c.nodes[0]?.id),
-    [lockedNode, setLockedNode] = useState<string | null>(null),
+    [detail, setDetail] = useState<{ id: string; anchor: { x: number; y: number }; open: boolean } | null>(null),
     [hoveredNode, setHoveredNode] = useState<string | null>(null),
     [hoveredEdge, setHoveredEdge] = useState<string | null>(null),
     [layoutTick, setLayoutTick] = useState(0);
+  const graphRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
+  const backRef = useRef<HTMLButtonElement>(null);
+  const returnFocus = useRef<string | null>(null);
+  const moveFocusToPanel = useRef(false);
+  const detailNode = c.nodes.find((node) => node.id === detail?.id);
+  const focusId = detail?.open ? detailNode?.id : undefined;
+  const anchor = focusId ? detail?.anchor : undefined;
 
   const trimmedQuery = query.trim().toLowerCase();
-  const isSearchActive = trimmedQuery.length > 0;
+  const isSearchActive = !focusId && trimmedQuery.length > 0;
+  const neighborhood = useMemo(
+    () => focusId ? graphNeighborhood(c.nodes, c.links, focusId) : null,
+    [c.nodes, c.links, focusId],
+  );
 
   const { matches, matchedIds, neighborIds } = useMemo(() => {
+    if (neighborhood) {
+      return {
+        matches: neighborhood.nodes,
+        matchedIds: new Set<string>(),
+        neighborIds: new Set<string>(),
+      };
+    }
     if (!trimmedQuery) {
       return {
         matches: [...c.nodes].sort((a, b) => b.importance - a.importance).slice(0, 40),
@@ -264,17 +325,15 @@ export function Graph({
       })
       .slice(0, 40);
     return { matches: combined, matchedIds: mIds, neighborIds: nIds };
-  }, [c.nodes, c.links, trimmedQuery, includeNeighbors]);
+  }, [c.nodes, c.links, trimmedQuery, includeNeighbors, neighborhood]);
 
-  const visibleEdges = useMemo(
-    () =>
-      c.links.filter(
-        (l) => matches.some((n) => n.id === l.from) && matches.some((n) => n.id === l.to),
-      ),
-    [c.links, matches],
-  );
+  const visibleEdges = useMemo(() => {
+    if (neighborhood) return neighborhood.edges;
+    const ids = new Set(matches.map((node) => node.id));
+    return c.links.filter(({ from, to }) => ids.has(from) && ids.has(to));
+  }, [c.links, matches, neighborhood]);
 
-  const activeFocusId = hoveredNode ?? lockedNode;
+  const activeFocusId = hoveredNode ?? focusId;
   const { highlightedEdges, connectedNodes, hasFocus } = useMemo(() => {
     const eSet = new Set<string>();
     const nSet = new Set<string>();
@@ -302,8 +361,10 @@ export function Graph({
     return { highlightedEdges: eSet, connectedNodes: nSet, hasFocus: false };
   }, [activeFocusId, hoveredEdge, visibleEdges]);
 
-  const initialNodes = useMemo(() => {
-    const positions = graphPositions(matches, c.links, !!c.isLibrary && !isSearchActive);
+  const initialNodes = useMemo<LearningGraphNode[]>(() => {
+    const positions = focusId && anchor
+      ? neighborhoodPositions(matches, focusId, anchor)
+      : graphPositions(matches, visibleEdges, !!c.isLibrary && !isSearchActive);
     return matches.map(n => {
       const label = status(n, space.logs);
       const isNeighbor = isSearchActive && neighborIds.has(n.id);
@@ -319,16 +380,13 @@ export function Graph({
             {isNeighbor && <span className="node-neighbor-tag">关联</span>}
           </div>
           <div className="node-mastery"><span>{label}</span><b>{n.score}%</b></div>
-          <progress max={100} value={n.score} aria-label={n.name + "掌握度"} />
+          <MasteryMeter score={n.score} label={n.name + "掌握度"} status={label} compact motion="focus" />
         </div> },
       };
     });
-  }, [matches, c.links, c.isLibrary, space.logs, isSearchActive, neighborIds]);
+  }, [matches, visibleEdges, c.isLibrary, space.logs, isSearchActive, neighborIds, focusId, anchor]);
 
-  const [nodes, setNodes, change] = useNodesState(initialNodes);
-  useEffect(() => {
-    setNodes(initialNodes);
-  }, [initialNodes, setNodes]);
+  const { nodes, setNodes, change, moving } = useGraphNodes(initialNodes, focusId);
 
   const styledNodes = useMemo(
     () =>
@@ -338,15 +396,14 @@ export function Graph({
         return {
           ...n,
           className:
-            "node mastery-node mastery-" +
-            masteryForScore(matches.find((m) => m.id === n.id)?.score ?? 0).tone +
+            n.className +
             (isDirect ? " is-search-match" : "") +
             (isNeighbor ? " is-search-neighbor" : "") +
             (hasFocus && !connectedNodes.has(n.id) ? " is-dimmed" : "") +
-            (activeFocusId === n.id ? " is-focused" : ""),
+            (activeFocusId === n.id || focusId === n.id ? " is-focused" : ""),
         };
       }),
-    [nodes, matches, isSearchActive, matchedIds, neighborIds, hasFocus, connectedNodes, activeFocusId],
+    [nodes, isSearchActive, matchedIds, neighborIds, hasFocus, connectedNodes, activeFocusId, focusId],
   );
 
   const flowEdges = useMemo(
@@ -403,17 +460,78 @@ export function Graph({
     [visibleEdges, nodes, isSearchActive, hasFocus, highlightedEdges, matchedIds],
   );
 
-  const resetLayout = useCallback(() => {
-    setNodes(initialNodes);
-    setLockedNode(null);
-    setLayoutTick((t) => t + 1);
-  }, [initialNodes, setNodes]);
+  const closeDetail = useCallback(() => {
+    if (!focusId) return;
+    returnFocus.current = focusId;
+    setDetail((previous) => previous ? { ...previous, open: false } : null);
+    setQuery("");
+    setHoveredNode(null);
+    setHoveredEdge(null);
+  }, [focusId]);
 
-  const current = matches.find((n) => n.id === selected) || matches.find((n) => matchedIds.has(n.id)) || matches[0];
+  function openDetail(node: LearningGraphNode, keyboard = false) {
+    if (node.id === focusId) {
+      if (keyboard) backRef.current?.focus();
+      return;
+    }
+    moveFocusToPanel.current = keyboard;
+    returnFocus.current = null;
+    setHoveredNode(null);
+    setHoveredEdge(null);
+    setDetail({ id: node.id, anchor: node.position, open: true });
+  }
+
+  useEffect(() => {
+    if (focusId) {
+      if (moveFocusToPanel.current) backRef.current?.focus({ preventScroll: true });
+      moveFocusToPanel.current = false;
+      return;
+    }
+    const id = returnFocus.current;
+    if (!id) return;
+    const frame = requestAnimationFrame(() => {
+      returnFocus.current = null;
+      const node = Array.from(graphRef.current?.querySelectorAll<HTMLElement>(".react-flow__node") ?? [])
+        .find((candidate) => candidate.dataset.id === id);
+      (node ?? searchRef.current)?.focus({ preventScroll: true });
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [focusId]);
+
+  useEffect(() => {
+    if (!focusId) return;
+    const escape = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing || event.defaultPrevented || document.querySelector("dialog[open]")) return;
+      event.preventDefault();
+      closeDetail();
+    };
+    window.addEventListener("keydown", escape);
+    return () => window.removeEventListener("keydown", escape);
+  }, [closeDetail, focusId]);
+
+  function onGraphKey(event: KeyboardEvent<HTMLDivElement>) {
+    if (event.key !== "Enter" && event.key !== " ") return;
+    const element = event.target instanceof HTMLElement ? event.target : null;
+    if (!element?.classList.contains("react-flow__node")) return;
+    const node = nodes.find((candidate) => candidate.id === element.dataset.id);
+    if (!node) return;
+    event.preventDefault();
+    event.stopPropagation();
+    openDetail(node, true);
+  }
+
+  function resetLayout() {
+    if (focusId) closeDetail();
+    else {
+      setNodes(initialNodes);
+      setLayoutTick((t) => t + 1);
+    }
+  }
+
   return (
     <>
       <WorkspaceToolbar>
-        <select className="graph-course" aria-label="图谱资料" value={c.id} onChange={(e) => { setLockedNode(null); setCourse(e.target.value); }}>
+        <select className="graph-course" aria-label="图谱资料" value={c.id} onChange={(e) => setCourse(e.target.value)}>
           {space.courses.map((course) => <option key={course.id} value={course.id}>
             {course.libraryId
               ? `${space.courses.find(library => library.id === course.libraryId)?.title || "补充资料"} / ${course.title}`
@@ -421,7 +539,8 @@ export function Graph({
           </option>)}
         </select>
         <label className="search graph-search"><Search aria-hidden="true" />
-          <input aria-label="搜索知识点" placeholder="搜索知识点…" value={query} onChange={(e) => { setLockedNode(null); setQuery(e.target.value); }} />
+          <input ref={searchRef} aria-label="搜索知识点" placeholder="搜索知识点…" value={query}
+            onChange={(e) => { closeDetail(); returnFocus.current = null; setQuery(e.target.value); }} />
         </label>
         {isSearchActive && (
           <button
@@ -438,21 +557,14 @@ export function Graph({
           <button type="button" className="compact-command" onClick={resetLayout} title="整理布局">
             <LayoutGrid aria-hidden="true" /><span>整理布局</span>
           </button>
-          <div className="graph-mastery-key">
-            <MasteryLegend />
-            <details>
-              <summary aria-label="掌握进度分档图例">图例</summary>
-              <MasteryLegend />
-            </details>
-          </div>
           <button className="primary compact-command" disabled={starting || !c.nodes.some((n) => n.score < 80)}
             onClick={() => guide(c)} title="按图谱顺序学习">
             <GraduationCap aria-hidden="true" /><span>按图谱顺序学习</span>
           </button>
         </div>
       </WorkspaceToolbar>
-      <div className="graphlayout">
-        <div className="graph">
+      <div className="graphlayout" data-detail-open={Boolean(focusId)}>
+        <div className="graph" ref={graphRef} onKeyDownCapture={onGraphKey}>
           {matches.length === 0 && (
             <div className="graph-empty">
               <p role="status">
@@ -469,54 +581,68 @@ export function Graph({
             edges={flowEdges}
             edgeTypes={edgeTypes}
             onNodesChange={change}
-            onNodeClick={(_, node) => {
-              setSelected(node.id);
-              setLockedNode((prev) => (prev === node.id ? null : node.id));
-            }}
+            onNodeClick={(_, node) => openDetail(node)}
             onNodeMouseEnter={(_, node) => setHoveredNode(node.id)}
             onNodeMouseLeave={() => setHoveredNode(null)}
             onEdgeMouseEnter={(_, edge) => setHoveredEdge(edge.id)}
             onEdgeMouseLeave={() => setHoveredEdge(null)}
-            onPaneClick={() => setLockedNode(null)}
             fitView
             fitViewOptions={graphFit}
             minZoom={graphFit.minZoom}
           >
-            <FitLoadedGraph layout={JSON.stringify(initialNodes.map((n) => [n.id, n.position.x, n.position.y])) + ":" + layoutTick} />
+            <FitLoadedGraph moving={moving} layout={JSON.stringify(initialNodes.map((n) => [n.id, n.position.x, n.position.y])) + ":" + layoutTick} />
             <Background color="var(--dot-grid)" gap={18} size={1} />
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
-        <aside className="node-detail">
-          {current ? (
-            <>
-              <small>节点详情</small>
-              <h2>{current.name}</h2>
-              <MasteryProgress key={current.id + ":" + current.score} score={current.score}
-                status={status(current, space.logs)} />
-              <div className="node-summary"><CourseText text={current.summary} /></div>
+        <aside className="graph-detail-slot" aria-labelledby="graph-detail-title"
+          aria-hidden={!focusId} {...(!focusId ? { inert: "" } : {})}>
+          {detailNode && (
+            <div className="node-detail" key={detailNode.id}>
+              <div className="node-detail-header">
+                <small>节点详情</small>
+                <button ref={backRef} className="quiet" type="button" onClick={closeDetail} title="返回完整图谱（Esc）">
+                  <ArrowLeft aria-hidden="true" /> 返回完整图谱
+                </button>
+              </div>
+              <h2 id="graph-detail-title">{detailNode.name}</h2>
+              <MasteryProgress key={detailNode.id + ":" + detailNode.score} score={detailNode.score}
+                status={status(detailNode, space.logs)} />
+              <div className="node-summary"><CourseText text={detailNode.summary} /></div>
+              {!!detailNode.points?.length && (
+                <>
+                  <h3>关键要点</h3>
+                  <ul className="node-detail-points">
+                    {detailNode.points.map((point, index) => <li key={index}><CourseText text={point} /></li>)}
+                  </ul>
+                </>
+              )}
+              {!!detailNode.note?.trim() && (
+                <>
+                  <h3>个人笔记</h3>
+                  <div className="node-summary"><CourseText text={detailNode.note} /></div>
+                </>
+              )}
               <h3>薄弱记录</h3>
               {space.logs
-                .filter((l) => l.node === current.id)
+                .filter((l) => l.node === detailNode.id)
                 .map((w) => (
                   <p key={w.id}>
                     {w.detail} · {w.resolved ? "已解决" : "待复讲"}
                   </p>
                 ))}
-              {!space.logs.some((l) => l.node === current.id) && (
+              {!space.logs.some((l) => l.node === detailNode.id) && (
                 <p>暂无薄弱记录。</p>
               )}
               <div className="tools graph-actions">
-                {current.score < 80 && (
-                  <button className="primary" disabled={starting} onClick={() => guide(c, current)}>
-                    <GraduationCap /> 听讲解
+                {detailNode.score < 80 && (
+                  <button className="primary" disabled={starting} onClick={() => guide(c, detailNode)}>
+                    <GraduationCap /> 听AI讲
                   </button>
                 )}
-                <button disabled={starting} onClick={() => start(c, current)}>专项费曼考核</button>
+                <button disabled={starting} onClick={() => start(c, detailNode)}>讲给AI</button>
               </div>
-            </>
-          ) : (
-            <p>选择图谱中的知识点查看详情。</p>
+            </div>
           )}
         </aside>
       </div>
@@ -803,7 +929,7 @@ export function Reports({
                           <div className="weakness-actions">
                             {guide && (
                               <button type="button" onClick={() => guide(course, matched)}>
-                                <GraduationCap aria-hidden="true" /> 听 AI 讲解
+                                <GraduationCap aria-hidden="true" /> 听AI讲
                               </button>
                             )}
                             {practice && (
@@ -858,7 +984,7 @@ export function Reports({
                           <strong>{n.name}</strong>
                           <small>{label} · {n.score}%</small>
                         </div>
-                        <progress value={n.score} max={100} aria-label={n.name + "掌握度"} />
+                        <MasteryMeter score={n.score} status={label} label={n.name + "掌握度"} compact motion="focus" />
                         {n.score < 80 && practice && (
                           <button type="button" className="quiet" onClick={() => practice(course, n)}>
                             专项复讲 <ArrowRight aria-hidden="true" />

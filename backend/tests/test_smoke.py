@@ -98,8 +98,8 @@ def test_demo_and_access(server):
     stats = api.get("/api/v1/admin/stats", headers=a).json()
     assert [stats[k] for k in ["total_users", "total_docs", "total_nodes", "total_sessions"]] == [
         2,
-        1,
-        8,
+        2,
+        28,
         1,
     ]
     ctx = api.get("/api/v1/documents/1/memory", headers=s).json()
@@ -108,7 +108,10 @@ def test_demo_and_access(server):
     assert api.get(path, headers=a).status_code == 404
     assert api.get(path, headers=s).json() == ctx["recommended_learning_path"]
     assert len(ctx["edges"]) == 9 and len(ctx["weaknesses"]) == 3
-    assert all(n["status"] == "unlearned" and n["mastery_score"] == 0 for n in ctx["nodes"])
+    assert [n["mastery_score"] for n in ctx["nodes"]] == [75, 100, 100, 22, 32, 75, 0, 75]
+    assert {n["status"] for n in ctx["nodes"]} == {"mastered", "learning", "weak", "unlearned"}
+    review = api.get("/api/v1/documents/1/due-reviews", headers=s).json()
+    assert len(review["due_items"]) == len(review["all_reviewable_items"]) == 4
     assert api.get("/api/v1/sessions/1/report", headers=s).json()["clarity_score"] == 91
     assert {m["window_type"] for m in api.get("/api/v1/sessions/1/messages", headers=s).json()} == {
         "feynman",
@@ -130,18 +133,18 @@ def test_fixture_evaluation_preserves_focus_without_certifying_mastery(fixture_s
     server = fixture_server
     h = login(server, "student", "123456")
     nodes = server.get("/api/v1/documents/1/graph", headers=h).json()["nodes"]
-    target = next(n["id"] for n in nodes if n["concept_name"] == "梯度下降")
+    focus = "学习率"
+    target = next(n["id"] for n in nodes if n["concept_name"] == focus)
     sid = server.post("/api/v1/sessions", headers=h, json={"doc_id": 1, "node_id": target}).json()["id"]
     url = f"/api/v1/sessions/{sid}/feynman/stream"
     questions = []
-    for topic in ["梯度下降", "过拟合", "过拟合"]:
+    for topic in [focus, "过拟合", "过拟合"]:
         frames = events(server.post(url, headers=h, json={"content": topic}))
         questions.append("".join(d["delta"] for k, d in frames if k == "token"))
-        if topic == "梯度下降":
+        if topic == focus:
             update = next(d["updates"][0] for k, d in frames if k == "memory_update")
             assert update["concept_name"] == topic and update["mastery_score"] < 80
-    assert "「梯度下降」" in questions[0]
-    assert all("「梯度下降」" in q for q in questions[1:])  # Unresolved criterion stays in focus.
+    assert all(f"「{focus}」" in q for q in questions)  # Unresolved criterion stays in focus.
     history = server.get(f"/api/v1/sessions/{sid}/messages", headers=h).json()
     assert all(m["meta_json"]["mode"] == "offline" for m in history
                if m["sender_role"] == "assistant" and m["window_type"] == "feynman")

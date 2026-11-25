@@ -275,9 +275,8 @@
   font: 600 12px var(--mono);
   color: var(--ink);
 }
-.rubric-overview progress {
+.rubric-overview .mastery-meter {
   margin: 5px 0 0;
-  height: 4px;
 }
 .rubric-intro {
   color: var(--muted);
