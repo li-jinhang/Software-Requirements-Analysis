@@ -1,0 +1,31 @@
+.review-deck { max-width: 760px; margin-inline: auto; }
+.review-toolbar, .review-card > header, .review-card > footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+.review-toolbar { margin-bottom: 14px; }
+.review-toolbar select { max-width: min(100%, 18rem); }
+.review-toolbar button[aria-pressed="true"] { border-color: var(--control-line); }
+.review-card {
+  padding: clamp(18px, 4vw, 32px);
+  border: 1px solid var(--line);
+  border-top: 3px solid var(--teal);
+  border-radius: 18px;
+  background: #fff;
+  overflow-wrap: anywhere;
+}
+.review-card h2 { font-size: clamp(25px, 4vw, 32px); margin-top: 16px; }
+.review-card > p { color: var(--muted); }
+.review-card > footer { margin-top: 24px; }
+.review-mastery { font-size: 13px; color: #15584f; background: #eaf5f1; border-radius: 8px; padding: 3px 9px; }
+.review-answer { border-radius: 12px; background: var(--surface); padding: 14px 16px; margin-top: 20px; }
+.review-answer :is(pre, table, .katex-display) { overflow-x: auto; }
+.review-answer > :last-child { margin-bottom: 0; }
+.review-feedback { margin: 0 0 12px; }
+.review-empty h2 { margin-top: 6px; }
+@media (max-width: 600px) {
+  .review-deck :is(button, select) { min-height: 44px; }
+}

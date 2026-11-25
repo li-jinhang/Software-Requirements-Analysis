@@ -43,9 +43,9 @@ def load_context(state: TeachingState, runtime: Runtime[TeachingRuntime]):
     previous = cognitive.last_focus(db, turn.session_id) if rows else None
     current = cognitive.focus(rows, previous, turn.target_node_id)
     session = db.get(Session, turn.session_id)
-    reviewing = session.mode == "review"
+    targeted_assessment = session.mode in {"assessment", "review"}
     remaining = []
-    if reviewing:
+    if targeted_assessment:
         by_id = {r["id"]: r for r in rows}
         remaining = [by_id[i] for i in session.target_item_ids[session.review_cursor:] if i in by_id]
         current = next(iter(remaining), None)
@@ -68,7 +68,7 @@ def load_context(state: TeachingState, runtime: Runtime[TeachingRuntime]):
         "trace": ["load_context"], "content": turn.content, "node": node,
         "memory": ctx, "history": history, "cognitive_items": rows, "accepted_early": False,
         "current_item_id": current["id"] if current else None, "next_item": current,
-        "reviewing": reviewing, "review_queue": remaining,
+        "targeted_assessment": targeted_assessment, "assessment_queue": remaining,
         "assessment": None, "assessment_error": "", "repair_count": 0,
         "high_quality": False, "streak": 0, "delta": 0,
         "updates": [], "memory_synced": False,
@@ -177,15 +177,15 @@ def respond(state: TeachingState, runtime: Runtime[TeachingRuntime]):
     if state["kind"] == "empty":
         chunks = ["这份资料没有可用知识点，请重新解析或上传资料后再练习。"]
         question_kind = "clarify"
-    elif state.get("reviewing") and not state["next_item"]:
-        chunks = ["本轮选定条目已复测完毕。你可以查看标记，或随时再选条目复习。"]
+    elif state.get("targeted_assessment") and not state["next_item"]:
+        chunks = ["本轮定向考核已完成。可以查看认知条目的评估结果。"]
         question_kind = "complete"
     elif state["cognitive_items"] and not state["next_item"]:
         chunks = ["这份认知文档的条目已全部掌握，可以结束本次教学并查看诊断报告。"]
         question_kind = "complete"
     elif state["kind"] == "opening":
         item = state["next_item"]
-        if item and state.get("reviewing"):
+        if item and state.get("targeted_assessment"):
             chunks = model.followup(state, turn.persona_type)
         elif item:
             question = {"child": "你能打个生活中的比方，让我听懂这句话吗？",

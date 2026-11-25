@@ -1,8 +1,6 @@
 """Course rubrics, evidence-backed marks and document-level mastery."""
 
 from collections import defaultdict
-from datetime import timedelta
-from app.db.models import now
 import json
 import re
 from uuid import uuid4
@@ -235,36 +233,12 @@ def document(db, doc_id, previous=None, target=None):
     }
 
 
-def schedule_next_review(item, outcome):
-    when = now()
-    if outcome == "mastered":
-        stage = min(5, (item.review_stage or 0) + 1)
-        delay = timedelta(days=(1, 3, 7, 15, 15)[stage - 1])
-    else:
-        stage = 0
-        delay = {"wrong": timedelta(minutes=10), "partial": timedelta(hours=12)}[outcome]
-    item.review_stage = stage
-    item.review_count = (item.review_count or 0) + 1
-    item.last_reviewed_at = when
-    item.next_review_at = when + delay
-
-
-def review_lists(db, doc_id):
-    learned = [r for r in items(db, doc_id) if r["status"] != "untested"]
-    learned.sort(key=lambda r: (WEIGHTS[r["status"]], r["review_count"], r["item_order"]))
-    when = now()
-    due = [r for r in learned if r["next_review_at"] and r["next_review_at"] <= when]
-    due.sort(key=lambda r: r["next_review_at"])
-    return {"due_items": due, "all_reviewable_items": learned}
-
-
 def apply_marks(db, doc_id, marks):
     touched = set()
     for mark in marks:
         item = db.get(CognitiveItem, mark["item_id"])
         if item is None or item.doc_id != doc_id:
             raise ValueError("认知条目与文档不一致")
-        schedule_next_review(item, mark["status"])
         item.status = mark["status"]
         item.user_evidence = mark["user_evidence"]
         item.issue_note = "；".join(issue["detail"] for issue in mark["issues"])

@@ -1,5 +1,5 @@
 import {
-  CognitiveDoc, CognitiveUpdate, Correction, ReviewLists,
+  CognitiveDoc, CognitiveUpdate, Correction, ReviewCard, ReviewLists,
   CourseCitation,
   Concept,
   Course,
@@ -227,11 +227,15 @@ export const persona = (role: string) =>
   ["child", "peer", "examiner"][roles.indexOf(role)];
 export const reviews = {
   get: (doc: string, signal?: AbortSignal) => json<ReviewLists>(`/documents/${doc}/due-reviews`, {signal}),
-  skip: (doc: string, item: number) => json<ReviewLists>(`/documents/${doc}/reviews/${item}/skip`, post({})),
-  advance: (doc: string) => json<ReviewLists>(`/documents/${doc}/simulate-time-advance`, post({days: 1})),
+  record: (doc: string, card: ReviewCard, outcome: "remembered" | "again", signal: AbortSignal) =>
+    json<ReviewLists>(`/documents/${doc}/reviews/${card.id}/result`, {
+      ...post({ outcome, review_count: card.review_count }), signal,
+    }),
+  skip: (doc: string, item: number, signal: AbortSignal) =>
+    json<ReviewLists>(`/documents/${doc}/reviews/${item}/skip`, { ...post({}), signal }),
 };
 async function createSession(doc: string, role: string, node?: string, options?: {
-  mode: "review" | "guided";
+  mode: "assessment" | "guided";
   target_item_ids?: number[];
 }) {
   const s = await (
@@ -244,8 +248,8 @@ async function createSession(doc: string, role: string, node?: string, options?:
   if ((s.id ?? s.session_id) == null) throw Error("会话响应缺少编号。");
   return { id: String(s.id ?? s.session_id), target: s.target_node_id };
 }
-export async function createRemote(doc: string, role: string, node?: string, reviewIds?: number[]) {
-  return (await createSession(doc, role, node, reviewIds ? { mode: "review", target_item_ids: reviewIds } : undefined)).id;
+export async function createRemote(doc: string, role: string, node?: string, assessmentIds?: number[]) {
+  return (await createSession(doc, role, node, assessmentIds ? { mode: "assessment", target_item_ids: assessmentIds } : undefined)).id;
 }
 export async function createGuidedSession(doc: string, role: string, node?: string) {
   const { id, target } = await createSession(doc, role, node, { mode: "guided" });
@@ -545,6 +549,10 @@ type HistoryRow = {
   content: string;
   meta_json: Meta;
 };
+function assessmentState(session?: SessionRow) {
+  return session && (session.mode === "assessment" || session.mode === "review")
+    ? { targeted: true, assessmentCompleted: session.review_completed } : {};
+}
 export async function sessionHistory(id: string, signal?: AbortSignal) {
   const messages = await json<HistoryRow[]>("/sessions/" + id + "/messages", {
     signal,
@@ -567,7 +575,7 @@ export async function sessionHistory(id: string, signal?: AbortSignal) {
   const session = rows.find((s) => String(s.id) === id);
   return {
     ...history,
-    ...(session?.mode === "review" ? {review: true, reviewCompleted: session.review_completed} : {}),
+    ...assessmentState(session),
     ...(session ? { role: roles[["child", "peer", "examiner"].indexOf(session.persona_type)], closed: session.status === "completed" } : {}),
   };
 }
@@ -603,7 +611,7 @@ export async function restoreSpace(
     focus: s.target_node_id ? String(s.target_node_id) : courses.find((c) => c.id === String(s.doc_id))?.nodes[0]?.id || "",
     role: roles[["child", "peer", "examiner"].indexOf(s.persona_type)],
     closed: s.status === "completed",
-    ...(s.mode === "review" ? {review: true, reviewCompleted: s.review_completed} : {}),
+    ...assessmentState(s),
     ...(s.mode === "guided" ? { guided: true } : {}),
     left: [],
     right: [],

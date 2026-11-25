@@ -42,8 +42,8 @@ class TeachingState(TypedDict, total=False):
     content: str
     kind: str
     node: dict | None
-    reviewing: bool
-    review_queue: list[dict]
+    targeted_assessment: bool
+    assessment_queue: list[dict]
     cognitive_items: list[dict]
     current_item_id: int | None
     next_item: dict | None

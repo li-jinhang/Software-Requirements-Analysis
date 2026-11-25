@@ -63,20 +63,16 @@ def create(body: SessionCreate, db=Depends(get_db), user=Depends(current_user)):
     require_profile("encyclopedia" if body.mode == "guided" else "feynman")
     from app.services import cognitive
     ids = list(dict.fromkeys(body.target_item_ids))
-    if body.mode == "review":
-        if ids:
-            valid = {i["id"] for i in cognitive.items(db, body.doc_id)}
-            if not set(ids) <= valid:
-                raise HTTPException(422, "复习条目不属于当前资料")
-        else:
-            queue = cognitive.review_lists(db, body.doc_id)
-            ids = [i["id"] for i in queue["due_items"] or queue["all_reviewable_items"]]
+    mode = "assessment" if body.mode == "review" else body.mode
+    if mode == "assessment":
         if not ids:
-            raise HTTPException(409, "暂无已学条目，可在认知文档中指定条目")
+            raise HTTPException(422, "请指定至少一个费曼考核条目")
+        if not set(ids) <= {i["id"] for i in cognitive.items(db, body.doc_id)}:
+            raise HTTPException(422, "考核条目不属于当前资料")
     elif ids:
-        raise HTTPException(422, "指定复习条目需要使用复习模式")
-    row = Session(user_id=user.id, target_node_id=target, target_item_ids=ids,
-                  **body.model_dump(exclude={"node_id", "target_item_ids"}))
+        raise HTTPException(422, "指定条目需要使用定向考核模式")
+    row = Session(user_id=user.id, target_node_id=target, target_item_ids=ids, mode=mode,
+                  **body.model_dump(exclude={"node_id", "target_item_ids", "mode"}))
     db.add(row)
     db.commit()
     return public(row)
@@ -135,7 +131,7 @@ def produce(id, content, window, user_id, events, action="explain"):
                 # Different sessions may teach the same document-wide rubric.
                 guards.enter_context(session_guard(("document", s.doc_id)))
             if s.review_completed and window == "feynman" and action != "opening":
-                raise HTTPException(409, "本轮复习已完成")
+                raise HTTPException(409, "本轮定向考核已完成")
             if action == "lesson" and s.mode != "guided":
                 raise HTTPException(409, "请从知识图谱或资料库开始 AI 讲解会话。")
             if action in ("opening", "lesson"):

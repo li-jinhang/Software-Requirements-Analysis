@@ -1,4 +1,3 @@
-from datetime import timedelta
 from app.schemas.responses import CognitiveDocOut, DocumentOut, NodeOut, GraphOut, ContextOut, LearningStep, ReviewListsOut
 from pathlib import Path
 from typing import Literal
@@ -6,13 +5,13 @@ from uuid import uuid4
 from fastapi import APIRouter, Depends, Form, UploadFile, HTTPException, Response
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import func, select, update
+from sqlalchemy import select
 from app.core.security import current_user
 from app.core.config import settings
 from app.db.database import get_db
-from app.db.models import CognitiveItem, Document, KnowledgeNode, now, public
-from app.schemas import Note, TimeAdvance
-from app.services import cognitive, memory_service as memory
+from app.db.models import CognitiveItem, Document, KnowledgeNode, public
+from app.schemas import Note, ReviewFeedback, TimeAdvance
+from app.services import cognitive, memory_service as memory, review
 from app.services.model_profiles import require_profile
 
 router = APIRouter(prefix="/documents", tags=["资料"])
@@ -29,35 +28,37 @@ def owned(db, model, id, user):
 @router.get("/{doc_id}/due-reviews", response_model=ReviewListsOut)
 def due_reviews(doc_id: int, db=Depends(get_db), user=Depends(current_user)):
     owned(db, Document, doc_id, user)
-    return cognitive.review_lists(db, doc_id)
+    return review.lists(db, doc_id)
 
 
-@router.post("/{doc_id}/reviews/{item_id}/skip", response_model=ReviewListsOut)
-def skip_review(doc_id: int, item_id: int, db=Depends(get_db), user=Depends(current_user)):
+def owned_review_card(db, doc_id, item_id, user):
     owned(db, Document, doc_id, user)
     item = db.get(CognitiveItem, item_id)
     if item is None or item.doc_id != doc_id:
         raise HTTPException(404, "条目不属于当前资料")
-    when = now()
-    # An already-handled reminder is idempotent, even across tabs.
-    db.execute(update(CognitiveItem).where(CognitiveItem.id == item_id,
-        CognitiveItem.status != "untested", CognitiveItem.next_review_at <= when
-    ).values(skip_count=CognitiveItem.skip_count + 1, next_review_at=when + timedelta(days=1))
-      .execution_options(synchronize_session=False))
-    db.commit()
-    db.expire_all()
-    return cognitive.review_lists(db, doc_id)
+    if not db.scalar(select(review.eligible(doc_id)).where(CognitiveItem.id == item_id)):
+        raise HTTPException(409, "该条目目前不满足复习条件")
+    return item
+
+
+@router.post("/{doc_id}/reviews/{item_id}/result", response_model=ReviewListsOut)
+def record_review(doc_id: int, item_id: int, body: ReviewFeedback, db=Depends(get_db), user=Depends(current_user)):
+    item = owned_review_card(db, doc_id, item_id, user)
+    review.record(db, item, body.outcome, body.review_count)
+    return review.lists(db, doc_id)
+
+
+@router.post("/{doc_id}/reviews/{item_id}/skip", response_model=ReviewListsOut)
+def skip_review(doc_id: int, item_id: int, db=Depends(get_db), user=Depends(current_user)):
+    review.skip(db, owned_review_card(db, doc_id, item_id, user))
+    return review.lists(db, doc_id)
 
 
 @router.post("/{doc_id}/simulate-time-advance", response_model=ReviewListsOut)
 def simulate_time(doc_id: int, body: TimeAdvance, db=Depends(get_db), user=Depends(current_user)):
     owned(db, Document, doc_id, user)
-    db.execute(update(CognitiveItem).where(CognitiveItem.doc_id == doc_id,
-        CognitiveItem.status != "untested", CognitiveItem.next_review_at.is_not(None)
-    ).values(next_review_at=func.strftime("%Y-%m-%d %H:%M:%f", CognitiveItem.next_review_at,
-                                         f"-{body.days} days")).execution_options(synchronize_session=False))
-    db.commit()
-    return cognitive.review_lists(db, doc_id)
+    review.advance(db, doc_id, body.days)
+    return review.lists(db, doc_id)
 
 
 @router.post("/generate-from-topic", status_code=201, response_model=DocumentOut)
@@ -74,7 +75,7 @@ def cognitive_doc(doc_id: int, session_id: int | None = None, db=Depends(get_db)
         session = owned(db, Session, session_id, user)
         if session.doc_id != doc_id:
             raise HTTPException(404, "会话不属于该资料")
-        if session.mode == "review":
+        if session.mode in {"assessment", "review"}:
             result = cognitive.document(db, doc_id)
             remaining = session.target_item_ids[session.review_cursor:]
             result["current_item_id"] = next(iter(remaining), None)

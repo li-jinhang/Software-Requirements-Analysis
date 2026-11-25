@@ -1,4 +1,4 @@
-"""Exercise voluntary and scheduled reviews through the same persisted LangGraph turns."""
+"""Keep active recall scheduling independent from LangGraph assessment."""
 
 from datetime import datetime, timedelta
 import json
@@ -8,24 +8,19 @@ from types import SimpleNamespace
 from test_langgraph import SOURCE, frames, teaching
 
 
-def test_schedule_advances_caps_and_resets(teaching, monkeypatch):
-    from app.services import cognitive
+def test_schedule_advances_caps_and_resets():
+    from app.services.review import next_interval
 
-    when = datetime(2026, 1, 2, 3)
-    monkeypatch.setattr(cognitive, "now", lambda: when)
-    item = SimpleNamespace(review_stage=0, review_count=0)
+    stage = 0
     cases = [
-        ("mastered", 1, timedelta(days=1)), ("mastered", 2, timedelta(days=3)),
-        ("mastered", 3, timedelta(days=7)), ("mastered", 4, timedelta(days=15)),
-        ("mastered", 5, timedelta(days=15)), ("mastered", 5, timedelta(days=15)),
-        ("wrong", 0, timedelta(minutes=10)), ("mastered", 1, timedelta(days=1)),
-        ("partial", 0, timedelta(hours=12)),
+        ("remembered", 1, timedelta(days=1)), ("remembered", 2, timedelta(days=3)),
+        ("remembered", 3, timedelta(days=7)), ("remembered", 4, timedelta(days=15)),
+        ("remembered", 5, timedelta(days=15)), ("remembered", 5, timedelta(days=15)),
+        ("again", 0, timedelta(minutes=10)), ("remembered", 1, timedelta(days=1)),
     ]
-    for n, (outcome, stage, delay) in enumerate(cases, 1):
-        cognitive.schedule_next_review(item, outcome)
-        assert (item.review_stage, item.review_count) == (stage, n)
-        assert item.last_reviewed_at == when and item.next_review_at == when + delay
-        when += delay
+    for outcome, expected, delay in cases:
+        stage, interval = next_interval(stage, outcome)
+        assert (stage, interval) == (expected, delay)
 
 
 def test_old_db_migration_is_repeatable(teaching):
@@ -64,43 +59,73 @@ def prepare(t):
     return "/api/v1/documents/1", start
 
 
-def create(t, ids=None):
-    body = dict(doc_id=1, mode="review")
+def create(t, ids=None, mode="assessment"):
+    body = dict(doc_id=1, mode=mode)
     if ids is not None:
         body["target_item_ids"] = ids
     return t.api.post("/api/v1/sessions", json=body)
 
 
-def test_due_selection_skip_and_simulation_are_document_scoped(teaching):
+def test_review_eligibility_and_schedule_are_independent_of_assessment(teaching):
+    from app.db.models import CognitiveItem, KnowledgeNode, Session
+
     t = teaching
     path, start = prepare(t)
+    assert t.api.get(path + "/due-reviews").json()["all_reviewable_items"] == []
+    with t.factory.begin() as db:
+        db.get(KnowledgeNode, 1).mastery_score = 80
+        db.get(KnowledgeNode, 3).mastery_score = 100
+        db.get(CognitiveItem, 4).status = "mastered"
+        db.add(CognitiveItem(id=5, doc_id=1, node_id=1, status="mastered", item_order=5,
+                             section_title="梯度下降", statement=SOURCE, key_criteria="能解释原因",
+                             updated_at=start - timedelta(days=2)))
     queue = t.api.get(path + "/due-reviews").json()
-    assert [i["id"] for i in queue["all_reviewable_items"]] == [2, 1]
-    assert [i["id"] for i in queue["due_items"]] == [2]
-    assert create(t).json()["target_item_ids"] == [2]
+    assert [i["id"] for i in queue["all_reviewable_items"]] == [5, 1]
+    assert [i["id"] for i in queue["due_items"]] == [5]
+    assert queue["due_items"][0]["mastery_score"] == 80
+    assert datetime.fromisoformat(queue["due_items"][0]["next_review_at"]) == start - timedelta(days=1)
+    assert create(t).status_code == 422
+    assert create(t, mode="review").status_code == 422
     assert create(t, [4]).status_code == 422
-    assert create(t, [3]).json()["target_item_ids"] == [3]
+    old_client = create(t, [3], mode="review").json()
+    assert old_client["target_item_ids"] == [3] and old_client["mode"] == "assessment"
     for _ in range(2):
-        queue = t.api.post(path + "/reviews/2/skip").json()
+        queue = t.api.post(path + "/reviews/5/skip").json()
         assert not queue["due_items"]
-        item = queue["all_reviewable_items"][0]
+        item = next(i for i in queue["all_reviewable_items"] if i["id"] == 5)
         assert item["skip_count"] == 1 and item["review_count"] == 0
         assert abs(datetime.fromisoformat(item["next_review_at"]) - start - timedelta(days=1)) < timedelta(seconds=5)
-    assert create(t, []).json()["target_item_ids"] == [2, 1]
     assert t.api.post(path + "/reviews/4/skip").status_code == 404
+    for item_id in (2, 3):
+        assert t.api.post(path + f"/reviews/{item_id}/result", json={"outcome": "remembered", "review_count": 0}).status_code == 409
+    with t.factory() as db:
+        session_count = db.query(Session).count()
+    for _ in range(2):
+        result = t.api.post(path + "/reviews/5/result", json={"outcome": "remembered", "review_count": 0})
+        assert result.is_success, result.text
+        item = next(i for i in result.json()["all_reviewable_items"] if i["id"] == 5)
+        assert (item["review_count"], item["review_stage"]) == (1, 1)
+    result = t.api.post(path + "/reviews/5/result", json={"outcome": "again", "review_count": 1}).json()
+    item = next(i for i in result["all_reviewable_items"] if i["id"] == 5)
+    assert (item["review_count"], item["review_stage"], item["status"]) == (2, 0, "mastered")
+    assert datetime.fromisoformat(item["next_review_at"]) - datetime.fromisoformat(item["last_reviewed_at"]) == timedelta(minutes=10)
+    with t.factory() as db:
+        assert db.query(Session).count() == session_count
+        assert db.get(KnowledgeNode, 1).mastery_score == 80
+        assert db.get(CognitiveItem, 5).user_evidence == ""
     assert t.api.post(path + "/simulate-time-advance", json={"days": -1}).status_code == 422
     queue = t.api.post(path + "/simulate-time-advance", json={"days": 2}).json()
-    assert [i["id"] for i in queue["due_items"]] == [1, 2]
+    assert {i["id"] for i in queue["due_items"]} == {1, 5}
     other = t.api.get("/api/v1/documents/2/due-reviews").json()["all_reviewable_items"][0]
     assert datetime.fromisoformat(other["next_review_at"]) == start + timedelta(hours=2)
 
 
-def test_review_turns_follow_selection_correct_and_complete(teaching):
+def test_targeted_assessment_follows_selection_and_does_not_record_review(teaching):
     from app.agents.teaching import rubric
     from app.db.models import CognitiveItem, Session
 
     t = teaching
-    path, _ = prepare(t)
+    path, start = prepare(t)
     s = create(t, [2, 1, 2]).json()
     assert s["target_item_ids"] == [2, 1] and not s["review_completed"]
     sid = s["id"]
@@ -141,7 +166,8 @@ def test_review_turns_follow_selection_correct_and_complete(teaching):
     assert t.api.post(base + "/feynman/stream", json={"content": SOURCE}).status_code == 409
     with t.factory() as db:
         assert db.get(Session, sid).review_completed
-        for item_id, interval in [(2, timedelta(minutes=10)), (1, timedelta(days=1))]:
+        for item_id, delay in [(2, -1), (1, 12)]:
             row = db.get(CognitiveItem, item_id)
-            assert row.review_count == 1 and row.next_review_at - row.last_reviewed_at == interval
+            assert row.review_count == 0 and row.last_reviewed_at is None
+            assert row.next_review_at == start + timedelta(hours=delay)
         assert db.get(CognitiveItem, 3).review_count == 0

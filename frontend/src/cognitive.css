@@ -24,9 +24,4 @@
   offset-anchor: center;
   offset-rotate: 0deg;
 }
-.due-reminder { max-width: 23rem; padding: .65rem .9rem; background: #fffbeb; color: #78350f; border-radius: .6rem; }
-.due-reminder span, .review-option small { display: block; font-size: .83rem; }
-.due-reminder button { margin: .3rem .4rem 0 0; }
-label.review-option { display: flex; flex-direction: row; align-items: baseline; gap: .65rem; padding: .45rem 0; }
-.review-option input[type=checkbox] { width: auto; }
-.review-state { color: #3730a3; }
+.assessment-state { color: #3730a3; }

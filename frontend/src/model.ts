@@ -22,7 +22,8 @@ export type Course = {
   nodes: Concept[];
   links: Link[];
 };
-export type ReviewLists = { due_items: CognitiveItem[]; all_reviewable_items: CognitiveItem[] };
+export type ReviewCard = CognitiveItem & { mastery_score: number; next_review_at: string };
+export type ReviewLists = { due_items: ReviewCard[]; all_reviewable_items: ReviewCard[] };
 export type CognitiveItem = {
   review_stage: number;
   review_count: number;
@@ -83,8 +84,8 @@ export type CourseCitation = {
 };
 export type Session = {
   guided?: boolean;
-  review?: boolean;
-  reviewCompleted?: boolean;
+  targeted?: boolean;
+  assessmentCompleted?: boolean;
   id: string;
   doc: string;
   focus: string;

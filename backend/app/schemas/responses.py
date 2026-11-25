@@ -36,9 +36,14 @@ class CognitiveItemOut(BaseModel):
     updated_at: datetime
 
 
+class ReviewCardOut(CognitiveItemOut):
+    mastery_score: int
+    next_review_at: datetime
+
+
 class ReviewListsOut(BaseModel):
-    due_items: list[CognitiveItemOut]
-    all_reviewable_items: list[CognitiveItemOut]
+    due_items: list[ReviewCardOut]
+    all_reviewable_items: list[ReviewCardOut]
 
 
 class CognitiveSection(BaseModel):
@@ -119,7 +124,7 @@ class ContextOut(GraphOut):
 
 
 class SessionOut(BaseModel):
-    mode: Literal["teach", "review", "guided"] = "teach"
+    mode: Literal["teach", "review", "assessment", "guided"] = "teach"
     target_item_ids: list[int] = []
     review_completed: bool = False
     id: int

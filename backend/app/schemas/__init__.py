@@ -47,8 +47,13 @@ class TimeAdvance(Input):
     days: int = Field(gt=0, le=3650)
 
 
+class ReviewFeedback(Input):
+    outcome: Literal["remembered", "again"]
+    review_count: int = Field(ge=0)
+
+
 class SessionCreate(PersonaChange):
-    mode: Literal["teach", "review", "guided"] = "teach"
+    mode: Literal["teach", "review", "assessment", "guided"] = "teach"
     target_item_ids: list[int] = Field(default_factory=list)
     doc_id: int = Field(gt=0)
     title: str = Field(default="费曼练习", min_length=1, max_length=150)

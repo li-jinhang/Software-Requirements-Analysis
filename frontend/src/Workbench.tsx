@@ -1,6 +1,5 @@
 import React, { useEffect, useRef, useState } from "react";
 import { lookupQuestion } from "./lookup";
-import { ReviewTools } from "./ReviewTools";
 import { animateCorrection } from "./correctionFlight";
 import { Dialog } from "./ui";
 import "./cognitive.css";
@@ -36,7 +35,7 @@ type PendingTurn = { question: string; reply: string };
 
 const markLabels = { mastered: "✓ 已掌握", partial: "◐ 待补全", wrong: "× 理解偏差", untested: "○ 待考核" };
 
-function Rubric({ doc, close, review, busy }: { doc: CognitiveDoc; close: () => void; review: (ids: number[]) => void; busy: boolean }) {
+function Rubric({ doc, close, assess, busy }: { doc: CognitiveDoc; close: () => void; assess: (ids: number[]) => void; busy: boolean }) {
   return <Dialog drawer title="Agent 认知文档" close={close}>
     <CourseText text={doc.overview} />
     <p>总体掌握度 <strong>{doc.mastery_score}%</strong> · 已掌握 {doc.mastered_count}/{doc.total}</p>
@@ -46,7 +45,7 @@ function Rubric({ doc, close, review, busy }: { doc: CognitiveDoc; close: () => 
       {group.items.map(item => <article key={item.id} className={"rubric-item " + item.status} data-item-id={item.id}>
         <header><b>{markLabels[item.status]}</b>
           {item.id === doc.current_item_id && <small>当前提问</small>}
-          <button className="quiet" disabled={busy} onClick={() => review([item.id])}>复习此条</button></header>
+          <button className="quiet" disabled={busy} onClick={() => assess([item.id])}>考核此条</button></header>
         <CourseText text={item.statement} />
         <details><summary>判定标准</summary><CourseText text={item.key_criteria} /></details>
         {item.user_evidence && <p>回答依据 · {item.user_evidence}</p>}
@@ -85,9 +84,9 @@ export default function Workbench({
   graph,
   report,
   canLearn,
-  modelRequired, enterReview,
+  modelRequired, enterAssessment,
 }: {
-  enterReview: (id: string, course: Course) => void;
+  enterAssessment: (id: string, course: Course) => void;
   online: boolean;
   space: Space;
   save: (fn: (s: Space) => Space) => void;
@@ -115,7 +114,7 @@ export default function Workbench({
   const streams = useRef<(AbortController | null)[]>([null, null]);
   useEffect(() => () => streams.current.forEach((ctrl) => ctrl?.abort()), []);
   const [rubric, setRubric] = useState<CognitiveDoc | null>(null);
-  const focusNode = session.review && rubric
+  const focusNode = session.targeted && rubric
     ? rubric.sections.flatMap(section => section.items).find(item => item.id === rubric.current_item_id)?.node_id
     : undefined;
   const n = c.nodes.find(node => node.id === String(focusNode ?? session.focus)) || c.nodes[0];
@@ -127,19 +126,17 @@ export default function Workbench({
     return () => clearTimeout(timer);
   }, [pushCount]);
   const arrivals = useRef(new Set<number>());
-  const [revision, setRevision] = useState(0);
-  const [startingReview, setStartingReview] = useState(false);
-  async function startReview(ids: number[]) {
-    if (startingReview || pending.some(Boolean)) return;
-    setStartingReview(true);
+  const [startingAssessment, setStartingAssessment] = useState(false);
+  async function startAssessment(ids: number[]) {
+    if (startingAssessment || pending.some(Boolean)) return;
+    setStartingAssessment(true);
     try {
-      if (await canLearn("feynman")) enterReview(await createRemote(c.id, session.role, undefined, ids), c);
+      if (await canLearn("feynman")) enterAssessment(await createRemote(c.id, session.role, undefined, ids), c);
     } catch (e) { if (!modelRequired(e)) setNotice((e as Error).message); }
-    finally { setStartingReview(false); }
+    finally { setStartingAssessment(false); }
   }
   function applyMarks(update: CognitiveUpdate) {
-    setRevision(n => n + 1);
-    if (update.review_completed) patch({reviewCompleted: true});
+    if (update.review_completed) patch({assessmentCompleted: true});
     const changes = new Map<number, CognitiveItem>(update.items.map(i => [i.id, i]));
     setRubric(doc => doc && ({ ...doc, current_item_id: update.current_item_id,
       mastery_score: update.mastery_score, mastered_count: update.mastered_count,
@@ -313,7 +310,7 @@ export default function Workbench({
   }
   function send(side: number, text: string) {
     text = text.trim();
-    if (!text || locked || (!side && session.reviewCompleted)) return;
+    if (!text || locked || (!side && session.assessmentCompleted)) return;
     if (online) void onlineSend(side, text);
     else void canLearn(side ? "encyclopedia" : "feynman");
   }
@@ -350,9 +347,6 @@ export default function Workbench({
           </button>
         </div>
         <div className="tools">
-          <ReviewTools doc={c.id} rubric={rubric} online={online} revision={revision}
-            busy={startingReview || pending.some(Boolean) || finishing || loadingHistory}
-            start={startReview} reportError={setNotice} />
           {online && rubric && <button className="rubric-trigger" onClick={() => setRubricOpen(true)}>
             Agent 认知文档（已掌握 {rubric.mastered_count}/{rubric.total}）
           </button>}
@@ -372,8 +366,8 @@ export default function Workbench({
           </button>
         </div>
       </div>
-      {session.review && <p className="review-state">{session.reviewCompleted ? "本轮复习已完成" : "正在复习选定条目"}</p>}
-      {rubricOpen && rubric && <Rubric doc={rubric} review={startReview} busy={startingReview || pending.some(Boolean)} close={() => setRubricOpen(false)} />}
+      {session.targeted && <p className="assessment-state">{session.assessmentCompleted ? "本轮定向考核已完成" : "正在考核选定条目"}</p>}
+      {rubricOpen && rubric && <Rubric doc={rubric} assess={startAssessment} busy={startingAssessment || pending.some(Boolean)} close={() => setRubricOpen(false)} />}
       {notice && <p role="status">{notice}</p>}
       {historyError && (
         <button onClick={() => setReload((v) => v + 1)}>刷新会话历史</button>
@@ -585,7 +579,7 @@ export default function Workbench({
                   ref={(el) => {
                     fields.current[i] = el;
                   }}
-                  readOnly={session.closed || (i === 0 && session.reviewCompleted) || !!pending[i]}
+                  readOnly={session.closed || (i === 0 && session.assessmentCompleted) || !!pending[i]}
                   value={
                     pending[i]?.question === session.drafts[i].trim()
                       ? ""
@@ -613,7 +607,7 @@ export default function Workbench({
                 <button
                   className="send"
                   aria-label={i ? "提交查证" : "发送讲解"}
-                  disabled={locked || (i === 0 && session.reviewCompleted) || !!pending[i] || !session.drafts[i].trim()}
+                  disabled={locked || (i === 0 && session.assessmentCompleted) || !!pending[i] || !session.drafts[i].trim()}
                   onClick={() => send(i, session.drafts[i])}
                 >
                   <ArrowUp />

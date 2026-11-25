@@ -239,7 +239,7 @@ export function Reports({
       <div className="pagehead">
         <div>
           <h1>历史诊断报告</h1>
-          <p>回看每轮教学的四维评分与复习计划。</p>
+          <p>回看每轮教学的四维评分与后续练习。</p>
         </div>
         {r && (
           <select
@@ -280,7 +280,7 @@ export function Reports({
                     r.comment || "",
                     "## 盲区复盘",
                     ...(r.weaknesses.length ? r.weaknesses : ["暂无记录"]),
-                    "## 复习计划",
+                    "## 后续练习",
                     r.plan.map((p) => "- " + p).join("\n"),
                   ].join("\n\n"),
                 )
@@ -307,7 +307,7 @@ export function Reports({
           ).map((x) => (
             <p key={x}>{x}</p>
           ))}
-          <h3>复习清单</h3>
+          <h3>后续练习</h3>
           <ol className="review-plan">
             {r.plan.map((p, i) => (
               <li key={i}>{p}</li>

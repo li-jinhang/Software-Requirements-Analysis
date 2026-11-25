@@ -12,6 +12,7 @@ import {
   Settings as SettingsIcon,
   GraduationCap,
   ChevronsUpDown,
+  RotateCcw,
 } from "lucide-react";
 import {
   connected,
@@ -38,6 +39,7 @@ import { newSession } from "./model";
 const Settings = lazy(() => import("./ModelSettings"));
 const Workbench = lazy(() => import("./Workbench"));
 const GuidedChat = lazy(() => import("./GuidedChat"));
+const Review = lazy(() => import("./Review"));
 import "./style.css";
 import "./guided-chat.css";
 const Graph = lazy(() =>
@@ -52,6 +54,7 @@ const pages = [
   ["tutor", "AI 讲解", GraduationCap],
   ["studio", "双窗工作台", PanelsTopLeft],
   ["graph", "知识图谱", Workflow],
+  ["review", "复习", RotateCcw],
   ["reports", "历史报告", Files],
   ["admin", "后台数据中心", ChartNoAxesColumn],
 ] as const;
@@ -539,6 +542,9 @@ function App() {
                 }
                 go={() => go("studio")}
               />
+            ) : page === "review" ? (
+              <Review courses={space.courses} course={c} online={online} select={setDoc} assess={begin}
+                account={() => setAuth(true)} library={() => go("library")} />
             ) : currentPage === "tutor" ? (
               guideSession && guideCourse ? (
                 <GuidedChat key={guideSession.id} session={guideSession} course={guideCourse}
@@ -563,9 +569,9 @@ function App() {
               <Workbench
                 online={online}
                 key={sess.id}
-                enterReview={(id, course) => {
-                  const review = newSession(id, course, course.nodes[0], sess.role);
-                  save(s => ({...s, sessions: [{...review, review: true}, ...s.sessions]}));
+                enterAssessment={(id, course) => {
+                  const assessment = newSession(id, course, course.nodes[0], sess.role);
+                  save(s => ({...s, sessions: [{...assessment, targeted: true}, ...s.sessions]}));
                   setSid(id);
                 }}
                 space={space}
