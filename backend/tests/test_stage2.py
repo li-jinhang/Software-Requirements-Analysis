@@ -293,6 +293,63 @@ def test_low_scoring_unrelated_tail_is_not_cited():
     assert not hybrid_rank("死锁", rows, {0: .1, 1: .14}, 4)
 
 
+@pytest.mark.parametrize("existing_column", [None, "is_library", "library_id"])
+def test_startup_preserves_legacy_documents_and_library_links(tmp_path, monkeypatch, existing_column):
+    from fastapi.testclient import TestClient
+    from sqlalchemy import create_engine
+    from sqlalchemy.orm import sessionmaker
+    from app import main
+    from app.db.models import Document, User
+
+    engine = create_engine("sqlite:///" + (tmp_path / "legacy.db").as_posix())
+    sessions = sessionmaker(engine)
+    monkeypatch.setattr(main, "engine", engine)
+    monkeypatch.setattr(main, "SessionLocal", sessions)
+    monkeypatch.setattr(main.settings, "data_dir", tmp_path)
+    monkeypatch.setattr(main.settings, "seed_demo", False)
+    try:
+        User.__table__.create(engine)
+        with sessions.begin() as db:
+            db.add(User(id=1, username="learner", nickname="学生", password_hash="fixture"))
+        with engine.begin() as conn:
+            conn.exec_driver_sql("""
+                CREATE TABLE documents (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES users(id),
+                    title TEXT NOT NULL, subject TEXT NOT NULL, file_type TEXT NOT NULL, file_path TEXT NOT NULL,
+                    parse_status TEXT NOT NULL, error_message TEXT NOT NULL, chunk_count INTEGER NOT NULL,
+                    structured_summary TEXT NOT NULL, created_at DATETIME NOT NULL)
+            """)
+            conn.exec_driver_sql("""
+                INSERT INTO documents VALUES
+                    (4,1,'原笔记','数学','md','','pending','',7,'旧摘要','2025-02-01'),
+                    (9,1,'合集','数学','md','','pending','',0,'','2025-03-01')
+            """)
+            if existing_column == "is_library":
+                conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN is_library BOOLEAN NOT NULL DEFAULT 0")
+                conn.exec_driver_sql("UPDATE documents SET is_library=1 WHERE id=9")
+            if existing_column == "library_id":
+                conn.exec_driver_sql("ALTER TABLE documents ADD COLUMN library_id INTEGER REFERENCES documents(id) ON DELETE SET NULL")
+                conn.exec_driver_sql("UPDATE documents SET library_id=9 WHERE id=4")
+
+        with TestClient(main.app), sessions.begin() as db:
+            note, library = db.get(Document, 4), db.get(Document, 9)
+            assert (note.title, note.structured_summary, note.chunk_count, note.user_id) == ("原笔记", "旧摘要", 7, 1)
+            assert note.is_library is False and library.library_id is None
+            assert library.is_library == (existing_column == "is_library")
+            assert note.library_id == (9 if existing_column == "library_id" else None)
+            library.is_library, note.library_id = True, 9
+
+        with TestClient(main.app), engine.connect() as conn:
+            assert conn.exec_driver_sql("SELECT id,is_library,library_id FROM documents ORDER BY id").all() == [
+                (4, 0, 9), (9, 1, None)]
+            assert [r[2] for r in conn.exec_driver_sql("PRAGMA index_info(ix_documents_library_id)")] == ["library_id"]
+            assert any(r[2:5] == ("documents", "library_id", "id") and r[6] == "SET NULL"
+                       for r in conn.exec_driver_sql("PRAGMA foreign_key_list(documents)"))
+            assert not conn.exec_driver_sql("PRAGMA foreign_key_check").all()
+    finally:
+        engine.dispose()
+
+
 def test_existing_sqlite_migrates_without_losing_memory(tmp_path):
     import subprocess
     import os

@@ -12,8 +12,11 @@ from sqlalchemy.orm import Session as OrmSession
 
 from app.core.config import settings
 from app.db.database import Base
+from app.db.library_migration import migrate_document_library
+from app.db.review_migration import migrate_reviews
 from app.db.models import (
     User,
+    RetiredAccountId,
     Document,
     KnowledgeNode,
     KnowledgeEdge,
@@ -27,6 +30,7 @@ from app.db.models import (
 
 MODELS = (
     User,
+    RetiredAccountId,
     Document,
     KnowledgeNode,
     KnowledgeEdge,
@@ -38,7 +42,7 @@ MODELS = (
 )
 MASK = "[REDACTED]"
 PRIVATE_FIELD = re.compile(
-    r"password|passwd|api_?key|credential|secret|token|authorization|^(access|refresh)$", re.I
+    r"password|passwd|api[_-]?key|credential|secret|token|authorization|^(access|refresh)$", re.I
 )
 TOKEN = re.compile(
     r"(?i)\b(?:sk-[\w-]{12,}|AIza[\w-]{30,}|gh[pousr]_[\w]{20,}|eyJ[\w-]+\.[\w-]+\.[\w-]+)|\$2[aby]\$\d{2}\$[./\w]{53}"
@@ -71,6 +75,10 @@ def private_values():
                     for k, v in json.loads(encoded).items()
                     if PRIVATE_FIELD.search(k) and isinstance(v, str)
                 )
+    capabilities = settings.data_dir / "capabilities" / "private.sqlite3"
+    if capabilities.is_file():
+        with closing(readonly(capabilities)) as db:
+            values.update(row[0] for row in db.execute("SELECT token FROM servers"))
     return {v for v in values if v}
 
 
@@ -112,7 +120,7 @@ def write_sanitized_db(source, destination):
         ) as copy:
             with closing(readonly(source)) as live:
                 live.backup(copy)
-            from app.db.review_migration import migrate_reviews
+            migrate_document_library(copy.execute)
             migrate_reviews(copy.execute)
             secrets = private_values() | {
                 r[0] for r in copy.execute("SELECT password_hash FROM users") if r[0]
@@ -123,20 +131,22 @@ def write_sanitized_db(source, destination):
             legacy_rubric = False
             with closing(sqlite3.connect(destination)) as dest:
                 dest.execute("PRAGMA foreign_keys=ON")
+                # An older document can belong to a library with a higher ID.
+                dest.execute("BEGIN")
+                dest.execute("PRAGMA defer_foreign_keys=ON")
                 for model in MODELS:
                     table = model.__tablename__
-                    if model is CognitiveItem and not copy.execute(
-                        "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (table,)
-                    ).fetchone():
-                        # An offline submission can precede the first application restart.
-                        legacy_rubric = True
+                    existing = {r[1] for r in copy.execute(f'PRAGMA table_info("{table}")')}
+                    if not existing and model in (CognitiveItem, RetiredAccountId):
+                        # These tables were introduced after the first release.
+                        if model is CognitiveItem:
+                            legacy_rubric = True
                         continue
                     cols = [c.name for c in model.__table__.columns]
                     fields = ",".join(f'"{c}"' for c in cols)
                     insert = (
                         f'INSERT INTO "{table}" ({fields}) VALUES ({",".join("?" for _ in cols)})'
                     )
-                    existing = {r[1] for r in copy.execute(f'PRAGMA table_info("{table}")')}
                     # Match the application's additive migrations even when exporting an unbooted checkout.
                     legacy_defaults = {("sessions", "target_node_id"): "NULL",
                                        ("knowledge_nodes", "key_points"): "'[]'"}
@@ -151,6 +161,7 @@ def write_sanitized_db(source, destination):
                                 clean[col] = ""
                             elif col in (
                                 "key_points",
+                                "target_item_ids",
                                 "related_node_ids",
                                 "meta_json",
                                 "weakness_summary",

@@ -157,8 +157,9 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
     from fastapi import FastAPI
     from fastapi.testclient import TestClient
     from app.api.v1 import admin
-    from app.db.models import CognitiveItem, KnowledgeNode, Message
-    from app.services import model_profiles
+    from app.db.database import Base
+    from app.db.models import CognitiveItem, Document, KnowledgeNode, Message, RetiredAccountId
+    from app.services import extension_store, model_profiles
     from scripts import export_submission_data as package
 
     db = course_db
@@ -177,7 +178,14 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
         )
     )
     model_profiles.save_account({"access": access, "refresh": refresh})
-    db.get(KnowledgeNode, 1).user_note = f"不应导出 {key} 或 {access}"
+    mcp_token = "opaque-mcp-connection-fixture"
+    with extension_store.store() as private:
+        private.execute("INSERT INTO servers(id,owner,name,url,token) VALUES(?,?,?,?,?)",
+                        ("test", 1, "本地连接", "https://example.invalid/mcp", mcp_token))
+    db.get(Document, 1).library_id = 2
+    db.get(Document, 2).is_library = True
+    db.add(RetiredAccountId(id=19))
+    db.get(KnowledgeNode, 1).user_note = f"不应导出 {key}、{mcp_token} 或 {access}"
     db.add(CognitiveItem(doc_id=1, node_id=1, section_title="基础", item_order=1,
                          statement="认识前提", key_criteria="解释前提", user_evidence=key,
                          status="partial", issue_note=refresh, review_count=3, skip_count=1))
@@ -211,6 +219,7 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
         key,
         access,
         refresh,
+        mcp_token,
         "hash-sentinel",
         "unknown-meta-private",
         "private-extra-table",
@@ -222,6 +231,10 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
             assert not any(s.encode() in response.content for s in forbidden)
             assert not copies[-1].parent.exists()
             if fmt == "json":
+                assert set(response.json()) == set(Base.metadata.tables)
+                assert response.json()["retired_account_ids"] == [{"id": 19}]
+                assert response.json()["documents"][0]["library_id"] == 2
+                assert response.json()["documents"][1]["is_library"] is True
                 assert "password_hash" not in response.json()["users"][0]
                 item = response.json()["cognitive_items"][0]
                 assert item["user_evidence"] == "[REDACTED]"
@@ -231,6 +244,9 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
                 exported = tmp_path / "download.db"
                 exported.write_bytes(response.content)
                 with closing(sqlite3.connect(exported)) as clean:
+                    assert clean.execute("SELECT id FROM retired_account_ids").fetchall() == [(19,)]
+                    assert clean.execute("SELECT is_library,library_id FROM documents ORDER BY id").fetchall() == [(0, 2), (1, None)]
+                    assert not clean.execute("PRAGMA foreign_key_check").fetchall()
                     assert clean.execute(
                         "SELECT password_hash,file_path FROM users,documents LIMIT 1"
                     ).fetchone() == ("", "")
@@ -255,6 +271,8 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
     with closing(sqlite3.connect(out / "feynman_sanitized.db")) as copy:
         assert copy.execute("SELECT review_count,skip_count FROM cognitive_items").fetchone() == (3, 1)
     snapshot = json.loads((out / "backend_data_snapshot.json").read_bytes())
+    assert set(snapshot) == set(Base.metadata.tables)
+    assert snapshot["retired_account_ids"] == [{"id": 19}]
     assert {"review_stage", "last_reviewed_at", "next_review_at", "review_count", "skip_count"} <= snapshot["cognitive_items"][0].keys()
     assert len(list((out / "sample_docs").glob("*.md"))) >= 2
     assert "推荐学习与复讲路径" in (out / "memory_sample.md").read_text(encoding="utf8")
@@ -269,11 +287,16 @@ def test_secret_exports_and_delivery_package(course_db, tmp_path, monkeypatch):
     )
     # Export before the first app restart on a teammate's pre-target/pre-rubric database.
     with closing(sqlite3.connect(source)) as old:
+        old.execute("DROP TABLE retired_account_ids")
+        old.execute("ALTER TABLE documents DROP COLUMN is_library")
         old.execute("DROP TABLE cognitive_items")
         old.execute("ALTER TABLE sessions RENAME COLUMN target_node_id TO previous_unused_target")
         old.commit()
     legacy = package.build(source, tmp_path)
     contents = json.loads((legacy / "backend_data_snapshot.json").read_bytes())
+    assert contents["retired_account_ids"] == [] and contents["documents"][0]["is_library"] is False
+    with closing(sqlite3.connect(source)) as original_db:
+        assert "is_library" not in {r[1] for r in original_db.execute("PRAGMA table_info(documents)")}
     assert contents["sessions"][0]["target_node_id"] is None and contents["cognitive_items"]
     (out / "sample_docs" / "unsafe.md").write_text("API_KEY=" + key)
     with pytest.raises(ValueError):

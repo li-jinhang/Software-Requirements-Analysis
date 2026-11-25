@@ -239,7 +239,8 @@ def test_upload_teach_lookup_report_export(fixture_server, tmp_path):
     assert records["total"] == 1 and records["items"][0]["id"] == doc["id"]
     assert api.get(base + "/admin/stats", headers=admin).json()["top_weaknesses"]
     snap = api.get(base + "/admin/export/json", headers=admin)
-    assert len(snap.json()) == 9 and snap.json()["cognitive_items"] and "password_hash" not in snap.text
+    assert len(snap.json()) == 10 and "retired_account_ids" in snap.json()
+    assert snap.json()["cognitive_items"] and "password_hash" not in snap.text
     backup = tmp_path / "restore.db"
     backup.write_bytes(api.get(base + "/admin/export/db", headers=admin).content)
     with sqlite3.connect(backup) as db:

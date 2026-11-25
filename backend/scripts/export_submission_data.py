@@ -17,8 +17,8 @@ if __name__ == "__main__" and python.exists() and Path(sys.prefix).resolve() != 
 
 sys.path.insert(0, str(BACKEND))
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select
-from app.db.database import db_path
+from sqlalchemy import inspect, select
+from app.db.database import Base, db_path
 from app.db.models import Document
 from app.main import app
 from app.services import data_export
@@ -61,8 +61,17 @@ def build(source, parent=OUTPUT.parent):
         secrets = data_export.write_sanitized_db(source, snapshot)
         with data_export.snapshot_session(snapshot) as db:
             snapshot_rows = data_export.snapshot_json(db)
-            if "cognitive_items" not in snapshot_rows:
-                raise ValueError("交付快照缺少认知文档表")
+            schema = inspect(db.connection())
+            expected = set(Base.metadata.tables)
+            if set(snapshot_rows) != expected or set(schema.get_table_names()) != expected:
+                raise ValueError("交付快照与业务表清单不一致")
+            for name, rows in snapshot_rows.items():
+                columns = set(Base.metadata.tables[name].columns.keys())
+                if {c["name"] for c in schema.get_columns(name)} != columns:
+                    raise ValueError(f"SQLite 快照字段不完整：{name}")
+                public_columns = columns - {"password_hash", "file_path"}
+                if any(row.keys() != public_columns for row in rows):
+                    raise ValueError(f"JSON 快照公开字段不一致：{name}")
             write_json(stage / "backend_data_snapshot.json", snapshot_rows)
             course = db.scalar(
                 select(Document)
@@ -89,7 +98,8 @@ SQLite 与 JSON 来自同一份业务快照，可用 SQLite 查看器打开。�
 | 表 | 内容 |
 | --- | --- |
 | users | 化名用户与角色 |
-| documents | 课程、解析状态与摘要 |
+| retired_account_ids | 已注销账号的保留编号，防止编号复用 |
+| documents | 课程、解析状态、摘要、资料库标记 is_library 与归属 library_id |
 | knowledge_nodes | 概念、重要度、掌握度与个人笔记 |
 | knowledge_edges | 知识点之间有方向的关系 |
 | cognitive_items | 认知条目、掌握标记与纠偏依据，复习阶段、上次及下次复习时间、评估与跳过次数 |

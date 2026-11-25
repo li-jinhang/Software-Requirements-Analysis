@@ -341,7 +341,8 @@ def run(browser):
         path = event.value.path()
         if fmt == "json":
             data = json.loads(path.read_bytes())
-            assert len(data) == 9 and data["cognitive_items"] and all("password_hash" not in u for u in data["users"])
+            assert len(data) == 10 and "retired_account_ids" in data
+            assert data["cognitive_items"] and all("password_hash" not in u for u in data["users"])
         else:
             with sqlite3.connect(path) as db:
                 assert db.execute("PRAGMA integrity_check").fetchone() == ("ok",)
