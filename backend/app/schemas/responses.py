@@ -39,14 +39,41 @@ class CognitiveItemOut(BaseModel):
     updated_at: datetime
 
 
+class ReviewSnippetOut(BaseModel):
+    doc_title: str = ""
+    chunk_index: int = 0
+    snippet: str
+
+
 class ReviewCardOut(CognitiveItemOut):
     mastery_score: int
     next_review_at: datetime
+    concept_name: str = ""
+    user_note: str = ""
+    next_remembered_days: int = 1
+    source_snippets: list[ReviewSnippetOut] = []
 
 
 class ReviewListsOut(BaseModel):
     due_items: list[ReviewCardOut]
     all_reviewable_items: list[ReviewCardOut]
+
+
+class ReviewChallengeOut(BaseModel):
+    available: bool = True
+    challenge: str = ""
+    hint: str = ""
+    notice: str = ""
+
+
+class ReviewVerifyOut(BaseModel):
+    available: bool = True
+    verdict: Literal["pass", "partial", "fail"]
+    score_hint: Literal["remembered", "again"]
+    feedback: str
+    missing_points: list[str] = []
+    matched_criteria: list[str] = []
+    notice: str = ""
 
 
 class CognitiveSection(BaseModel):

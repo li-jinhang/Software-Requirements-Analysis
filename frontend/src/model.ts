@@ -27,7 +27,29 @@ export type Course = {
   nodes: Concept[];
   links: Link[];
 };
-export type ReviewCard = CognitiveItem & { mastery_score: number; next_review_at: string };
+export type ReviewCard = CognitiveItem & {
+  mastery_score: number;
+  next_review_at: string;
+  concept_name?: string;
+  user_note?: string;
+  next_remembered_days?: number;
+  source_snippets?: CourseCitation[];
+};
+export type ReviewChallenge = {
+  available: boolean;
+  challenge: string;
+  hint: string;
+  notice: string;
+};
+export type ReviewVerifyResult = {
+  available: boolean;
+  verdict: "pass" | "partial" | "fail";
+  score_hint: "remembered" | "again";
+  feedback: string;
+  missing_points: string[];
+  matched_criteria: string[];
+  notice: string;
+};
 export type ReviewLists = { due_items: ReviewCard[]; all_reviewable_items: ReviewCard[] };
 export type CognitiveItem = {
   review_stage: number;

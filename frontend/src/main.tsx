@@ -972,6 +972,7 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
               />
             ) : page === "review" ? (
               <Review courses={space.courses} course={c} online={online} select={setDoc} assess={begin}
+                openGraph={(course) => { setDoc(course.id); go("graph"); }}
                 account={() => setAuth(true)} library={() => go("library")} />
             ) : currentPage === "tutor" ? (
               guideSession && guideCourse ? (

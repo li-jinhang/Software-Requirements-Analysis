@@ -52,6 +52,10 @@ class ReviewFeedback(Input):
     review_count: int = Field(ge=0)
 
 
+class ReviewAnswerIn(Input):
+    answer: str = Field(min_length=1, max_length=4000, pattern=r"\S")
+
+
 class SessionCreate(PersonaChange):
     mode: Literal["teach", "review", "assessment", "guided"] = "teach"
     target_item_ids: list[int] = Field(default_factory=list)

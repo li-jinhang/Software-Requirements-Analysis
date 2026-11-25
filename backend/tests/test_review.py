@@ -171,3 +171,107 @@ def test_targeted_assessment_follows_selection_and_does_not_record_review(teachi
             assert row.review_count == 0 and row.last_reviewed_at is None
             assert row.next_review_at == start + timedelta(hours=delay)
         assert db.get(CognitiveItem, 3).review_count == 0
+
+
+def test_due_reviews_traceability_and_ai_challenge_verify(teaching):
+    from app.db.models import CognitiveItem, KnowledgeNode
+    from app.services import rag_store, review
+
+    t = teaching
+    path, start = prepare(t)
+    with t.factory.begin() as db:
+        node = db.get(KnowledgeNode, 1)
+        node.mastery_score = 92
+        node.user_note = "注意负号决定下坡方向"
+        item = db.get(CognitiveItem, 1)
+        item.user_evidence = "沿负梯度方向逐步迭代更新参数。"
+        item.issue_note = "曾忽略学习率过大的震荡边界"
+        item.next_review_at = start - timedelta(hours=2)
+
+    rag_store.client.cache_clear()
+    rag_store.index(
+        1,
+        "梯度下降课程",
+        [
+            "梯度下降沿损失函数负梯度方向更新参数。学习率过大可能导致参数在极小值附近震荡。",
+            "梯度是偏导数向量，指向局部函数值增长最快的方向。",
+            "无关背景：神经网络的权重初始化方法有很多种。",
+        ],
+        local_only=True,
+    )
+
+    queue = t.api.get(path + "/due-reviews").json()
+    assert len(queue["due_items"]) == 1
+    card = queue["due_items"][0]
+    assert card["section_title"] == "梯度下降"
+    assert card["concept_name"] == "梯度下降"
+    assert card["key_criteria"] == "能解释方向"
+    assert card["user_evidence"] == "沿负梯度方向逐步迭代更新参数。"
+    assert card["issue_note"] == "曾忽略学习率过大的震荡边界"
+    assert card["user_note"] == "注意负号决定下坡方向"
+    assert card["review_stage"] == 0
+    assert card["next_remembered_days"] == 1
+    assert 1 <= len(card["source_snippets"]) <= 2
+    assert any("负梯度" in s["snippet"] for s in card["source_snippets"])
+
+    # Without a configured model, both endpoints degrade gracefully without raising.
+    t.monkeypatch.setattr(review, "resolve", lambda purpose: None)
+    ch_fallback = t.api.post(path + "/reviews/1/ai-challenge")
+    assert ch_fallback.status_code == 200
+    assert ch_fallback.json()["available"] is False
+    assert "核验判据" in ch_fallback.json()["hint"]
+    assert "尚未配置" in ch_fallback.json()["notice"]
+
+    vr_fallback = t.api.post(path + "/reviews/1/ai-verify", json={"answer": "沿负梯度下降"})
+    assert vr_fallback.status_code == 200
+    assert vr_fallback.json()["available"] is False
+    assert vr_fallback.json()["score_hint"] == "again"
+
+    # With a configured fixture model, structured challenge & verification respect schema and do not mutate schedule.
+    t.monkeypatch.setattr(
+        review,
+        "resolve",
+        lambda purpose: {"mode": "api", "model": "fixture", "base_url": "http://127.0.0.1:1/v1", "api_key": "k"}
+        if purpose == "feynman"
+        else None,
+    )
+
+    def fake_structured(schema, instructions, material):
+        payload = json.loads(material)
+        if "learner_answer" not in payload:
+            assert payload["issue_note"] == "曾忽略学习率过大的震荡边界"
+            return schema(
+                challenge="假设损失曲面前方突然变陡，此时该如何解释更新方向与步长风险？",
+                hint="回顾负号含义与过大步长的震荡条件",
+            )
+        return schema(
+            verdict="partial",
+            score_hint="again",
+            feedback="正确说明了负梯度方向，但未指出步长过大会导致震荡。",
+            missing_points=["学习率过大会引起震荡或发散"],
+            matched_criteria=["能解释方向"],
+        )
+
+    t.monkeypatch.setattr(review, "ModelConnection", lambda profile: SimpleNamespace(structured=fake_structured))
+    ch_live = t.api.post(path + "/reviews/1/ai-challenge").json()
+    assert ch_live["available"] is True
+    assert "更新方向" in ch_live["challenge"]
+
+    vr_live = t.api.post(path + "/reviews/1/ai-verify", json={"answer": "沿负梯度更新"}).json()
+    assert vr_live["available"] is True
+    assert vr_live["verdict"] == "partial"
+    assert vr_live["score_hint"] == "again"
+    assert vr_live["matched_criteria"] == ["能解释方向"]
+    assert vr_live["missing_points"] == ["学习率过大会引起震荡或发散"]
+
+    # AI checks never alter Ebbinghaus review count, stage, or schedule.
+    with t.factory() as db:
+        row = db.get(CognitiveItem, 1)
+        assert row.review_count == 0
+        assert row.review_stage == 0
+        assert row.next_review_at == start - timedelta(hours=2)
+
+    # Ineligible card & blank answer remain guarded.
+    assert t.api.post(path + "/reviews/3/ai-challenge").status_code == 409
+    assert t.api.post(path + "/reviews/1/ai-verify", json={"answer": "   "}).status_code == 422
+    assert t.api.post("/api/v1/documents/2/reviews/1/ai-challenge").status_code == 404
