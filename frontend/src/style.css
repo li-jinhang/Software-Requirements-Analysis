@@ -270,6 +270,18 @@ select {
 .local-account-actions {
   margin-top: 16px;
 }
+.account-entry {
+  display: grid;
+  justify-items: center;
+  align-content: center;
+  min-height: 100dvh;
+  margin: 0;
+  padding: 24px;
+  gap: 10px;
+  text-align: center;
+}
+.account-entry > p { color: var(--muted); }
+.account-entry > button { min-height: 44px; }
 main {
   margin-left: 264px;
 }

@@ -16,6 +16,7 @@ def run(browser):
         return owner.get_by_role("button", name=name, exact=True)
 
     prompt = page.get_by_role("dialog", name="请配置模型", exact=True)
+    login(page, "student")
     for action in ("开讲", "上传资料", "输入知识点生成"):
         button(action).first.click()
         expect(prompt).to_be_visible()
@@ -23,11 +24,6 @@ def run(browser):
         settings = page.get_by_role("dialog", name="设置", exact=True)
         expect(button("新建配置", settings)).to_be_visible()
         button("关闭", settings).click()
-
-    login(page, "student")
-    button("开讲").first.click()
-    expect(prompt).to_be_visible()
-    button("关闭", prompt).click()
 
     # Open a session with a binding, then clear it before attempting any inference.
     profile_id = page.request.post(api + "/profiles", data={

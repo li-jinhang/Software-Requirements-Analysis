@@ -8,10 +8,12 @@ export default function LocalAccounts({
   current,
   login,
   close,
+  logout,
 }: {
-  current: User;
+  current?: User;
   login: (user: User) => void;
   close: () => void;
+  logout?: () => void;
 }) {
   const [accounts, setAccounts] = useState<LocalAccount[]>();
   const [selected, setSelected] = useState<LocalAccount>();
@@ -21,7 +23,7 @@ export default function LocalAccounts({
   const [busy, setBusy] = useState(false);
   const picker = useRef<HTMLInputElement>(null);
   const active = accounts?.find(
-    (account) => accountId(account.username) === current.id,
+    (account) => accountId(account.username) === current?.id,
   );
 
   async function run(work: () => Promise<void>) {
@@ -161,7 +163,7 @@ export default function LocalAccounts({
             >
               导入账号
             </button>
-            {active && (
+            {active && current && (
               <button
                 type="button"
                 disabled={busy}
@@ -172,6 +174,7 @@ export default function LocalAccounts({
                 导出当前账号
               </button>
             )}
+            {logout && <button type="button" disabled={busy} onClick={logout}>退出当前账号</button>}
             <input
               ref={picker}
               type="file"

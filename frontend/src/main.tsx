@@ -83,9 +83,11 @@ class GraphLoadBoundary extends React.Component<React.PropsWithChildren> {
 function Auth({
   login,
   close,
+  logout,
 }: {
   login: (u: User) => void;
   close: () => void;
+  logout?: () => void;
 }) {
   const [reg, setReg] = useState(false),
     [name, setName] = useState(""),
@@ -158,28 +160,100 @@ function Auth({
           </button>
         </div>
       </form>
-      <h3>本地演示账号</h3>
-      <div className="tools">
-        <button onClick={() => login(student)}>学生演示</button>
-        <button onClick={() => login(admin)}>管理员演示</button>
-      </div>
+      {!connected && (
+        <>
+          <h3>本地演示账号</h3>
+          <div className="tools">
+            <button onClick={() => login(student)}>学生演示</button>
+            <button onClick={() => login(admin)}>管理员演示</button>
+          </div>
+        </>
+      )}
+      {logout && <button onClick={logout}>退出当前账号</button>}
     </Dialog>
   );
 }
 function workspaceRoute() {
   return location.hash.slice(1) || "library";
 }
+
+const userKey = connected ? "fm.user" : "fm.browserUser";
+
+function storedUser(): User | null {
+  try {
+    const user = JSON.parse(sessionStorage.getItem(userKey) || "null") as User | null;
+    if (!user || typeof user.id !== "string" || typeof user.name !== "string" || typeof user.admin !== "boolean") return null;
+    if (connected ? !currentService(user.id) || !token() : user.id.startsWith("api:")) return null;
+    return user;
+  } catch {
+    return null;
+  }
+}
+
+function AccountDialog({ current, login, close, logout }: {
+  current?: User;
+  login: (user: User) => void;
+  close: () => void;
+  logout?: () => void;
+}) {
+  return localModelSettings
+    ? <LocalAccounts current={current} login={login} close={close} logout={logout} />
+    : <Auth login={login} close={close} logout={logout} />;
+}
+
 function App() {
-  const [user, setUser] = useState<User>(
-      () => JSON.parse(sessionStorage.getItem("fm.user") || "null") || student,
-    ),
-    [space, setSpace] = useState(() => read(user.id)),
+  const [user, setUser] = useState(storedUser);
+  const [accountOpen, setAccountOpen] = useState(false);
+  const [message, setMessage] = useState("");
+
+  function login(next: User) {
+    const route = workspaceRoute();
+    const page = next.admin ? "admin" : !user && route !== "admin" &&
+      (route === "models" || pages.some(([key]) => key === route)) ? route : "library";
+    history.replaceState(history.state, "", "#" + page);
+    sessionStorage.setItem(userKey, JSON.stringify(next));
+    setMessage("");
+    setAccountOpen(false);
+    setUser(next);
+  }
+
+  function logout(reason = "") {
+    token("");
+    sessionStorage.removeItem(userKey);
+    setMessage(reason);
+    setAccountOpen(false);
+    setUser(null);
+  }
+
+  if (user) {
+    return <Workspace key={user.id} user={user} login={login} logout={logout} />;
+  }
+
+  return (
+    <main className="account-entry">
+      <div className="brandicon"><BookOpen aria-hidden="true" /></div>
+      <h1>智溯费曼</h1>
+      <p>登录后打开你的学习空间。</p>
+      {message && <p role="alert">{message}</p>}
+      <button className="primary" onClick={() => setAccountOpen(true)}>
+        {localModelSettings ? "选择本机账号" : "登录账号"}
+      </button>
+      {accountOpen && <AccountDialog login={login} close={() => setAccountOpen(false)} />}
+    </main>
+  );
+}
+
+function Workspace({ user, login, logout }: {
+  user: User;
+  login: (user: User) => void;
+  logout: (reason?: string) => void;
+}) {
+  const [space, setSpace] = useState(() => read(user.id)),
     [page, setPage] = useState(() =>
       workspaceRoute() === "models" ? "library" : workspaceRoute(),
     ),
     [settings, setSettings] = useState(() => workspaceRoute() === "models"),
     [modelPrompt, setModelPrompt] = useState(""),
-    [learningLogin, setLearningLogin] = useState(false),
     [auth, setAuth] = useState(false),
     [nav, setNav] = useState(false),
     [setup, setSetup] = useState(false),
@@ -198,15 +272,14 @@ function App() {
   const online = user.id.startsWith("api:");
   const latest = useRef(space);
   const identity = useRef(user.id);
+  useEffect(() => () => { identity.current = ""; }, []);
   const [ready, setReady] = useState(""),
     [retry, setRetry] = useState(0);
   useEffect(() => {
     if (!online) return;
     const ctrl = new AbortController();
     const expired = () => {
-      login(student);
-      setAuth(true);
-      setErr("登录已失效，请重新登录。");
+      logout("登录已失效，请重新选择账号。");
     };
     window.addEventListener("fm:expired", expired);
     if (!currentService(user.id) || !token()) {
@@ -310,27 +383,6 @@ function App() {
     setRid(id);
     go("reports");
   }
-  function login(u: User) {
-    if (!u.id.startsWith("api:")) token("");
-    const next = read(u.id);
-    sessionStorage.setItem("fm.user", JSON.stringify(u));
-    identity.current = u.id;
-    setErr("");
-    setReady("");
-    setUser(u);
-    latest.current = next;
-    setSpace(next);
-    setDoc("");
-    setSid(sessionStorage.getItem("fm.active:" + u.id) || "");
-    setGuideId(sessionStorage.getItem("fm.guided:" + u.id) || "");
-    setRid("");
-    setAuth(false);
-    setSettings(false);
-    setModelPrompt("");
-    setLearningLogin(false);
-    setSetup(false);
-    go(u.admin ? "admin" : "library");
-  }
   useEffect(() => {
     const key = "fm.active:" + user.id;
     if (sid) sessionStorage.setItem(key, sid);
@@ -379,11 +431,7 @@ function App() {
       setErr((e as Error).message);
       return false;
     }
-    if (!online) {
-      setLearningLogin(true);
-      return false;
-    }
-    return true;
+    return online;
   }
   async function begin(course: Course, n?: Concept) {
     if (!course.nodes.length) {
@@ -416,6 +464,17 @@ function App() {
   }
   const title = pages.find((p) => p[0] === currentPage)?.[1] || "学习资料库";
   const links = pages.filter((p) => p[0] !== "admin" || user.admin);
+  if (online && ready !== user.id) {
+    return (
+      <main className="account-entry">
+        <div className="brandicon"><BookOpen aria-hidden="true" /></div>
+        <h1>智溯费曼</h1>
+        {err ? <p role="alert">{err}</p> : <p role="status">正在读取当前账号的学习数据…</p>}
+        {err && <button className="primary" onClick={() => setRetry((value) => value + 1)}>重新加载</button>}
+        <button onClick={() => logout()}>返回账号选择</button>
+      </main>
+    );
+  }
   return (
     <div className="shell">
       {nav && (
@@ -498,17 +557,7 @@ function App() {
         <div className={"content " + (currentPage === "tutor" ? "tutor-content" : page === "studio" ? "studio" : "")}>
           {err && <p role="alert">{err}</p>}
           <Suspense fallback={<p>正在载入…</p>}>
-            {online && ready !== user.id ? (
-              <div className="box">
-                {err ? (
-                  <button onClick={() => setRetry((v) => v + 1)}>
-                    重新加载
-                  </button>
-                ) : (
-                  "正在读取当前账号的学习数据…"
-                )}
-              </div>
-            ) : page === "admin" ? (
+            {page === "admin" ? (
               user.admin ? (
                 <Admin online={online} />
               ) : (
@@ -636,12 +685,7 @@ function App() {
           />
         </Suspense>
       )}
-      {auth &&
-        (localModelSettings ? (
-          <LocalAccounts current={user} login={login} close={() => setAuth(false)} />
-        ) : (
-          <Auth login={login} close={() => setAuth(false)} />
-        ))}
+      {auth && <AccountDialog current={user} login={login} logout={() => logout()} close={() => setAuth(false)} />}
       {setup && c && (
         <Dialog
           title="开始费曼教学"
@@ -725,6 +769,7 @@ function App() {
               setErr("");
               try {
                 const id = await createRemote(c.id, role, node);
+                if (identity.current !== user.id) return;
                 const session = newSession(
                   id,
                   c,
@@ -758,20 +803,6 @@ function App() {
             }}
           >
             前往模型配置
-          </button>
-        </Dialog>
-      )}
-      {learningLogin && (
-        <Dialog title="选择学习账号" close={() => setLearningLogin(false)}>
-          <p>模型已配置。选择账号后即可开始教学并保存学习记录。</p>
-          <button
-            className="primary"
-            onClick={() => {
-              setLearningLogin(false);
-              setAuth(true);
-            }}
-          >
-            选择账号
           </button>
         </Dialog>
       )}

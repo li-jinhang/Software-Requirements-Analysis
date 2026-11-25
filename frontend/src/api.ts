@@ -584,6 +584,7 @@ export async function restoreSpace(
   signal: AbortSignal,
 ): Promise<Space> {
   const me = await json<{ username: string }>("/auth/me", { signal });
+  signal.throwIfAborted();
   if (userId !== "api:" + base + ":" + me.username) {
     window.dispatchEvent(new Event("fm:expired"));
     throw Error("请重新登录。");
