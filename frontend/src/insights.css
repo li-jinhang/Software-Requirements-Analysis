@@ -236,11 +236,6 @@
   font: 600 11px var(--mono);
   color: var(--ink);
 }
-.node-content progress {
-  --progress: var(--mastery-ink);
-  margin: 0;
-  height: 3px;
-}
 .node-detail {
   min-width: 0;
   overflow-y: auto;
@@ -261,6 +256,9 @@
   margin: 14px 0 6px;
   font-size: 17px;
   line-height: 1.35;
+}
+.node-detail .mastery-progress {
+  margin: 10px 0 16px;
 }
 .node-detail h3 {
   padding-top: 12px;
@@ -676,9 +674,8 @@
   font: 11.5px var(--mono);
   color: var(--muted);
 }
-.report-concept-chip progress {
+.report-concept-chip .mastery-meter {
   margin: 2px 0 0;
-  height: 3px;
 }
 .report-concept-chip .quiet {
   justify-self: start;

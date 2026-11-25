@@ -6,6 +6,7 @@ import { animateCorrection, scrollToLatestMessage } from "./correctionFlight";
 import { Dialog, WorkspaceToolbar } from "./ui";
 import "./cognitive.css";
 import { CourseText, CorrectionDetails, MessageSources } from "./LearningMessage";
+import { MasteryMeter } from "./MasteryProgress";
 import {
   History,
   FileCheck2,
@@ -48,7 +49,7 @@ function Rubric({ doc, close, assess, busy }: { doc: CognitiveDoc; close: () => 
     <div className="rubric-overview">
       <div className="row between"><span>总体掌握度 <strong>{doc.mastery_score}%</strong></span>
         <small>已掌握 {doc.mastered_count}/{doc.total}</small></div>
-      <progress max={100} value={doc.mastery_score} aria-label="认知文档掌握度" />
+      <MasteryMeter score={doc.mastery_score} label="认知文档掌握度" compact />
     </div>
   }>
     <div className="rubric-intro"><CourseText text={doc.overview} /></div>

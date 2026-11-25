@@ -27,7 +27,7 @@ import { relationLabel, WorkspaceToolbar, type ColorTheme } from "./ui";
 import { CourseText } from "./LearningMessage";
 import "./insights.css";
 import { ArrowRight, GraduationCap, LayoutGrid, RotateCcw, Search, Trash2 } from "lucide-react";
-import { MasteryLegend, MasteryProgress, masteryForScore } from "./MasteryProgress";
+import { MasteryLegend, MasteryMeter, MasteryProgress, masteryForScore } from "./MasteryProgress";
 echarts.use([RadarChart, RadarComponent, CanvasRenderer]);
 const graphFit = { padding: 0.18, minZoom: 0.025, maxZoom: 1.2 };
 const rowSpacing = 168;
@@ -319,7 +319,7 @@ export function Graph({
             {isNeighbor && <span className="node-neighbor-tag">关联</span>}
           </div>
           <div className="node-mastery"><span>{label}</span><b>{n.score}%</b></div>
-          <progress max={100} value={n.score} aria-label={n.name + "掌握度"} />
+          <MasteryMeter score={n.score} label={n.name + "掌握度"} status={label} compact motion="focus" />
         </div> },
       };
     });
@@ -338,15 +338,14 @@ export function Graph({
         return {
           ...n,
           className:
-            "node mastery-node mastery-" +
-            masteryForScore(matches.find((m) => m.id === n.id)?.score ?? 0).tone +
+            n.className +
             (isDirect ? " is-search-match" : "") +
             (isNeighbor ? " is-search-neighbor" : "") +
             (hasFocus && !connectedNodes.has(n.id) ? " is-dimmed" : "") +
             (activeFocusId === n.id ? " is-focused" : ""),
         };
       }),
-    [nodes, matches, isSearchActive, matchedIds, neighborIds, hasFocus, connectedNodes, activeFocusId],
+    [nodes, isSearchActive, matchedIds, neighborIds, hasFocus, connectedNodes, activeFocusId],
   );
 
   const flowEdges = useMemo(
@@ -442,7 +441,7 @@ export function Graph({
             <MasteryLegend />
             <details>
               <summary aria-label="掌握进度分档图例">图例</summary>
-              <MasteryLegend />
+              <MasteryLegend detailed />
             </details>
           </div>
           <button className="primary compact-command" disabled={starting || !c.nodes.some((n) => n.score < 80)}
@@ -858,7 +857,7 @@ export function Reports({
                           <strong>{n.name}</strong>
                           <small>{label} · {n.score}%</small>
                         </div>
-                        <progress value={n.score} max={100} aria-label={n.name + "掌握度"} />
+                        <MasteryMeter score={n.score} status={label} label={n.name + "掌握度"} compact motion="focus" />
                         {n.score < 80 && practice && (
                           <button type="button" className="quiet" onClick={() => practice(course, n)}>
                             专项复讲 <ArrowRight aria-hidden="true" />

@@ -141,9 +141,8 @@
   font: 600 12px var(--mono);
   color: var(--muted);
 }
-.review-unlock-item progress {
+.review-unlock-item .mastery-meter {
   margin: 2px 0;
-  height: 3px;
 }
 .review-unlock-item small {
   display: inline-flex;

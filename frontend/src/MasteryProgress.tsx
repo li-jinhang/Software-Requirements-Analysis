@@ -1,43 +1,82 @@
 import type { CSSProperties } from "react";
-import { Check } from "lucide-react";
+import { Circle, Crown, Flame, Leaf, Snowflake, Sparkles, Waves, Zap } from "lucide-react";
 import "./mastery-progress.css";
 
 const bands = [
-  { tone: "empty", max: 0, range: "0%" },
-  { tone: "low", max: 39, range: "1–39%" },
-  { tone: "mid", max: 79, range: "40–79%" },
-  { tone: "high", max: 99, range: "80–99%" },
-  { tone: "full", max: 100, range: "100%" },
+  { tone: "empty", max: 0, range: "0%", name: "未激活", icon: Circle },
+  { tone: "start", max: 20, range: "1–20%", name: "初启", icon: Sparkles },
+  { tone: "ice", max: 40, range: "21–40%", name: "冰封", icon: Snowflake },
+  { tone: "water", max: 60, range: "41–60%", name: "流动", icon: Waves },
+  { tone: "growth", max: 75, range: "61–75%", name: "生长", icon: Leaf },
+  { tone: "charge", max: 90, range: "76–90%", name: "冲刺", icon: Zap },
+  { tone: "fire", max: 100, range: "91–100%", name: "燃烧完成", icon: Flame },
 ] as const;
 
 export function masteryForScore(score: number) {
   const value = Number.isFinite(score) ? Math.min(100, Math.max(0, Math.trunc(score))) : 0;
-  const band = bands.find((entry) => value <= entry.max) ?? bands[4];
-  return { value, tone: band.tone };
+  const band = bands.find((entry) => value <= entry.max) ?? bands[bands.length - 1];
+  return { value, ...band };
 }
 
-export function MasteryLegend() {
+export function MasteryLegend({ detailed = false }: { detailed?: boolean }) {
   return (
     <ul className="mastery-legend" aria-label="掌握进度分档">
-      {bands.map(({ tone, range }) => (
-        <li key={tone} data-mastery={tone}><span aria-hidden="true" />{range}</li>
+      {bands.map(({ tone, range, name }) => (
+        <li key={tone} data-mastery={tone} title={name}>
+          <span className="mastery-swatch" aria-hidden="true" />
+          {detailed && <span>{name}</span>}
+          <span>{range}</span>
+        </li>
       ))}
     </ul>
   );
 }
 
-export function MasteryProgress({ score, status }: { score: number; status: string }) {
-  const { tone, value } = masteryForScore(score);
-  const label = `${status} · ${value}%`;
+type MeterProps = {
+  score: number;
+  label: string;
+  status?: string;
+  compact?: boolean;
+  motion?: "entry" | "focus";
+};
+
+export function MasteryMeter({ score, label, status, compact, motion = "entry" }: MeterProps) {
+  const { tone, name, value, icon: Icon } = masteryForScore(score);
+  return (
+    <span className={compact ? "mastery-meter is-compact" : "mastery-meter"}
+      data-mastery={tone} data-motion={motion}
+      role="progressbar" aria-label={label} aria-valuemin={0} aria-valuemax={100} aria-valuenow={value}
+      aria-valuetext={[status, value + "%", name].filter(Boolean).join(" · ")}
+      style={{ "--mastery-value": `${value}%` } as CSSProperties}>
+      <span className="mastery-track" aria-hidden="true">
+        {value > 0 && <span className="mastery-fill" />}
+      </span>
+      {value > 0 && (
+        <span className="mastery-tip" aria-hidden="true">
+          <Icon className="mastery-tip-icon" />
+        </span>
+      )}
+    </span>
+  );
+}
+
+export function MasteryProgress({ score, status, label = "知识点掌握进度" }: {
+  score: number;
+  status?: string;
+  label?: string;
+}) {
+  const { tone, name, value, icon } = masteryForScore(score);
+  const StageIcon = value === 100 ? Crown : icon;
   return (
     <div className="mastery-progress" data-mastery={tone}>
-      <b>{label}</b>
-      <div className="mastery-meter" role="progressbar" aria-label="知识点掌握进度"
-        aria-valuemin={0} aria-valuemax={100} aria-valuenow={value} aria-valuetext={label}
-        style={{ "--mastery-value": `${value}%` } as CSSProperties}>
-        <span className="mastery-track" aria-hidden="true"><span className="mastery-fill" /></span>
-        <span className="mastery-mark" aria-hidden="true">{tone === "full" && <Check />}</span>
+      <div className="mastery-caption">
+        <span className="mastery-readout">
+          <span>{status || "掌握度"}</span>
+          <b>{value}%</b>
+        </span>
+        <span className="mastery-stage"><StageIcon aria-hidden="true" />{name}</span>
       </div>
+      <MasteryMeter score={score} label={label} status={status} />
     </div>
   );
 }

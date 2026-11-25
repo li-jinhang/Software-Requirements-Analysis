@@ -4,6 +4,7 @@ import { reviews } from "./api";
 import { WorkspaceToolbar } from "./ui";
 import { CourseText } from "./LearningMessage";
 import type { Concept, Course, ReviewLists } from "./model";
+import { MasteryMeter } from "./MasteryProgress";
 import "./review.css";
 
 const formatTime = new Intl.DateTimeFormat("zh-CN", {
@@ -137,7 +138,7 @@ function ReviewDeck({ course, assess }: { course: Course; assess: (concept?: Con
                   <strong>{n.name}</strong>
                   <span>{n.score}%</span>
                 </div>
-                <progress max={100} value={n.score} aria-label={n.name + "掌握度"} />
+                <MasteryMeter score={n.score} label={n.name + "掌握度"} compact motion="focus" />
                 <small>{n.score >= 80 ? "去完成认知条目" : `还差 ${80 - n.score}% 解锁`} <ArrowRight aria-hidden="true" /></small>
               </button>
             ))}

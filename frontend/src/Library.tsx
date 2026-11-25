@@ -27,6 +27,7 @@ import {
 } from "./api";
 import { Dialog, relationLabel } from "./ui";
 import CourseLibrarySetup from "./CourseLibrarySetup";
+import { MasteryMeter, MasteryProgress } from "./MasteryProgress";
 import "./library.css";
 
 const setupLabels: Record<string, string> = {
@@ -153,6 +154,7 @@ export default function Library({
     else sources.set(course.libraryId, [course]);
   }
   const topLevel = courses.filter(c => !c.libraryId);
+  const averageMastery = mean(nodes.map(n => n.score));
   const needle = query.trim().toLowerCase();
   const visible = topLevel.filter(
       (c) =>
@@ -309,11 +311,7 @@ export default function Library({
                           ? "已解析"
                           : "解析中"}</>}
                     </p>
-                    {c.nodes.length > 0 && <><div className="row between meta">
-                      <span>掌握度</span>
-                      <b>{avg}%</b>
-                    </div>
-                    <progress aria-label="资料掌握度" value={avg} max="100" /></>}
+                    {c.nodes.length > 0 && <MasteryProgress score={avg} label="资料掌握度" />}
                     <footer>
                       {c.isLibrary ? (
                         <>
@@ -394,7 +392,13 @@ export default function Library({
             <dl className="library-metrics" aria-label="资料库统计">
               <div><dt>学习资料</dt><dd>{courses.length}<small>份</small></dd></div>
               <div><dt>知识节点</dt><dd>{nodes.length}<small>个</small></dd></div>
-              <div><dt>平均掌握度</dt><dd>{mean(nodes.map(n => n.score))}<small>%</small></dd></div>
+              <div>
+                <dt>平均掌握度</dt>
+                <dd>
+                  {averageMastery}<small>%</small>
+                  <MasteryMeter score={averageMastery} label="资料库平均掌握度" compact />
+                </dd>
+              </div>
             </dl>
           </div>
           {(activePractice || activeGuide || recentGraph) && (

@@ -1036,6 +1036,7 @@ button.account-delete:enabled:hover {
 }
 .library-metrics > div {
   display: grid;
+  align-content: start;
   gap: 2px;
   padding-inline: 12px;
 }
@@ -1070,6 +1071,9 @@ button.account-delete:enabled:hover {
   font: 11.5px var(--font-ui);
   color: var(--muted);
   margin-left: 2px;
+}
+.library-metrics .mastery-meter {
+  margin-top: 7px;
 }
 .cards {
   display: grid;
