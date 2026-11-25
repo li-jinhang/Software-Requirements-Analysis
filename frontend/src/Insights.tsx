@@ -13,17 +13,35 @@ import * as echarts from "echarts/core";
 import { RadarChart } from "echarts/charts";
 import { RadarComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
-import { Course, Concept, Report, Space, download, status } from "./model";
+import { Course, Concept, Link, Report, Space, download, status } from "./model";
 import { dimensions } from "./model";
-import { GraduationCap } from "lucide-react";
+import { relationLabel, WorkspaceToolbar, type ColorTheme } from "./ui";
+import { CourseText } from "./LearningMessage";
+import "./insights.css";
+import { GraduationCap, Search } from "lucide-react";
 echarts.use([RadarChart, RadarComponent, CanvasRenderer]);
-const graphFit = { padding: 0.22, minZoom: 0.1, maxZoom: 1.3 };
-const relationNames: Record<string, string> = {
-  prerequisite: "前置依赖",
-  contains: "包含",
-  contrast: "对比",
-  applies_to: "应用于",
-};
+const graphFit = { padding: 0.20, minZoom: 0.025, maxZoom: 1.2 };
+const rowSpacing = 144;
+const nodeTones = { 未学习: "neutral", 已掌握: "green", 巩固中: "amber", 待补漏: "red" };
+
+// Rank the visible graph for display; user dragging and the underlying learning order stay independent.
+function graphPositions(concepts: Concept[], links: Link[]) {
+  const remaining = new Set(concepts.map(n => n.id));
+  const positions = new Map<string, { x: number; y: number }>();
+  let row = 0;
+  while (remaining.size) {
+    const layer = concepts.filter(n => remaining.has(n.id) &&
+      !links.some(l => l.to === n.id && remaining.has(l.from)));
+    if (!layer.length) layer.push(concepts.find(n => remaining.has(n.id))!);
+    layer.forEach((n, i) => {
+      const rowSize = Math.min(4, layer.length - Math.floor(i / 4) * 4);
+      positions.set(n.id, { x: (i % 4 - (rowSize - 1) / 2) * 236, y: (row + Math.floor(i / 4)) * rowSpacing });
+      remaining.delete(n.id);
+    });
+    row += Math.ceil(layer.length / 4);
+  }
+  return positions;
+}
 function FitLoadedGraph({ layout }: { layout: string }) {
   const ready = useNodesInitialized();
   const { fitView } = useReactFlow();
@@ -37,6 +55,7 @@ function FitLoadedGraph({ layout }: { layout: string }) {
   return null;
 }
 export function Graph({
+  theme,
   space,
   c,
   setCourse,
@@ -44,6 +63,7 @@ export function Graph({
   guide,
   starting,
 }: {
+  theme: ColorTheme;
   space: Space;
   c: Course;
   setCourse: (id: string) => void;
@@ -61,54 +81,46 @@ export function Graph({
         .slice(0, 40),
     [c, query],
   );
-  const initial = useMemo(
-    () =>
-      matches.map((n, i) => ({
-        id: n.id,
-        position: {
-          x: (i % 3) * 180,
-          y: Math.floor(i / 3) * 130 + (i % 3 === 1 ? 50 : 0),
-        },
-        data: { label: n.name + " · " + n.score + "%" },
-        className:
-          "node " +
-          { 未学习: "", 已掌握: "green", 巩固中: "amber", 待补漏: "red" }[
-            status(n, space.logs)
-          ],
-      })),
-    [matches, space.logs],
-  );
+  const initial = useMemo(() => {
+    const positions = graphPositions(matches, c.links);
+    return matches.map(n => {
+      const label = status(n, space.logs);
+      return {
+        id: n.id, position: positions.get(n.id)!, ariaLabel: n.name + " · " + label + " " + n.score + "%",
+        className: "node " + nodeTones[label],
+        data: { label: <div className="node-content">
+          <div className="node-heading"><i aria-hidden="true" /><strong>{n.name}</strong></div>
+          <div className="node-mastery"><span>{label}</span><b>{n.score}%</b></div>
+          <progress max={100} value={n.score} aria-label={n.name + "掌握度"} />
+        </div> },
+      };
+    });
+  }, [matches, c.links, space.logs]);
   const [nodes, setNodes, change] = useNodesState(initial);
   useEffect(() => setNodes(initial), [initial, setNodes]);
+  const rowY = new Map(nodes.map(n => [n.id, n.position.y]));
   const current = matches.find((n) => n.id === selected) || matches[0];
   return (
     <>
-      <div className="pagehead">
-        <div>
-          <h1>知识记忆图谱</h1>
-          <p>从未掌握的知识点听 AI 讲解，也可以选择节点进行费曼复述。</p>
-        </div>
-        <div className="tools">
-          <select aria-label="图谱资料" value={c.id} onChange={(e) => setCourse(e.target.value)}>
-            {space.courses.map((x) => (
-              <option key={x.id} value={x.id}>{x.title}</option>
-            ))}
-          </select>
-          <button className="primary" disabled={starting || !c.nodes.some((n) => n.score < 80)}
-            onClick={() => guide(c)}>
-            <GraduationCap /> 按图谱顺序学习
+      <WorkspaceToolbar>
+        <select className="graph-course" aria-label="图谱资料" value={c.id} onChange={(e) => setCourse(e.target.value)}>
+          {space.courses.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}
+        </select>
+        <label className="search graph-search"><Search aria-hidden="true" />
+          <input aria-label="搜索知识点" placeholder="搜索知识点…" value={query} onChange={(e) => setQuery(e.target.value)} />
+        </label>
+        <div className="toolbar-actions">
+          <small className="graph-legend" aria-label="掌握状态图例">
+            <span className="green" title="已掌握 ≥80"><i /><span>已掌握</span></span>
+            <span className="amber" title="巩固中 40–79"><i /><span>巩固中</span></span>
+            <span className="red" title="待补漏 &lt;40 或有薄弱记录"><i /><span>待补漏</span></span>
+          </small>
+          <button className="primary compact-command" disabled={starting || !c.nodes.some((n) => n.score < 80)}
+            onClick={() => guide(c)} title="按图谱顺序学习">
+            <GraduationCap aria-hidden="true" /><span>按图谱顺序学习</span>
           </button>
         </div>
-      </div>
-      <div className="sectionhead">
-        <input
-          aria-label="搜索知识点"
-          placeholder="搜索知识点…"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
-        <small>已掌握 ≥80　巩固中 40–79　待补漏 &lt;40 或有薄弱记录</small>
-      </div>
+      </WorkspaceToolbar>
       <div className="graphlayout">
         <div className="graph">
           {matches.length === 0 && (
@@ -122,6 +134,7 @@ export function Graph({
             </div>
           )}
           <ReactFlow
+            colorMode={theme}
             nodes={nodes}
             edges={c.links
               .filter(
@@ -133,33 +146,36 @@ export function Graph({
                 id: JSON.stringify([l.from, l.to, l.label]),
                 source: l.from,
                 target: l.to,
-                label: relationNames[l.label] || l.label,
+                // A link spanning several ranks places its caption in the first gap between rows.
+                type: (rowY.get(l.to)! - rowY.get(l.from)!) > rowSpacing ? "smoothstep" : "default",
+                pathOptions: { stepPosition: 0.11, offset: 18, borderRadius: 12 },
+                label: relationLabel(l.label),
                 labelShowBg: true,
-                labelBgStyle: { fill: "#eef2ff", fillOpacity: 0.96 },
-                labelBgPadding: [5, 3],
-                labelBgBorderRadius: 4,
+                labelBgStyle: { fill: "var(--surface)", stroke: "var(--line)" },
+                labelBgPadding: [6, 2],
+                labelBgBorderRadius: 5,
               }))}
             onNodesChange={change}
             onNodeClick={(_, node) => setSelected(node.id)}
             fitView
             fitViewOptions={graphFit}
-            minZoom={0.1}
+            minZoom={graphFit.minZoom}
           >
             <FitLoadedGraph layout={JSON.stringify(nodes.map((n) => n.id))} />
-            <Background />
+            <Background color="var(--dot-grid)" gap={18} size={1} />
             <Controls showInteractive={false} />
           </ReactFlow>
         </div>
-        <aside className="box">
+        <aside className="node-detail">
           {current ? (
             <>
               <small>节点详情</small>
               <h2>{current.name}</h2>
-              <b>
+              <span className={"node-status " + nodeTones[status(current, space.logs)]}>
                 {status(current, space.logs)} · {current.score}%
-              </b>
-              <progress value={current.score} max={100} />
-              <p>{current.summary}</p>
+              </span>
+              <progress value={current.score} max={100} aria-label="当前节点掌握度" />
+              <div className="node-summary"><CourseText text={current.summary} /></div>
               <h3>薄弱记录</h3>
               {space.logs
                 .filter((l) => l.node === current.id)
@@ -188,25 +204,30 @@ export function Graph({
     </>
   );
 }
-function Radar({ r }: { r: Report }) {
+function Radar({ r, mode }: { r: Report; mode: ColorTheme }) {
   const ref = useRef<HTMLDivElement>(null);
   useEffect(() => {
     const chart = echarts.init(ref.current!);
+    const theme = getComputedStyle(ref.current!);
+    const color = (token: string) => theme.getPropertyValue(token).trim();
     chart.setOption({
       animation: false,
+      textStyle: { fontFamily: theme.fontFamily },
       radar: {
         radius: "59%",
         indicator: dimensions.map((name) => ({ name, max: 100 })),
-        axisName: { color: "#535353" },
-        splitArea: { areaStyle: { color: ["#fff", "#f5f5f5"] } },
+        axisName: { color: color("--muted") },
+        axisLine: { lineStyle: { color: color("--line") } },
+        splitLine: { lineStyle: { color: color("--line") } },
+        splitArea: { areaStyle: { color: [color("--card"), color("--surface")] } },
       },
       series: [
         {
           type: "radar",
           data: [{ value: r.scores }],
-          lineStyle: { color: "#444" },
-          itemStyle: { color: "#444" },
-          areaStyle: { color: "#686868", opacity: 0.16 },
+          lineStyle: { color: color("--accent") },
+          itemStyle: { color: color("--accent") },
+          areaStyle: { color: color("--accent"), opacity: 0.14 },
         },
       ],
     });
@@ -216,16 +237,18 @@ function Radar({ r }: { r: Report }) {
       observer.disconnect();
       chart.dispose();
     };
-  }, [r]);
+  }, [r, mode]);
   return <div className="radar" ref={ref} aria-hidden="true" />;
 }
 export function Reports({
+  theme,
   space,
   id,
   select,
   history,
   go,
 }: {
+  theme: ColorTheme;
   space: Space;
   id: string;
   select: (id: string) => void;
@@ -236,11 +259,7 @@ export function Reports({
   const guided = space.sessions.some((session) => session.id === r?.sessionId && session.guided);
   return (
     <>
-      <div className="pagehead">
-        <div>
-          <h1>历史诊断报告</h1>
-          <p>回看每轮教学的四维评分与后续练习。</p>
-        </div>
+      <WorkspaceToolbar>
         {r && (
           <select
             aria-label="历史报告"
@@ -254,7 +273,7 @@ export function Reports({
             ))}
           </select>
         )}
-      </div>
+      </WorkspaceToolbar>
       {!r ? (
         <div className="box empty">
           <h2>还没有诊断报告</h2>
@@ -290,23 +309,25 @@ export function Reports({
             </button>
             <button onClick={() => window.print()}>打印 / 存 PDF</button>
           </div>
-          <Radar r={r} />
-          <div className="scores">
-            {dimensions.map((d, i) => (
-              <div key={d}>
-                <small>{d}</small>
-                <strong>{r.scores[i]}</strong>
-              </div>
-            ))}
+          <div className="report-figure">
+            <Radar r={r} mode={theme} />
+            <div className="scores">
+              {dimensions.map((d, i) => (
+                <div key={d}>
+                  <small>{d}</small>
+                  <strong>{r.scores[i]}</strong>
+                </div>
+              ))}
+            </div>
           </div>
-          {r.comment && <p>{r.comment}</p>}
+          {r.comment && <p className="report-comment">{r.comment}</p>}
           <h3>盲区复盘</h3>
-          {(r.weaknesses.length
+          <ul className="report-findings">{(r.weaknesses.length
             ? r.weaknesses
             : ["本轮没有未解决的薄弱记录。"]
           ).map((x) => (
-            <p key={x}>{x}</p>
-          ))}
+            <li key={x}>{x}</li>
+          ))}</ul>
           <h3>后续练习</h3>
           <ol className="review-plan">
             {r.plan.map((p, i) => (

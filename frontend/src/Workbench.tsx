@@ -1,14 +1,19 @@
 import React, { useEffect, useRef, useState } from "react";
 import { lookupQuestion } from "./lookup";
-import { animateCorrection } from "./correctionFlight";
-import { Dialog } from "./ui";
+import { animateCorrection, scrollToLatestMessage } from "./correctionFlight";
+import { Dialog, WorkspaceToolbar } from "./ui";
 import "./cognitive.css";
 import { CourseText, CorrectionDetails, MessageSources } from "./LearningMessage";
 import {
   ArrowUp,
+  FileCheck2,
+  Workflow,
+  ListChecks,
+  ChevronsUpDown,
   ArrowRight,
   BookOpen,
   MessagesSquare,
+  CornerDownLeft,
   PanelRightClose,
   PanelRightOpen,
 } from "lucide-react";
@@ -36,20 +41,24 @@ type PendingTurn = { question: string; reply: string };
 const markLabels = { mastered: "✓ 已掌握", partial: "◐ 待补全", wrong: "× 理解偏差", untested: "○ 待考核" };
 
 function Rubric({ doc, close, assess, busy }: { doc: CognitiveDoc; close: () => void; assess: (ids: number[]) => void; busy: boolean }) {
-  return <Dialog drawer title="Agent 认知文档" close={close}>
-    <CourseText text={doc.overview} />
-    <p>总体掌握度 <strong>{doc.mastery_score}%</strong> · 已掌握 {doc.mastered_count}/{doc.total}</p>
-    <progress max={100} value={doc.mastery_score} aria-label="认知文档掌握度" />
+  return <Dialog drawer className="rubric-drawer" title="Agent 认知文档" close={close} summary={
+    <div className="rubric-overview">
+      <div className="row between"><span>总体掌握度 <strong>{doc.mastery_score}%</strong></span>
+        <small>已掌握 {doc.mastered_count}/{doc.total}</small></div>
+      <progress max={100} value={doc.mastery_score} aria-label="认知文档掌握度" />
+    </div>
+  }>
+    <div className="rubric-intro"><CourseText text={doc.overview} /></div>
     {doc.sections.map(group => <section key={group.title}>
       <h3>{group.title}</h3>
       {group.items.map(item => <article key={item.id} className={"rubric-item " + item.status} data-item-id={item.id}>
         <header><b>{markLabels[item.status]}</b>
           {item.id === doc.current_item_id && <small>当前提问</small>}
-          <button className="quiet" disabled={busy} onClick={() => assess([item.id])}>考核此条</button></header>
+          <button className="assess-item" disabled={busy} onClick={() => assess([item.id])}>考核此条</button></header>
         <CourseText text={item.statement} />
         <details><summary>判定标准</summary><CourseText text={item.key_criteria} /></details>
-        {item.user_evidence && <p>回答依据 · {item.user_evidence}</p>}
-        {item.issue_note && <p>待纠正 · {item.issue_note}</p>}
+        {item.user_evidence && <p className="rubric-note"><b>回答依据</b> {item.user_evidence}</p>}
+        {item.issue_note && <p className="rubric-note"><b>待纠正</b> {item.issue_note}</p>}
       </article>)}
     </section>)}
   </Dialog>;
@@ -153,9 +162,15 @@ export default function Workbench({
   const wrap = useRef<HTMLDivElement>(null),
     fields = useRef<(HTMLTextAreaElement | null)[]>([]),
     feeds = useRef<(HTMLDivElement | null)[]>([]);
+  const [pendingLeft, pendingRight] = pending;
   useEffect(() => {
-    feeds.current.forEach((el) => el?.scrollTo(0, el.scrollHeight));
-  }, [session.left.length, session.right.length, mobile, collapsed, pending]);
+    const feed = feeds.current[0];
+    if (feed) scrollToLatestMessage(feed);
+  }, [session.left.length, pendingLeft, mobile, collapsed]);
+  useEffect(() => {
+    const feed = feeds.current[1];
+    if (feed) scrollToLatestMessage(feed);
+  }, [session.right.length, pendingRight, mobile, collapsed]);
   function patch(change: Partial<Session>) {
     save((s) => ({
       ...s,
@@ -339,33 +354,25 @@ export default function Workbench({
   }
   return (
     <>
-      <div className="pagehead compact">
-        <div>
-          <h1>双窗工作台</h1>
-          <button className="quiet" onClick={choose}>
-            {c.title} · 更换资料
-          </button>
-        </div>
-        <div className="tools">
-          {online && rubric && <button className="rubric-trigger" onClick={() => setRubricOpen(true)}>
-            Agent 认知文档（已掌握 {rubric.mastered_count}/{rubric.total}）
+      <WorkspaceToolbar>
+        <button className="course-switch quiet" onClick={choose} aria-label={c.title + " · 更换资料"} title={c.title + " · 更换资料"}>
+          <span className="truncate">{c.title}</span><span className="change-label">更换资料</span>
+          <ChevronsUpDown aria-hidden="true" />
+        </button>
+        <div className="toolbar-actions">
+          {online && rubric && <button className="rubric-trigger compact-command" onClick={() => setRubricOpen(true)}
+            title={`Agent 认知文档（已掌握 ${rubric.mastered_count}/${rubric.total}）`}>
+            <ListChecks aria-hidden="true" /><span>Agent 认知文档（已掌握 {rubric.mastered_count}/{rubric.total}）</span>
           </button>}
-          <button onClick={graph}>
-            知识图谱 · {mean(c.nodes.map((x) => x.score))}%
+          <button className="compact-command" onClick={graph} title="知识图谱">
+            <Workflow aria-hidden="true" /><span>知识图谱 · {mean(c.nodes.map((x) => x.score))}%</span>
           </button>
-          <button
-            className="primary"
-            disabled={locked || pending.some(Boolean)}
-            onClick={finish}
-          >
-            {session.closed
-              ? "教学已结束"
-              : finishing
-                ? "生成报告中…"
-                : "结束并生成报告"}
+          <button className="primary compact-command" disabled={locked || pending.some(Boolean)} onClick={finish}
+            title={session.closed ? "教学已结束" : "结束并生成报告"}>
+            <FileCheck2 aria-hidden="true" /><span>{session.closed ? "教学已结束" : finishing ? "生成报告中…" : "结束并生成报告"}</span>
           </button>
         </div>
-      </div>
+      </WorkspaceToolbar>
       {session.targeted && <p className="assessment-state">{session.assessmentCompleted ? "本轮定向考核已完成" : "正在考核选定条目"}</p>}
       {rubricOpen && rubric && <Rubric doc={rubric} assess={startAssessment} busy={startingAssessment || pending.some(Boolean)} close={() => setRubricOpen(false)} />}
       {notice && <p role="status">{notice}</p>}
@@ -425,50 +432,29 @@ export default function Workbench({
               />
             )}
             <section className={"pane p" + i + (mobile === i ? " active" : "")}>
-              <header>
-                <div className="row between">
-                  <h2>
-                    {i ? <BookOpen /> : <MessagesSquare />}
-                    {i ? "百科溯源助教" : "费曼听众"}
-                  </h2>
-                  {i === 0 ? (
-                    <select
-                      aria-label="听众角色"
-                      value={session.role}
-                      disabled={!online || locked || pending.some(Boolean)}
-                      onChange={(e) => void changeRole(e.target.value)}
-                    >
-                      {roles.map((r) => (
-                        <option key={r}>{r}</option>
-                      ))}
-                    </select>
-                  ) : (
-                    <button
-                      onClick={() => setCollapsed(true)}
-                      className="foldbtn"
-                      aria-label="收起百科"
-                    >
-                      <PanelRightClose />
-                    </button>
-                  )}
-                </div>
-                {i === 1 && pushCount > 0 && <p className="push-notice" role="status">已弹出 {pushCount} 条实时纠偏</p>}
-                <small>
-                  {i
-                    ? "优先查证当前资料"
-                    : (online
-                        ? ["未学习", "已掌握", "巩固中", "待补漏"]
-                        : ["已掌握", "巩固中", "待补漏"]
-                      )
-                        .map(
-                          (v) =>
-                            v +
-                            " " +
-                            c.nodes.filter((x) => status(x, space.logs) === v)
-                              .length,
-                        )
-                        .join("　")}
-                </small>
+              <header className="pane-header">
+                <h2>{i ? <BookOpen aria-hidden="true" /> : <MessagesSquare aria-hidden="true" />}
+                  {i ? "百科溯源助教" : "费曼听众"}</h2>
+                {i === 0 ? <>
+                  <select aria-label="听众角色" value={session.role}
+                    disabled={!online || locked || pending.some(Boolean)}
+                    onChange={(e) => void changeRole(e.target.value)}>
+                    {roles.map((r) => <option key={r}>{r}</option>)}
+                  </select>
+                  <small className="mastery-counts">
+                    {(online ? ["未学习", "已掌握", "巩固中", "待补漏"] : ["已掌握", "巩固中", "待补漏"]).map(label => {
+                      const count = c.nodes.filter(x => status(x, space.logs) === label).length;
+                      return <span key={label} title={label + " " + count} data-status={label}>
+                        <i aria-hidden="true" /><span className="count-label">{label} </span><b>{count}</b>
+                      </span>;
+                    })}
+                  </small>
+                </> : <>
+                  {pushCount > 0 ? <small className="push-notice" role="status">已弹出 {pushCount} 条实时纠偏</small>
+                    : <small>优先查证当前资料</small>}
+                  <button onClick={() => setCollapsed(true)} className="icon-button foldbtn"
+                    aria-label="收起百科" title="收起百科"><PanelRightClose /></button>
+                </>}
               </header>
               <div
                 className="feed"
@@ -573,7 +559,7 @@ export default function Workbench({
                   </>
                 )}
               </div>
-              <div className="composer">
+              <div className="composer reply-box">
                 <textarea
                   aria-label={i ? "百科问题" : "讲解内容"}
                   ref={(el) => {
@@ -604,14 +590,21 @@ export default function Workbench({
                     if (!e.repeat) send(i, session.drafts[i]);
                   }}
                 />
-                <button
-                  className="send"
-                  aria-label={i ? "提交查证" : "发送讲解"}
-                  disabled={locked || (i === 0 && session.assessmentCompleted) || !!pending[i] || !session.drafts[i].trim()}
-                  onClick={() => send(i, session.drafts[i])}
-                >
-                  <ArrowUp />
-                </button>
+                <div className="composer-tools">
+                  <button className="quiet switch-pane" type="button" onClick={() => focus(i ? 0 : 1)}>
+                    {i ? <MessagesSquare aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
+                    {i ? "回到讲解" : "前往查证"}
+                  </button>
+                  <small className="compose-hint"><CornerDownLeft aria-hidden="true" /> 发送 · Shift + Enter 换行</small>
+                  <button
+                    className="send"
+                    aria-label={i ? "提交查证" : "发送讲解"}
+                    disabled={locked || (i === 0 && session.assessmentCompleted) || !!pending[i] || !session.drafts[i].trim()}
+                    onClick={() => send(i, session.drafts[i])}
+                  >
+                    <ArrowUp />
+                  </button>
+                </div>
               </div>
             </section>
           </React.Fragment>

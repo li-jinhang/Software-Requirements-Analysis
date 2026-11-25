@@ -10,9 +10,22 @@ function visibleBounds(element: HTMLElement, feed: HTMLElement) {
   return { rect, left, right, centerY: (top + bottom) / 2 };
 }
 
+// A long annotation opens at its heading; short messages stay at the end of the feed.
+export function scrollToLatestMessage(feed: HTMLElement) {
+  const latest = feed.lastElementChild;
+  if (latest instanceof HTMLElement && latest.matches(".correction-card")) {
+    const inset = parseFloat(getComputedStyle(feed).paddingTop);
+    if (latest.offsetHeight > feed.clientHeight - 2 * inset) {
+      feed.scrollTop += latest.getBoundingClientRect().top - feed.getBoundingClientRect().top - inset;
+      return;
+    }
+  }
+  feed.scrollTop = feed.scrollHeight;
+}
+
 export function animateCorrection(card: HTMLElement) {
   const feed = card.closest<HTMLElement>(".feed");
-  if (feed) feed.scrollTop = feed.scrollHeight;
+  if (feed) scrollToLatestMessage(feed);
   if (!card.animate || matchMedia("(prefers-reduced-motion: reduce)").matches) return;
 
   const leftFeed = card.closest(".duo")?.querySelector<HTMLElement>(".p0 .feed");
@@ -38,7 +51,7 @@ export function animateCorrection(card: HTMLElement) {
   bar.style.offsetPath = `path("M ${startX} ${from.centerY} Q ${(startX + endX) / 2} ${controlY} ${endX} ${to.centerY}")`;
 
   const launch = reply.animate(
-    [{ outlineColor: "transparent" }, { outlineColor: "rgb(107 126 144 / 36%)" }, { outlineColor: "transparent" }],
+    [{ outlineColor: "transparent" }, { outlineColor: getComputedStyle(bar).getPropertyValue("--flight-outline").trim() }, { outlineColor: "transparent" }],
     { duration: 240, easing: "ease-in-out" },
   );
   const travelMs = 440;
@@ -55,7 +68,7 @@ export function animateCorrection(card: HTMLElement) {
   // Clipping instead of stretching the content keeps text and formulas legible.
   const foldY = to.centerY - to.rect.top;
   const folded = `inset(${foldY - halfHeight}px ${to.rect.right - endX - halfWidth}px ${to.rect.height - foldY - halfHeight}px ${endX - to.rect.left - halfWidth}px round 4px)`;
-  const open = "inset(0px 0px 0px 0px round 14px)";
+  const open = "inset(0px 0px 0px 0px round 6px)";
   const restingColor = getComputedStyle(card).backgroundColor;
   const barColor = getComputedStyle(bar).backgroundColor;
   const reveal = card.animate(

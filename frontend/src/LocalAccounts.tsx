@@ -81,6 +81,7 @@ export default function LocalAccounts({
             {selected ? "密码" : "账号名称"}
             <input
               autoFocus
+              data-initial-focus
               required
               type={selected ? "password" : "text"}
               autoComplete={selected ? "current-password" : "off"}
@@ -115,6 +116,7 @@ export default function LocalAccounts({
                 <button
                   type="button"
                   key={account.id}
+                  aria-current={account.id === active?.id ? true : undefined}
                   disabled={busy}
                   onClick={() => activate(account)}
                 >

@@ -1,4 +1,4 @@
-import React, { lazy, Suspense, useEffect, useRef, useState } from "react";
+import React, { lazy, Suspense, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { createRoot } from "react-dom/client";
 import {
   LibraryBig,
@@ -6,8 +6,12 @@ import {
   Workflow,
   Files,
   ChartNoAxesColumn,
-  Menu,
+  Moon,
+  Sun,
   BookOpen,
+  Backpack,
+  UsersRound,
+  ClipboardCheck,
   ChevronRight,
   Settings as SettingsIcon,
   GraduationCap,
@@ -34,7 +38,7 @@ import Library from "./Library";
 import LocalAccounts from "./LocalAccounts";
 import { Concept, Course, Space, initial, roles } from "./model";
 import { User, student, admin, authenticate, read, write } from "./storage";
-import { Dialog } from "./ui";
+import { Dialog, WorkspaceFrame, type ColorTheme } from "./ui";
 import { newSession } from "./model";
 const Settings = lazy(() => import("./ModelSettings"));
 const Workbench = lazy(() => import("./Workbench"));
@@ -169,7 +173,29 @@ function Auth({
 function workspaceRoute() {
   return location.hash.slice(1) || "library";
 }
+const themeKey = "fm.theme";
+function storedTheme(): ColorTheme {
+  try { return localStorage.getItem(themeKey) === "dark" ? "dark" : "light"; }
+  catch { return "light"; }
+}
+
 function App() {
+  const [theme, setTheme] = useState<ColorTheme>(storedTheme);
+  useLayoutEffect(() => { document.documentElement.dataset.theme = theme; }, [theme]);
+  useEffect(() => {
+    const sync = (event: StorageEvent) => {
+      if (event.key === themeKey || event.key === null) setTheme(storedTheme());
+    };
+    window.addEventListener("storage", sync);
+    return () => window.removeEventListener("storage", sync);
+  }, []);
+  function toggleTheme() {
+    const next = theme === "dark" ? "light" : "dark";
+    setTheme(next);
+    try { localStorage.setItem(themeKey, next); }
+    catch { /* The current window can still switch appearance when storage is unavailable. */ }
+  }
+
   const [user, setUser] = useState<User>(
       () => JSON.parse(sessionStorage.getItem("fm.user") || "null") || student,
     ),
@@ -414,7 +440,9 @@ function App() {
       setStarting(false);
     }
   }
-  const title = pages.find((p) => p[0] === currentPage)?.[1] || "学习资料库";
+  const pageInfo = pages.find((p) => p[0] === currentPage) || pages[0];
+  const [, title, PageIcon] = pageInfo;
+  const isWorkspace = ["studio", "tutor", "graph", "review", "reports"].includes(currentPage);
   const links = pages.filter((p) => p[0] !== "admin" || user.admin);
   return (
     <div className="shell">
@@ -425,18 +453,13 @@ function App() {
           onClick={() => setNav(false)}
         />
       )}
-      <aside className={"sidebar " + (nav ? "open" : "")}>
+      <aside id="learning-navigation" className={"sidebar " + (nav ? "open" : "")}>
         <div className="brand">
-          <div className="brandicon">
-            <BookOpen />
-          </div>
-          <div>
-            <strong>智溯费曼</strong>
-            <small>FeynmanMind</small>
-          </div>
+          <BookOpen aria-hidden="true" />
+          <strong>智溯费曼</strong>
         </div>
         <div className="navcaption">学习空间</div>
-        <nav>
+        <nav aria-label="学习导航">
           {links.map(([key, label, Icon]) => (
             <button
               key={key}
@@ -448,54 +471,47 @@ function App() {
             </button>
           ))}
         </nav>
-        <div className="account">
-          <button
-            onClick={() => {
-              setNav(false);
-              setAuth(true);
-            }}
-          >
-            <GraduationCap />
-            <span>
-              {user.name}
-              <small>
-                {user.admin ? "管理员" : "学习者"} ·{" "}
-                {online
-                  ? localModelSettings
-                    ? "本机账号"
-                    : "在线服务"
-                  : "浏览示范"}
-              </small>
-            </span>
-            <ChevronsUpDown />
-          </button>
-        </div>
-      </aside>
-      <main>
-        <header className="topline">
-          <button
-            className="hamb"
-            onClick={() => setNav(!nav)}
-            aria-label="打开导航"
-          >
-            <Menu />
-          </button>
-          <div className="workspace-location">
-            <span>个人空间</span>
-            <ChevronRight aria-hidden="true" />
-            <strong>{title}</strong>
+        <footer className="sidebar-footer">
+          <div className="account">
+            <button
+              onClick={() => {
+                setNav(false);
+                setAuth(true);
+              }}
+            >
+              <GraduationCap />
+              <span>
+                {user.name}
+                <small>
+                  {user.admin ? "管理员" : "学习者"} ·{" "}
+                  {online
+                    ? localModelSettings
+                      ? "本机账号"
+                      : "在线服务"
+                    : "浏览示范"}
+                </small>
+              </span>
+              <ChevronsUpDown />
+            </button>
           </div>
-          <button
-            className="settings-trigger"
-            aria-label="设置"
-            aria-haspopup="dialog"
-            title="设置"
-            onClick={() => setSettings(true)}
-          >
+          <button className="icon-button" aria-label="深色主题" aria-pressed={theme === "dark"}
+            title={theme === "light" ? "切换到深色主题" : "切换到浅色主题"} onClick={toggleTheme}>
+            {theme === "light" ? <Moon aria-hidden="true" /> : <Sun aria-hidden="true" />}
+          </button>
+          <button className="icon-button settings-trigger" aria-label="设置" aria-haspopup="dialog"
+            title="设置" onClick={() => { setNav(false); setSettings(true); }}>
             <SettingsIcon aria-hidden="true" />
           </button>
-        </header>
-        <div className={"content " + (currentPage === "tutor" ? "tutor-content" : page === "studio" ? "studio" : "")}>
+        </footer>
+      </aside>
+      <WorkspaceFrame
+        title={currentPage === "graph" ? "知识记忆图谱" : title}
+        icon={PageIcon}
+        heading={isWorkspace}
+        navOpen={nav}
+        onMenu={() => setNav(!nav)}
+      >
+        <div className={"content view-" + pageInfo[0]}>
           {err && <p role="alert">{err}</p>}
           <Suspense fallback={<p>正在载入…</p>}>
             {online && ready !== user.id ? (
@@ -519,11 +535,12 @@ function App() {
               )
             ) : page === "graph" && c ? (
               <GraphLoadBoundary key={c.id}>
-                <Graph space={space} c={c} setCourse={setDoc} start={begin}
+                <Graph theme={theme} space={space} c={c} setCourse={setDoc} start={begin}
                   guide={beginGuided} starting={starting} />
               </GraphLoadBoundary>
             ) : page === "reports" ? (
               <Reports
+                theme={theme}
                 space={space}
                 id={rid}
                 select={setRid}
@@ -558,7 +575,7 @@ function App() {
               ) : (
                 <div className="chat-empty">
                   <span className="chat-avatar"><GraduationCap aria-hidden="true" /></span>
-                  <h1>先听 AI 讲解</h1>
+                  <h2>先听 AI 讲解</h2>
                   <p>{c ? "从图谱中选一个还没掌握的知识点。" : "上传一份学习资料，生成图谱后开始讲解。"}</p>
                   <button className="primary" onClick={() => go(c ? "graph" : "library")}>
                     {c ? "前往知识图谱" : "前往资料库"}
@@ -591,7 +608,7 @@ function App() {
             ) : ["studio", "graph"].includes(page) ? (
               <div className="box empty">
                 <PanelsTopLeft />
-                <h1>{title}</h1>
+
                 <p>
                   {c
                     ? "选择课程和听众，开始一轮费曼教学。"
@@ -626,7 +643,7 @@ function App() {
             )}
           </Suspense>
         </div>
-      </main>
+      </WorkspaceFrame>
       {settings && (
         <Suspense fallback={null}>
           <Settings
@@ -645,6 +662,7 @@ function App() {
       {setup && c && (
         <Dialog
           title="开始费曼教学"
+          className="teaching-setup"
           close={() => {
             if (!starting) setSetup(false);
           }}
@@ -707,14 +725,22 @@ function App() {
               ))}
             </select>
           </label>
-          <label>
-            听众角色
-            <select value={role} onChange={(e) => setRole(e.target.value)}>
-              {roles.map((r) => (
-                <option key={r}>{r}</option>
-              ))}
-            </select>
-          </label>
+          <fieldset className="persona-picker">
+            <legend>听众角色</legend>
+            <div className="persona-options">
+              {roles.map((r, i) => {
+                const Icon = [Backpack, UsersRound, ClipboardCheck][i] || BookOpen;
+                return <label className="persona" key={r}>
+                  <input type="radio" className="persona-radio" name="listener" value={r}
+                    aria-label={r} aria-describedby={"listener-hint-" + i}
+                    checked={role === r} onChange={() => setRole(r)} />
+                  <Icon aria-hidden="true" />
+                  <strong>{r}</strong>
+                  <small id={"listener-hint-" + i}>{["用生活例子讲明白", "一起推敲概念联系", "追问边界与依据"][i]}</small>
+                </label>;
+              })}
+            </div>
+          </fieldset>
           {err && <p role="alert">{err}</p>}
           <button
             className="primary"
@@ -778,4 +804,5 @@ function App() {
     </div>
   );
 }
+document.documentElement.dataset.theme = storedTheme();
 createRoot(document.getElementById("root")!).render(<App />);

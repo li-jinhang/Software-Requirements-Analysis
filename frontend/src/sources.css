@@ -1,0 +1,111 @@
+.source-list {
+  margin-block: 5px;
+  padding: 4px 0;
+  border: 0;
+}
+.source-list > summary {
+  width: fit-content;
+  font-size: 12px;
+  color: var(--muted);
+}
+.source-list > summary:hover {
+  color: var(--ink);
+}
+.source-card {
+  margin: 5px 0;
+  padding: 7px 0 3px 9px;
+  border-inline-start: 1px solid var(--control-line);
+  overflow-wrap: anywhere;
+}
+.source-card + .source-card {
+  border-top: 1px solid var(--line);
+}
+.source-card > header {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 4px 8px;
+}
+.source-card > header strong {
+  font-size: 12px;
+  color: var(--ink);
+}
+.source-card > header small,
+.inline-source {
+  font-size: 11px;
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-radius: 3px;
+  padding: 0 4px;
+}
+.inline-source {
+  white-space: nowrap;
+  vertical-align: 0.06em;
+}
+.source-card :is(h1, h2, h3, h4) {
+  font-size: 13px;
+  margin: 5px 0;
+}
+.source-card p {
+  font-size: 13px;
+}
+.source-card .source-preview {
+  max-height: 6em;
+  overflow: hidden;
+}
+.source-card .katex-display {
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+.source-card .quiet {
+  padding: 0 3px;
+  min-height: 24px;
+  font-size: 12px;
+}
+.katex,
+.katex .mathnormal,
+.katex .mathrm,
+.katex .mathit,
+.katex .mathbf,
+.katex .mathsf,
+.katex .mtext {
+  font-family: var(--font-ui);
+}
+.katex .mathnormal,
+.katex .mathit {
+  font-style: italic;
+}
+pre:has(.hljs) {
+  overflow-x: auto;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--surface);
+}
+.hljs {
+  color: var(--ink);
+  font-family: var(--mono);
+}
+.hljs-comment,
+.hljs-quote {
+  color: var(--muted);
+  font-style: italic;
+}
+.hljs-keyword,
+.hljs-selector-tag,
+.hljs-title,
+.hljs-built_in {
+  color: var(--accent);
+}
+.hljs-number,
+.hljs-literal,
+.hljs-attr {
+  color: var(--amber-ink);
+}
+.hljs-string,
+.hljs-regexp,
+.hljs-addition {
+  color: var(--green-ink);
+}
+.hljs-deletion {
+  color: var(--red-ink);
+}

@@ -628,7 +628,7 @@ export default function Settings({
                         </button>
                         <button
                           type="button"
-                          className="quiet"
+                          className="quiet model-remove"
                           disabled={busy}
                           onClick={() => setRemove(p)}
                         >

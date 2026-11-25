@@ -4,10 +4,9 @@ import {
   BookOpen,
   Search,
   Plus,
+  FileText,
+  NotebookPen,
   ArrowRight,
-  Layers3,
-  Target,
-  LibraryBig,
   UploadCloud,
   GraduationCap,
 } from "lucide-react";
@@ -22,7 +21,7 @@ import {
   refreshMemory,
   type TeachingPurpose,
 } from "./api";
-import { Dialog, Diagram } from "./ui";
+import { Dialog, relationLabel } from "./ui";
 type Props = {
   online: boolean;
   space: Space;
@@ -55,6 +54,12 @@ export default function Library({
   const [topicOpen, setTopicOpen] = useState(false);
   const [topic, setTopic] = useState("");
   const [topicSubject, setTopicSubject] = useState("");
+  const [dragging, setDragging] = useState(false);
+  function chooseFile(next?: File) {
+    setFile(next);
+    setFailedId(undefined);
+    setError("");
+  }
   async function generate() {
     if (!topic.trim() || busy) return;
     setBusy(true);
@@ -124,21 +129,19 @@ export default function Library({
     }
   }
   return (
-    <>
+    <section className="library-page" aria-label="学习资料库">
       <div className="pagehead">
-        <div>
-          <h1>学习资料库</h1>
-          <p>整理课程资料，选择一份开始费曼讲解。</p>
-        </div>
+        <h1>学习资料库</h1>
         <div className="tools">
         <button onClick={async () => {
           if (await canLearn("extract")) { setError(""); setTopicOpen(true); }
-        }}>输入知识点生成</button>
+        }}><NotebookPen aria-hidden="true" />输入知识点生成</button>
         <button
           className="primary"
           onClick={async () => {
             if (!(await canLearn("extract"))) return;
             setError("");
+            setDragging(false);
             setUpload(true);
           }}
         >
@@ -147,27 +150,11 @@ export default function Library({
         </button>
         </div>
       </div>
-      <div className="stats">
-        {[
-          [LibraryBig, "学习资料", courses.length, "份"],
-          [Layers3, "知识节点", nodes.length, "个"],
-          [Target, "平均掌握度", mean(nodes.map((n) => n.score)), "%"],
-        ].map(([I, label, num, unit]) => {
-          const Icon = I as typeof Target;
-          return (
-            <div className="stat" key={String(label)}>
-              <span>
-                <Icon />
-                {String(label)}
-              </span>
-              <strong>
-                {String(num)}
-                <small>{String(unit)}</small>
-              </strong>
-            </div>
-          );
-        })}
-      </div>
+      <dl className="library-metrics" aria-label="资料库统计">
+        <div><dt>学习资料</dt><dd>{courses.length}<small>份</small></dd></div>
+        <div><dt>知识节点</dt><dd>{nodes.length}<small>个</small></dd></div>
+        <div><dt>平均掌握度</dt><dd>{mean(nodes.map(n => n.score))}<small>%</small></dd></div>
+      </dl>
       <div className="sectionhead">
         <h2>
           全部资料 <small>{visible.length}</small>
@@ -197,7 +184,7 @@ export default function Library({
       {!upload && !topicOpen && !doc && error && <p role="alert">{error}</p>}
       {topicOpen && <Dialog title="按知识点生成认知文档" close={() => { if (!busy) setTopicOpen(false); }}>
         <form onSubmit={e => { e.preventDefault(); void generate(); }}>
-          <label>知识点名称<input required autoFocus maxLength={150} value={topic}
+          <label>知识点名称<input required data-initial-focus maxLength={150} value={topic}
             placeholder="例如：二分查找" onChange={e => setTopic(e.target.value)} /></label>
           <label>学科（选填）<input maxLength={100} value={topicSubject}
             onChange={e => setTopicSubject(e.target.value)} /></label>
@@ -212,11 +199,10 @@ export default function Library({
           const avg = mean(c.nodes.map((n) => n.score));
           return (
             <article className="card" key={c.id}>
-              <Diagram type={c.cover} />
               <div className="cardbody">
                 <div className="row between meta">
-                  <span>{c.subject}</span>
-                  <code>{c.format}</code>
+                  <span className="subject-tag"><BookOpen aria-hidden="true" />{c.subject}</span>
+                  <span className="format-mark"><FileText aria-hidden="true" />{c.format}</span>
                 </div>
                 <h2>{c.title}</h2>
                 <p className="meta">
@@ -231,7 +217,7 @@ export default function Library({
                   <span>掌握度</span>
                   <b>{avg}%</b>
                 </div>
-                <progress value={avg} max="100" />
+                <progress aria-label="资料掌握度" value={avg} max="100" />
                 <footer>
                   {c.parseStatus === "failed" ? (
                     <button
@@ -297,20 +283,31 @@ export default function Library({
               void submit();
             }}
           >
-            <label className="filepick">
-              <UploadCloud size={32} />
-              <strong>{file?.name || "选择本地文件"}</strong>
-              <span>PDF、DOCX、MD、TXT · 最大 20 MB</span>
-              <input
-                type="file"
-                required={!file}
-                accept=".pdf,.docx,.md,.txt"
+            <label className={"filepick" + (dragging ? " dragging" : "")}
+              onDragOver={(e) => {
+                if (!e.dataTransfer.types.includes("Files")) return;
+                e.preventDefault();
+                if (!busy) setDragging(true);
+              }}
+              onDragLeave={(e) => {
+                if (!(e.relatedTarget instanceof Node) || !e.currentTarget.contains(e.relatedTarget)) setDragging(false);
+              }}
+              onDrop={(e) => {
+                e.preventDefault();
+                setDragging(false);
+                if (!busy && e.dataTransfer.files.length) chooseFile(e.dataTransfer.files[0]);
+              }}>
+              <input className="visually-hidden" type="file" accept=".pdf,.docx,.md,.txt"
+                aria-label="选择本地文件" required={!file} disabled={busy}
                 onChange={(e) => {
-                  setFile(e.target.files?.[0]);
-                  setFailedId(undefined);
-                  setError("");
-                }}
-              />
+                  chooseFile(e.currentTarget.files?.[0]);
+                  e.currentTarget.value = "";
+                }} />
+              <span className="upload-icon">{file ? <FileText /> : <UploadCloud />}</span>
+              <strong aria-live="polite">{file?.name || "点击选择或拖入学习资料"}</strong>
+              {file
+                ? <span>{file.size < 1024 * 1024 ? Math.max(1, Math.ceil(file.size / 1024)) + " KB" : (file.size / 1024 / 1024).toFixed(1) + " MB"} · <u>重新选择</u></span>
+                : <span>PDF、DOCX、MD、TXT · 最大 20 MB</span>}
             </label>
             <label>
               学科标签
@@ -424,9 +421,10 @@ export default function Library({
           ))}
           <h3>概念关联</h3>
           {doc.links.map((l) => (
-            <p key={l.from + l.to}>
-              {doc.nodes.find((n) => n.id === l.from)?.name} →{" "}
-              {doc.nodes.find((n) => n.id === l.to)?.name} · {l.label}
+            <p className="relation-row" key={JSON.stringify([l.from, l.to, l.label])}>
+              <span>{doc.nodes.find((n) => n.id === l.from)?.name}</span>
+              <span className="relation-tag">{relationLabel(l.label)} <ArrowRight aria-hidden="true" /></span>
+              <span>{doc.nodes.find((n) => n.id === l.to)?.name}</span>
             </p>
           ))}
           {!doc.links.length && <p>暂无关联。</p>}
@@ -441,6 +439,6 @@ export default function Library({
           {!space.logs.some((w) => w.doc === doc.id) && <p>暂无记录。</p>}
         </Dialog>
       )}
-    </>
+    </section>
   );
 }

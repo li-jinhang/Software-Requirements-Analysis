@@ -1,6 +1,7 @@
 import { memo, useEffect, useMemo, useRef, useState } from "react";
 import { ArrowUp, BookOpen, GraduationCap, MessagesSquare, Workflow } from "lucide-react";
 import { ApiError, refreshMemory, remoteReport, sessionHistory, setPersona, stream } from "./api";
+import { WorkspaceToolbar } from "./ui";
 import { CorrectionDetails, CourseText, MessageSources } from "./LearningMessage";
 import { roles, type Course, type Message, type Session, type Space } from "./model";
 
@@ -26,7 +27,7 @@ const ChatMessage = memo(function ChatMessage({ message }: { message: Message })
               <summary>纠偏 · {correction.concept_name} · {correction.label}</summary>
               <CorrectionDetails card={correction} />
             </details>
-          ) : <CourseText text={message.text} />}
+          ) : <CourseText text={message.text} markSources />}
         </div>
         {message.badge && <small className="pill">{message.badge}</small>}
         {!!message.citations?.length && <MessageSources citations={message.citations} />}
@@ -210,25 +211,25 @@ export default function GuidedChat({ session, course, historyOptions, select, gr
 
   return (
     <section className="guided-chat" aria-label="AI 讲解会话">
-      <header className="chat-header">
-        <div className="chat-heading">
-          <small><BookOpen aria-hidden="true" /> {course.title}</small>
-          <h1>{target?.name || "AI 讲解"}</h1>
+      <WorkspaceToolbar>
+        <div className="chat-heading" title={course.title}>
+          <BookOpen aria-hidden="true" /><span className="truncate">{course.title}</span>
         </div>
-        <div className="chat-actions">
+        <div className="toolbar-actions chat-actions">
           {historyOptions.length > 1 && <select aria-label="切换讲解会话" value={session.id} onChange={(e) => select(e.target.value)}>
             {historyOptions.map((row) => <option key={row.id} value={row.id}>{row.title}</option>)}
           </select>}
           <button onClick={graph}><Workflow aria-hidden="true" /> 选知识点</button>
           {enoughPractice && !session.closed && <button disabled={disabled} onClick={finish}>生成报告</button>}
         </div>
-      </header>
+      </WorkspaceToolbar>
 
       <div className="chat-feed" tabIndex={0} aria-label="讲解消息" ref={feed} onScroll={(e) => {
         const area = e.currentTarget;
         followBottom.current = area.scrollHeight - area.scrollTop - area.clientHeight < 96;
       }}>
         <div className="chat-thread">
+          <h2 className="lesson-title">{target?.name || "AI 讲解"}</h2>
           {!messages.length && !pending && busy && <p className="chat-system" role="status">正在恢复讲解会话…</p>}
           {messages.map((message) => <ChatMessage key={message.id} message={message} />)}
           {pending?.prompt && <ChatMessage message={{ who: "我", text: pending.prompt }} />}
@@ -247,7 +248,7 @@ export default function GuidedChat({ session, course, historyOptions, select, gr
         {notice && <p className="chat-system" role="status">{notice}</p>}
         {!ready && !busy && <button onClick={restore}>{lessonReady ? "恢复会话" : "重试讲解"}</button>}
         {session.closed ? <p className="chat-system">会话已结束</p> : (
-          <form className="chat-composer" onSubmit={(event) => { event.preventDefault(); send(); }}>
+          <form className="chat-composer reply-box" onSubmit={(event) => { event.preventDefault(); send(); }}>
             <textarea ref={field} aria-label={inputLabel} placeholder={mode ? "关于这一课，你还想问什么？" : "用自己的话讲一讲…"}
               value={pending?.prompt ? "" : session.drafts[mode]} rows={2} readOnly={disabled}
               onChange={(event) => writeDraft(event.target.value)}

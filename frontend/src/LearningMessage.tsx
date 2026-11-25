@@ -1,4 +1,5 @@
 import { useState } from "react";
+import type { Root, Element, ElementContent } from "hast";
 import type { Correction, CourseCitation } from "./model";
 import Markdown from "react-markdown";
 import gfm from "remark-gfm";
@@ -6,11 +7,37 @@ import math from "remark-math";
 import katex from "rehype-katex";
 import highlight from "rehype-highlight";
 import "katex/dist/katex.min.css";
-import "highlight.js/styles/github.css";
+import "./sources.css";
 
-export function CourseText({ text }: { text: string }) {
+// Decorate plain text references after Markdown parsing. Links, code and formulas keep their own renderers.
+function inlineSources() {
+  function visit(parent: Root | Element) {
+    if (parent.type === "element" && ["a", "code", "pre", "math", "svg"].includes(parent.tagName)) return;
+    for (let i = 0; i < parent.children.length; i++) {
+      const child = parent.children[i];
+      if (child.type === "element") visit(child);
+      if (child.type !== "text") continue;
+      const parts: ElementContent[] = [];
+      let end = 0;
+      for (const hit of child.value.matchAll(/(?:\[|【|［)\s*片段\s*#?\s*(\d+)\s*(?:\]|】|］)/gu)) {
+        const start = hit.index!;
+        if (start > end) parts.push({ type: "text", value: child.value.slice(end, start) });
+        parts.push({ type: "element", tagName: "span", properties: { className: ["inline-source"] },
+          children: [{ type: "text", value: "片段 " + hit[1] }] });
+        end = start + hit[0].length;
+      }
+      if (!parts.length) continue;
+      if (end < child.value.length) parts.push({ type: "text", value: child.value.slice(end) });
+      parent.children.splice(i, 1, ...parts);
+      i += parts.length - 1;
+    }
+  }
+  return (tree: Root) => visit(tree);
+}
+
+export function CourseText({ text, markSources = false }: { text: string; markSources?: boolean }) {
   return (
-    <Markdown remarkPlugins={[gfm, math]} rehypePlugins={[katex, highlight]}>
+    <Markdown remarkPlugins={[gfm, math]} rehypePlugins={markSources ? [inlineSources, katex, highlight] : [katex, highlight]}>
       {text}
     </Markdown>
   );

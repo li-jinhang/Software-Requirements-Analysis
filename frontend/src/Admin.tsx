@@ -148,7 +148,7 @@ function ServerReview() {
           <small>
             {r.status} {r.updated_at}
           </small>
-          <button onClick={() => setPending(r)}>清理</button>
+          <button className="quiet record-clean" onClick={() => setPending(r)}>清理</button>
         </div>
       ))}
       <div className="tools">
@@ -261,7 +261,7 @@ function OnlineAdmin() {
   );
 }
 export default function Admin({ online }: { online: boolean }) {
-  return online ? <OnlineAdmin /> : <LocalAdmin />;
+  return <div className="admin-page">{online ? <OnlineAdmin /> : <LocalAdmin />}</div>;
 }
 function LocalAdmin() {
   const [data, setData] = useState(spaces),
@@ -408,7 +408,7 @@ function LocalAdmin() {
             <code title={r.id}>{r.id.slice(0, 6)}</code>
             <strong>{r.name}</strong>
             <small>{r.detail}</small>
-            <button onClick={() => setPending(r)}>清理</button>
+            <button className="quiet record-clean" onClick={() => setPending(r)}>清理</button>
           </div>
         ))}
         <div className="tools">
