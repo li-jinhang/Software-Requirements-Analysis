@@ -9,6 +9,7 @@ import {
   Target,
   LibraryBig,
   UploadCloud,
+  GraduationCap,
 } from "lucide-react";
 import { Course, Space, archive, mean, status } from "./model";
 import {
@@ -27,6 +28,8 @@ type Props = {
   space: Space;
   save: (fn: (s: Space) => Space) => void;
   start: (c: Course) => void;
+  guide: (c: Course) => void;
+  starting: boolean;
   canLearn: (purpose: TeachingPurpose) => Promise<boolean>;
   modelRequired: (error: unknown) => boolean;
 };
@@ -35,6 +38,8 @@ export default function Library({
   space,
   save,
   start,
+  guide,
+  starting,
   canLearn,
   modelRequired,
 }: Props) {
@@ -251,10 +256,15 @@ export default function Library({
                       重新解析
                     </button>
                   ) : (
-                    <button disabled={!c.nodes.length} onClick={() => start(c)}>
-                      <BookOpen />
-                      开讲
-                    </button>
+                    <>
+                      <button className="primary" disabled={starting || !c.nodes.some((n) => n.score < 80)}
+                        onClick={() => guide(c)}>
+                        <GraduationCap /> 先听 AI 讲解
+                      </button>
+                      <button disabled={starting || !c.nodes.length} onClick={() => start(c)}>
+                        <BookOpen /> 开讲
+                      </button>
+                    </>
                   )}
                   <button
                     disabled={!c.nodes.length}

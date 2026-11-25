@@ -64,6 +64,7 @@ export type Correction = {
   citations: (CourseCitation | {kind: "cognitive_item"; item_id: number; section_title: string})[];
 };
 export type Message = {
+  lesson?: boolean;
   correction?: Correction;
   id?: number;
   who: "我" | "听众" | "百科" | "系统";
@@ -81,6 +82,7 @@ export type CourseCitation = {
   score?: number;
 };
 export type Session = {
+  guided?: boolean;
   review?: boolean;
   reviewCompleted?: boolean;
   id: string;

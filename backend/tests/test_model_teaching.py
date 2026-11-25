@@ -27,6 +27,8 @@ def test_model_processing_and_binding_isolation(server):
     )
     missing = api.post("/api/v1/sessions", headers=student, json={"doc_id": 1})
     assert missing.status_code == 409 and missing.json()["detail"]["code"] == "model_required"
+    missing = api.post("/api/v1/sessions", headers=student, json={"doc_id": 1, "mode": "guided"})
+    assert missing.status_code == 409 and missing.json()["detail"]["purpose"] == "encyclopedia"
     missing = api.post(
         "/api/v1/documents/upload", headers=student, files={"file": ("file.md", b"lesson")},
     )
@@ -91,6 +93,12 @@ def test_model_processing_and_binding_isolation(server):
                         "node_id": context["nodes"][0]["id"],
                         "source_indices": [0],
                     }
+                elif schema == "GuidedLesson":
+                    assert context["target"]["concept_name"] == "梯度"
+                    assert context["prerequisites"][0]["concept_name"] == "损失函数"
+                    assert context["excerpts"]
+                    value = {"lesson": "模型入门讲解：梯度告诉我们哪个方向上升最快。",
+                             "source_indices": [0]}
                 else:
                     assert context["recent_dialogue"]
                     value = {
@@ -103,14 +111,14 @@ def test_model_processing_and_binding_isolation(server):
                         "review_plan": "完成反例练习",
                     }
             reply = value if isinstance(value, str) else json.dumps(value, ensure_ascii=False)
-            if schema in ("Followup", "Explanation"):
+            if schema in ("Followup", "Explanation", "GuidedLesson"):
                 assert body["stream"] is True
                 self.send_response(200)
                 self.send_header("Content-Type", "text/event-stream")
                 self.end_headers()
                 cut = reply.index("模型") + 2
                 self.chunk(reply[:cut])
-                if context["content"] == "中断测试":
+                if context.get("content") == "中断测试":
                     return
                 assert release_reply.wait(timeout=10), "reply preview was not forwarded"
                 self.chunk(reply[cut:])
@@ -228,6 +236,43 @@ def test_model_processing_and_binding_isolation(server):
         assert "event: token" in interrupted.text and "event: error" in interrupted.text
         assert "event: done" not in interrupted.text
         assert api.get(broken_path + "/messages", headers=student).json() == []
+        doc_id = doc.json()["id"]
+        memory_url = f"/api/v1/documents/{doc_id}/memory"
+        before = api.get(memory_url, headers=student).json()
+        recommended = next(step for step in before["recommended_learning_path"] if step["mastery_score"] < 80)
+        guide_options = {"doc_id": doc_id, "mode": "guided"}
+        automatic = api.post("/api/v1/sessions", headers=student, json=guide_options)
+        assert automatic.status_code == 201 and automatic.json()["target_node_id"] == recommended["node_id"]
+        target = next(step for step in before["recommended_learning_path"] if step["concept_name"] == "梯度")
+        guided = api.post("/api/v1/sessions", headers=student,
+                          json={**guide_options, "node_id": target["node_id"]})
+        assert guided.status_code == 201, guided.text
+        assert guided.json()["target_node_id"] == target["node_id"]
+        guided_path = f"/api/v1/sessions/{guided.json()['id']}"
+        assert api.post(broken_path + "/lesson/stream", headers=student).status_code == 409
+        release_reply.clear()
+        with api.stream("POST", guided_path + "/lesson/stream", headers=student) as reply:
+            assert reply.is_success
+            lines = reply.iter_lines()
+            try:
+                assert next(lines) == "event: preview"
+                assert json.loads(next(lines).removeprefix("data: "))["text"] == "模型"
+            finally:
+                release_reply.set()
+            tail = list(lines)
+            assert "event: citation" in tail and "event: done" in tail and "event: memory_update" not in tail
+        messages = api.get(guided_path + "/messages", headers=student).json()
+        assert len(messages) == 1
+        lesson = messages[0]
+        assert lesson["sender_role"] == "assistant" and lesson["window_type"] == "encyclopedia"
+        assert lesson["related_node_ids"] == [target["node_id"]]
+        assert lesson["meta_json"]["input_kind"] == "lesson" and lesson["meta_json"]["citations"]
+        replay = api.post(guided_path + "/lesson/stream", headers=student)
+        assert f'"message_id":{lesson["id"]}' in replay.text and "event: citation" in replay.text
+        assert calls.count(("GuidedLesson", "test-a")) == 1
+        assert api.get(memory_url, headers=student).json()["nodes"] == before["nodes"]
+        opening = api.post(guided_path + "/opening/stream", headers=student)
+        assert opening.is_success and "event: done" in opening.text
         for endpoint in [root, "/api/v1/admin/export/json", "/api/v1/admin/export/db"]:
             assert b"sentinel-test-value" not in api.get(endpoint, headers=admin).content
     finally:

@@ -59,6 +59,36 @@ test("provider previews remain provisional until a committed done event", async 
   assert.deepEqual(parts, ["正在生成"]);
 });
 
+test("guided lesson uses the recommended target and restores the saved teacher message", async () => {
+  const lesson = "## 梯度\n\n想象自己站在山坡上。";
+  const citations = [{ doc_title: "课件", chunk_index: 0, snippet: "梯度的定义" }];
+  globalThis.fetch = async (url, options) => {
+    if (url.endsWith("/sessions/2/lesson/stream")) {
+      assert.deepEqual(JSON.parse(options.body), {});
+      return eventStream(frame("preview", { text: "## 梯度" }) + frame("token", { delta: lesson }) +
+        frame("citation", { citations }) + frame("done", { message_id: 6 }));
+    }
+    if (url.endsWith("/messages")) return response([{ id: 6, sender_role: "assistant", window_type: "encyclopedia",
+      content: lesson, meta_json: { input_kind: "lesson", citations } }]);
+    if (url.endsWith("/sessions")) {
+      if (options.method !== "POST") return response([]);
+      assert.deepEqual(JSON.parse(options.body), { doc_id: 3, persona_type: "peer", mode: "guided" });
+      return response({ id: 2, target_node_id: 5 });
+    }
+    throw Error(url);
+  };
+  assert.deepEqual(await api.createGuidedSession("3", "互助同窗"), { id: "2", target: "5" });
+  const previews = [];
+  const { reply, scores } = await api.stream("2", 1, "", new AbortController().signal,
+    text => previews.push(text), "lesson");
+  assert.deepEqual(previews, ["## 梯度"]);
+  assert.equal(reply.lesson, true);
+  assert.equal(scores.size, 0);
+  const restored = await api.sessionHistory("2");
+  assert.deepEqual(restored.right, [reply]);
+  assert.deepEqual(restored.left, []);
+});
+
 test("early EOF, provider errors and invalid memory never become successful turns", async () => {
   for (const [events, message] of [
     [frame("token", { delta: "半段" }), /回复中断/],

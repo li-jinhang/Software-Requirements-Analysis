@@ -490,12 +490,17 @@ progress::-moz-progress-bar {
 .card footer {
   border-top: 1px solid var(--line);
   padding-top: 14px;
+  flex-wrap: wrap;
+  justify-content: flex-start;
 }
 .card footer button {
   font-size: 13px;
 }
-.card footer button:first-child {
+.card footer button:first-child:not(.primary) {
   background: #f5f5f5;
+}
+.card footer .quiet {
+  margin-inline-start: auto;
 }
 .box {
   padding: 24px;
@@ -527,6 +532,9 @@ progress::-moz-progress-bar {
 }
 .graphlayout .box {
   margin: 0;
+}
+.graphlayout .graph-actions {
+  margin-bottom: 0;
 }
 .node.green {
   border-left: 5px solid #10b981;
@@ -645,6 +653,31 @@ progress::-moz-progress-bar {
 .msg.mine {
   margin: 0 0 14px 24px;
   background: #f0f0f7;
+}
+.lesson-progress {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 12px 20px;
+  margin-bottom: 12px;
+  padding: 12px 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: #f5f8f7;
+}
+.lesson-progress p {
+  margin: 4px 0 0;
+  color: var(--muted);
+}
+.msg.guided-lesson {
+  margin-inline-end: 0;
+  border-inline-start: 2px solid var(--teal);
+  background: #f5f8f7;
+}
+.guided-lesson :is(h2, h3, h4) {
+  margin: 1.2em 0 0.35em;
+  font-size: 1em;
 }
 .msg small {
   display: block;

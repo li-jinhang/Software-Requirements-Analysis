@@ -75,6 +75,7 @@ JWT 有效期 24 小时。注册密码至少 6 字符且 UTF-8 编码至多 72 �
 | --- | --- | --- |
 | POST /sessions | {"doc_id":1,"title":"梯度下降复述","persona_type":"peer","node_id":3} | 201，Session；标题、角色和目标知识点可省略；node_id 须属于当前资料 |
 | POST /sessions/{id}/opening/stream | 无 | text/event-stream；U0003 角色开场，重复调用重放已保存的开场 |
+| POST /sessions/{id}/lesson/stream | 无 | text/event-stream；为 `guided` 会话生成右窗入门讲解，重复调用重放已保存的讲解和引用 |
 | GET /sessions | 无 | Session[]，最新优先 |
 | PATCH /sessions/{id}/persona | {"persona_type":"examiner"} | 更新后的 Session；实际切换时追加 system 分隔消息，保留上下文 |
 | GET /sessions/{id}/messages | 无 | 按 id 升序的 Message[]，按 window_type 分窗 |
@@ -84,6 +85,8 @@ JWT 有效期 24 小时。注册密码至少 6 字符且 UTF-8 编码至多 72 �
 | GET /sessions/{id}/report | 无 | Report；尚未生成返回 404 |
 
 Session 示例：`{"id":2,"user_id":2,"doc_id":1,"title":"梯度下降复述","persona_type":"peer","status":"active","created_at":"2026-11-23T03:15:00","ended_at":null}`。角色为 child、peer、examiner。已结束的 completed 会话可以浏览历史或报告。
+
+创建时可指定 `mode: "guided"`，由百科查证绑定的模型讲解。省略 `node_id` 时，服务端从图谱学习路径中选第一个掌握度低于 80 的知识点，返回 `target_node_id`。讲解作为右窗的 assistant 消息保存，`meta_json.input_kind` 为 `lesson`，不新增学生提问或改变掌握度。用户准备复述时调用原有的左窗开场接口。
 
 LangGraph 版本的 Session 另含可空的 target_node_id，映射创建请求中的 node_id。教学消息的 meta_json 新增 graph_nodes、assessment（含原文证据与连续达标次数）、memory_synced 等字段，供本地验收与历史恢复；它们不单独作为 SSE 事件。左右窗消息请求仍只接受 content。memory_update 与 done 在最终提交成功后才发送；失败的流可返回 error 事件，客户端不得将缺少 done 的轮次视为已保存。
 

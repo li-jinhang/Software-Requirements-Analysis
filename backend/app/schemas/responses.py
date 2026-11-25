@@ -119,7 +119,7 @@ class ContextOut(GraphOut):
 
 
 class SessionOut(BaseModel):
-    mode: Literal["teach", "review"] = "teach"
+    mode: Literal["teach", "review", "guided"] = "teach"
     target_item_ids: list[int] = []
     review_completed: bool = False
     id: int

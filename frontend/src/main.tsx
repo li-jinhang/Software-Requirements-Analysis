@@ -16,6 +16,7 @@ import {
 import {
   connected,
   createRemote,
+  createGuidedSession,
   signIn,
   token,
   restoreSpace,
@@ -360,6 +361,25 @@ function App() {
     setNode(n?.id || "");
     setSetup(true);
   }
+  async function beginGuided(course: Course, concept?: Concept) {
+    if (starting) return;
+    setStarting(true);
+    setErr("");
+    try {
+      if (!(await canLearn("encyclopedia")) || identity.current !== user.id) return;
+      const { id, target } = await createGuidedSession(course.id, role, concept?.id);
+      if (identity.current !== user.id) return;
+      const session = { ...newSession(id, course, course.nodes[0], role), focus: target, guided: true };
+      save((s) => ({ ...s, sessions: [session, ...s.sessions] }));
+      setDoc(course.id);
+      setSid(id);
+      go("studio");
+    } catch (e) {
+      if (identity.current === user.id && !modelRequired(e)) setErr((e as Error).message);
+    } finally {
+      setStarting(false);
+    }
+  }
   const title = pages.find((p) => p[0] === page)?.[1] || "学习资料库";
   const links = pages.filter((p) => p[0] !== "admin" || user.admin);
   return (
@@ -465,7 +485,8 @@ function App() {
               )
             ) : page === "graph" && c ? (
               <GraphLoadBoundary key={c.id}>
-                <Graph space={space} c={c} setCourse={setDoc} start={begin} />
+                <Graph space={space} c={c} setCourse={setDoc} start={begin}
+                  guide={beginGuided} starting={starting} />
               </GraphLoadBoundary>
             ) : page === "reports" ? (
               <Reports
@@ -538,6 +559,8 @@ function App() {
                 space={space}
                 save={save}
                 start={begin}
+                guide={beginGuided}
+                starting={starting}
                 canLearn={canLearn}
                 modelRequired={modelRequired}
               />
@@ -586,7 +609,7 @@ function App() {
                   .map((s) => (
                     <option key={s.id} value={s.id}>
                       {space.courses.find((c) => c.id === s.doc)?.title} ·{" "}
-                      {s.role} · {s.left.filter((m) => m.who === "我").length}{" "}
+                      {s.guided ? "AI 讲解 · " : ""}{s.role} · {s.left.filter((m) => m.who === "我").length}{" "}
                       轮
                     </option>
                   ))}

@@ -3,11 +3,11 @@
 import json
 from typing import Literal
 
-from pydantic import BaseModel, Field, create_model
+from pydantic import BaseModel, ConfigDict, Field, create_model
 from pydantic_core import from_json
 from sqlalchemy import select
 
-from app.agents.contracts import Citation, MemoryUpdate, NodeUpdate, Report, TurnMetadata, tokens
+from app.agents.contracts import Citation, MemoryUpdate, NodeUpdate, Report, Token, TurnMetadata, tokens
 from app.agents.encyclopedia_agent import Explanation as LessonExplanation
 from app.db.models import Message
 from app.services import memory_service as memory
@@ -29,6 +29,12 @@ class Explanation(LessonExplanation):
     source_indices: list[int] = Field(max_length=4)
 
 
+class GuidedLesson(BaseModel):
+    model_config = ConfigDict(str_strip_whitespace=True)
+    lesson: str = Field(min_length=1, max_length=6000)
+    source_indices: list[int] = Field(max_length=4)
+
+
 def history(db, id):
     rows = db.scalars(
         select(Message).where(Message.session_id == id).order_by(Message.id.desc()).limit(32)
@@ -39,10 +45,10 @@ def history(db, id):
     ]
 
 
-def evidence_nodes(ctx):
+def evidence_nodes(nodes):
     return [
         {k: n[k] for k in ("id", "concept_name", "summary", "key_points", "mastery_score")}
-        for n in ctx["nodes"]
+        for n in nodes
     ]
 
 
@@ -68,6 +74,9 @@ def reply_preview(window, emit):
         if window == "feynman":
             text = fields.get("follow_up")
             text = text if isinstance(text, str) else ""
+        elif window == "lesson":
+            text = fields.get("lesson")
+            text = text if isinstance(text, str) else ""
         else:
             parts = []
             for key, title in (
@@ -86,9 +95,42 @@ def reply_preview(window, emit):
     return update
 
 
+def guided_lesson(db, turn, profile, emit_preview):
+    ctx = memory.get_memory_context(db, turn.doc_id, concept=turn.target_node_id)
+    node = next((n for n in evidence_nodes(ctx["nodes"]) if n["id"] == turn.target_node_id), None)
+    if node is None:
+        raise ModelError("本节讲解的知识点已不可用，请从图谱重新选择。")
+    prerequisites = {n["id"]: n for n in evidence_nodes(ctx["prerequisites"])}
+    hits = memory.search_rag(turn.doc_id, node["concept_name"])
+    payload = json.dumps({
+        "target": node,
+        "prerequisites": [prerequisites[step["node_id"]] for step in ctx["recommended_learning_path"]
+                          if step["node_id"] in prerequisites],
+        "excerpts": [{"index": i, "chunk_index": hit["chunk_index"], "text": hit["snippet"]}
+                     for i, hit in enumerate(hits)],
+    }, ensure_ascii=False)
+    db.commit()
+    result = ModelConnection(profile).structured(
+        GuidedLesson,
+        "你是给零基础学生上第一课的中文老师。只讲 target 指定的知识点。"
+        "先用一句话说明它解决什么问题，再用日常语言补齐理解本节所需的前置概念，优先补尚未掌握的前置。"
+        "由浅入深讲解定义，解释首次出现的术语，提供一个带步骤和结果的具体例子，再指出一个常见误区。"
+        "结尾提供一个只依赖本节内容、可以用自己的话回答的复述提示。"
+        "lesson 使用 Markdown 小标题和短段落。课件依据用 [片段 #chunk_index] 标注，区分课件内容和补充举例。"
+        "source_indices 只填实际引用的 excerpt index，缺少依据时填空列表，不得编造出处。",
+        payload,
+        on_chunk=reply_preview("lesson", emit_preview),
+    )
+    if any(i < 0 or i >= len(hits) for i in result.source_indices):
+        raise ModelError("模型返回了本次检索之外的引用")
+    yield TurnMetadata(metadata={"input_kind": "lesson", "related_node_ids": [node["id"]]})
+    yield Citation(citations=[hits[i] for i in dict.fromkeys(result.source_indices)])
+    yield Token(delta=result.lesson)
+
+
 def prepare(db, turn, window, profile, emit_preview=None):
     ctx = memory.get_memory_context(db, turn.doc_id, turn.session_id, query=turn.content)
-    nodes = evidence_nodes(ctx)
+    nodes = evidence_nodes(ctx["nodes"])
     if not nodes:
         raise ModelError("当前资料没有可用知识点")
     hits = memory.search_rag(turn.doc_id, turn.content)
@@ -186,7 +228,7 @@ def diagnose(db, session, profile):
     ctx = memory.get_memory_context(db, session.doc_id, session.id)
     material = json.dumps(
         dict(
-            nodes=evidence_nodes(ctx),
+            nodes=evidence_nodes(ctx["nodes"]),
             recent_dialogue=history(db, session.id),
             weaknesses=[w["detail"] for w in ctx["weaknesses"][-32:]],
         ),

@@ -15,6 +15,7 @@ from app.db.models import Session, Document, KnowledgeNode, Message, DiagnosticR
 from app.api.v1.documents import owned
 from app.schemas import SessionCreate, PersonaChange, Turn
 from app.agents import feynman_agent, model_teaching
+from app.services import memory_service
 from app.services.model_profiles import ModelError, ModelRequired, require_profile
 from app.agents.contracts import AgentInput, MemoryUpdate, Citation, Token, Done, TurnMetadata, Preview, EVENT_NAMES
 from app.agents.contracts import CognitiveUpdate, EncyclopediaPush
@@ -46,11 +47,20 @@ def lock_active(db, id):
 def create(body: SessionCreate, db=Depends(get_db), user=Depends(current_user)):
     if owned(db, Document, body.doc_id, user).parse_status != "completed":
         raise HTTPException(409, "资料尚未解析完成")
-    if body.node_id is not None:
-        node = db.get(KnowledgeNode, body.node_id)
+    target = body.node_id
+    if target is not None:
+        node = db.get(KnowledgeNode, target)
         if node is None or node.doc_id != body.doc_id:
             raise HTTPException(422, "目标知识点不属于当前资料")
-    require_profile("feynman")
+        if body.mode == "guided" and node.mastery_score >= 80:
+            raise HTTPException(409, "该知识点已掌握，请选择其他知识点。")
+    elif body.mode == "guided":
+        step = next((step for step in memory_service.compute_learning_path(db, body.doc_id)
+                     if step["mastery_score"] < 80), None)
+        if step is None:
+            raise HTTPException(409, "当前资料没有尚未掌握的知识点。")
+        target = step["node_id"]
+    require_profile("encyclopedia" if body.mode == "guided" else "feynman")
     from app.services import cognitive
     ids = list(dict.fromkeys(body.target_item_ids))
     if body.mode == "review":
@@ -65,7 +75,7 @@ def create(body: SessionCreate, db=Depends(get_db), user=Depends(current_user)):
             raise HTTPException(409, "暂无已学条目，可在认知文档中指定条目")
     elif ids:
         raise HTTPException(422, "指定复习条目需要使用复习模式")
-    row = Session(user_id=user.id, target_node_id=body.node_id, target_item_ids=ids,
+    row = Session(user_id=user.id, target_node_id=target, target_item_ids=ids,
                   **body.model_dump(exclude={"node_id", "target_item_ids"}))
     db.add(row)
     db.commit()
@@ -126,13 +136,18 @@ def produce(id, content, window, user_id, events, action="explain"):
                 guards.enter_context(session_guard(("document", s.doc_id)))
             if s.review_completed and window == "feynman" and action != "opening":
                 raise HTTPException(409, "本轮复习已完成")
-            if action == "opening":
+            if action == "lesson" and s.mode != "guided":
+                raise HTTPException(409, "请从知识图谱或资料库开始 AI 讲解会话。")
+            if action in ("opening", "lesson"):
                 old = db.scalar(select(Message).where(
                     Message.session_id == id, Message.sender_role == "assistant",
-                    Message.window_type == "feynman",
-                    func.json_extract(Message.meta_json, "$.input_kind") == "opening",
+                    Message.window_type == window,
+                    func.json_extract(Message.meta_json, "$.input_kind") == action,
                 ).order_by(Message.id).limit(1))
                 if old:
+                    if action == "lesson":
+                        citations = json.loads(old.meta_json).get("citations", [])
+                        events.put(frame(Citation(citations=citations)))
                     events.put(frame(Token(delta=old.content)))
                     events.put(frame(Done(message_id=old.id)))
                     return
@@ -140,13 +155,18 @@ def produce(id, content, window, user_id, events, action="explain"):
                 session_id=id, doc_id=s.doc_id, persona_type=s.persona_type, content=content,
                 target_node_id=s.target_node_id, action=action,
             )
-            if window == "feynman":
+            def emit_preview(text):
+                events.put(frame(Preview(text=text)))
+
+            if action == "lesson":
+                stream = model_teaching.guided_lesson(db, turn, require_profile(window), emit_preview)
+            elif window == "feynman":
                 require_profile(window)
                 stream = feynman_agent.stream(db, turn)
             else:
                 prepared = model_teaching.prepare(
                     db, turn, window, require_profile(window),
-                    emit_preview=lambda text: events.put(frame(Preview(text=text))),
+                    emit_preview=emit_preview,
                 )
                 stream = model_teaching.apply(db, turn, prepared)
             text = []
@@ -177,7 +197,7 @@ def produce(id, content, window, user_id, events, action="explain"):
                         continue
                 events.put(frame(event))
             lock_active(db, id)
-            if action != "opening" and not accepted_early:
+            if action == "explain" and not accepted_early:
                 db.add(Message(session_id=id, window_type=window, sender_role="user", content=content))
             msg = Message(
                 session_id=id,
@@ -236,6 +256,11 @@ def conversation(id, body, window, db, user, action="explain"):
 def opening(id: int, db=Depends(get_db), user=Depends(current_user)):
     """U0003 role-specific opening; repeated calls replay the saved opening."""
     return conversation(id, None, "feynman", db, user, action="opening")
+
+
+@router.post("/{id}/lesson/stream", response_class=StreamingResponse)
+def lesson(id: int, db=Depends(get_db), user=Depends(current_user)):
+    return conversation(id, None, "encyclopedia", db, user, action="lesson")
 
 
 @router.post("/{id}/feynman/stream", response_class=StreamingResponse)

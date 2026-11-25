@@ -10,7 +10,7 @@ class AgentInput(BaseModel):
     persona_type: Persona
     content: str
     target_node_id: int | None = None
-    action: Literal["explain", "opening"] = "explain"
+    action: Literal["explain", "opening", "lesson"] = "explain"
 
 
 class Token(BaseModel):

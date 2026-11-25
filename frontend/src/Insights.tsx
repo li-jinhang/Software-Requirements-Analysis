@@ -15,6 +15,7 @@ import { RadarComponent } from "echarts/components";
 import { CanvasRenderer } from "echarts/renderers";
 import { Course, Concept, Report, Space, download, status } from "./model";
 import { dimensions } from "./model";
+import { GraduationCap } from "lucide-react";
 echarts.use([RadarChart, RadarComponent, CanvasRenderer]);
 const graphFit = { padding: 0.22, minZoom: 0.1, maxZoom: 1.3 };
 const relationNames: Record<string, string> = {
@@ -40,11 +41,15 @@ export function Graph({
   c,
   setCourse,
   start,
+  guide,
+  starting,
 }: {
   space: Space;
   c: Course;
   setCourse: (id: string) => void;
   start: (c: Course, n: Concept) => void;
+  guide: (c: Course, n?: Concept) => void;
+  starting: boolean;
 }) {
   const [query, setQuery] = useState(""),
     [selected, setSelected] = useState(c.nodes[0]?.id);
@@ -81,19 +86,19 @@ export function Graph({
       <div className="pagehead">
         <div>
           <h1>知识记忆图谱</h1>
-          <p>沿概念关联查看掌握进度，选择节点进入专项讲解。</p>
+          <p>从未掌握的知识点听 AI 讲解，也可以选择节点进行费曼复述。</p>
         </div>
-        <select
-          aria-label="图谱资料"
-          value={c.id}
-          onChange={(e) => setCourse(e.target.value)}
-        >
-          {space.courses.map((x) => (
-            <option key={x.id} value={x.id}>
-              {x.title}
-            </option>
-          ))}
-        </select>
+        <div className="tools">
+          <select aria-label="图谱资料" value={c.id} onChange={(e) => setCourse(e.target.value)}>
+            {space.courses.map((x) => (
+              <option key={x.id} value={x.id}>{x.title}</option>
+            ))}
+          </select>
+          <button className="primary" disabled={starting || !c.nodes.some((n) => n.score < 80)}
+            onClick={() => guide(c)}>
+            <GraduationCap /> 按图谱顺序学习
+          </button>
+        </div>
       </div>
       <div className="sectionhead">
         <input
@@ -166,9 +171,14 @@ export function Graph({
               {!space.logs.some((l) => l.node === current.id) && (
                 <p>暂无薄弱记录。</p>
               )}
-              <button className="primary" onClick={() => start(c, current)}>
-                专项费曼考核
-              </button>
+              <div className="tools graph-actions">
+                {current.score < 80 && (
+                  <button className="primary" disabled={starting} onClick={() => guide(c, current)}>
+                    <GraduationCap /> 听讲解
+                  </button>
+                )}
+                <button disabled={starting} onClick={() => start(c, current)}>专项费曼考核</button>
+              </div>
             </>
           ) : (
             <p>选择图谱中的知识点查看详情。</p>

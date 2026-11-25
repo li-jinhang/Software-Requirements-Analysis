@@ -230,16 +230,27 @@ export const reviews = {
   skip: (doc: string, item: number) => json<ReviewLists>(`/documents/${doc}/reviews/${item}/skip`, post({})),
   advance: (doc: string) => json<ReviewLists>(`/documents/${doc}/simulate-time-advance`, post({days: 1})),
 };
-export async function createRemote(doc: string, role: string, node?: string, reviewIds?: number[]) {
+async function createSession(doc: string, role: string, node?: string, options?: {
+  mode: "review" | "guided";
+  target_item_ids?: number[];
+}) {
   const s = await (
     await request(
       "/sessions",
       post({ doc_id: Number(doc), persona_type: persona(role), ...(node ? { node_id: Number(node) } : {}),
-        ...(reviewIds ? {mode: "review", target_item_ids: reviewIds} : {}) }),
+        ...options }),
     )
   ).json();
   if ((s.id ?? s.session_id) == null) throw Error("会话响应缺少编号。");
-  return String(s.id ?? s.session_id);
+  return { id: String(s.id ?? s.session_id), target: s.target_node_id };
+}
+export async function createRemote(doc: string, role: string, node?: string, reviewIds?: number[]) {
+  return (await createSession(doc, role, node, reviewIds ? { mode: "review", target_item_ids: reviewIds } : undefined)).id;
+}
+export async function createGuidedSession(doc: string, role: string, node?: string) {
+  const { id, target } = await createSession(doc, role, node, { mode: "guided" });
+  if (!Number.isInteger(target) || target <= 0) throw Error("讲解会话缺少目标知识点。");
+  return { id, target: String(target) };
 }
 export async function setPersona(id: string, role: string) {
   await request("/sessions/" + id + "/persona", {
@@ -256,7 +267,7 @@ type Update = {
   status: Concept["mastery"];
   tag: string;
 };
-type Meta = Partial<Correction> & { updates?: Update[] };
+type Meta = Partial<Correction> & { updates?: Update[]; input_kind?: string };
 type StreamPayloads = {
   token: { delta: string };
   preview: { text: string };
@@ -285,6 +296,7 @@ function assistant(
       })
       .join(" / "),
     citations: meta.citations?.filter((hit): hit is CourseCitation => "chunk_index" in hit),
+    ...(meta.input_kind === "lesson" ? { lesson: true } : {}),
     ...(meta.proactive ? {correction: meta as Correction} : {}),
   };
 }
@@ -294,14 +306,15 @@ export async function stream(
   content: string,
   signal: AbortSignal,
   onText: (text: string) => void,
-  opening = false,
+  initial: boolean | "lesson" = false,
   onMarks?: (event: CognitiveUpdate) => void,
   onCorrection?: (message: Message) => void,
 ) {
+  const endpoint = initial === "lesson" ? "lesson" : initial ? "opening" : side ? "encyclopedia" : "feynman";
   const response = await request(
-    "/sessions/" + id + "/" + (opening ? "opening" : side ? "encyclopedia" : "feynman") + "/stream",
+    "/sessions/" + id + "/" + endpoint + "/stream",
     {
-      ...post(opening ? {} : { content }),
+      ...post(initial ? {} : { content }),
       headers: { Accept: "text/event-stream" },
       signal,
     },
@@ -315,7 +328,7 @@ export async function stream(
   let buffer = "",
     text = "",
     previewing = false;
-  const meta: Meta = {};
+  const meta: Meta = endpoint === "lesson" ? { input_kind: "lesson" } : {};
   try {
     while (true) {
       const { done, value } = await reader.read();
@@ -591,6 +604,7 @@ export async function restoreSpace(
     role: roles[["child", "peer", "examiner"].indexOf(s.persona_type)],
     closed: s.status === "completed",
     ...(s.mode === "review" ? {review: true, reviewCompleted: s.review_completed} : {}),
+    ...(s.mode === "guided" ? { guided: true } : {}),
     left: [],
     right: [],
     drafts: ["", ""],
