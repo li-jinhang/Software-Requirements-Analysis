@@ -10,6 +10,24 @@
   height: 27px;
   min-height: 27px;
 }
+.toolbar-slot .graph-neighbor-toggle {
+  flex: none;
+  height: 26px;
+  min-height: 26px;
+  padding: 0 9px;
+  border-radius: 99px;
+  font-size: 11.5px;
+  font-weight: 500;
+  white-space: nowrap;
+  color: var(--muted);
+  background: transparent;
+  border-color: var(--control-line);
+}
+.toolbar-slot .graph-neighbor-toggle[aria-pressed="true"] {
+  color: var(--accent);
+  background: var(--accent-wash);
+  border-color: color-mix(in srgb, var(--accent) 42%, var(--line));
+}
 .graph-course {
   max-width: 220px;
   min-width: 64px;
@@ -132,16 +150,42 @@
 .graph .react-flow__node.mastery-node {
   border-inline-start: 2.5px solid var(--mastery-ink);
 }
+.graph .react-flow__node.node.is-search-match {
+  border-color: var(--accent);
+  box-shadow:
+    var(--highlight-top),
+    0 0 0 2px color-mix(in srgb, var(--accent) 20%, transparent),
+    var(--shadow-sm);
+}
+.graph .react-flow__node.node.is-search-neighbor {
+  border-style: dashed;
+  border-color: var(--control-line-hover);
+  background: var(--rail-bg);
+  opacity: 0.92;
+}
 .graph .react-flow__node.node.is-dimmed {
   opacity: 0.25;
 }
 .graph .react-flow__node.node:is(.selected, .is-focused, :focus-visible) {
   outline: 0;
+  border-style: solid;
   border-color: var(--accent);
   box-shadow:
     var(--highlight-top),
     0 0 0 2.5px color-mix(in srgb, var(--accent) 24%, transparent),
     var(--shadow-sm);
+}
+.node-neighbor-tag {
+  margin-inline-start: auto;
+  flex: none;
+  padding: 0 5px;
+  border-radius: 4px;
+  font-size: 10px;
+  font-weight: 500;
+  line-height: 1.5;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--line);
 }
 .graph .react-flow__handle {
   width: 5px;

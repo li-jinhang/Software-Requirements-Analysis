@@ -63,6 +63,7 @@ type FloatingEdgeData = {
   relation: string;
   highlighted: boolean;
   dimmed: boolean;
+  bypass?: number;
 };
 
 function FloatingEdge({ id, source, target, markerEnd, label, data }: EdgeProps<Edge<FloatingEdgeData>>) {
@@ -72,17 +73,35 @@ function FloatingEdge({ id, source, target, markerEnd, label, data }: EdgeProps<
 
   const sBox = nodeBox(sourceNode);
   const tBox = nodeBox(targetNode);
-  const sAnchor = edgeAttachment(sBox, tBox);
-  const tAnchor = edgeAttachment(tBox, sBox);
-  const [edgePath, labelX, labelY] = getBezierPath({
-    sourceX: sAnchor.x,
-    sourceY: sAnchor.y,
-    sourcePosition: sAnchor.position,
-    targetX: tAnchor.x,
-    targetY: tAnchor.y,
-    targetPosition: tAnchor.position,
-    curvature: 0.24,
-  });
+  const bypass = data?.bypass ?? 0;
+
+  let edgePath = "";
+  let labelX = 0;
+  let labelY = 0;
+  if (bypass !== 0) {
+    const goRight = bypass > 0;
+    const sx = goRight ? sBox.x + sBox.w + 2 : sBox.x - 2;
+    const tx = goRight ? tBox.x + tBox.w + 2 : tBox.x - 2;
+    const sy = sBox.cy;
+    const ty = tBox.cy;
+    const arcX = (goRight ? Math.max(sBox.x + sBox.w, tBox.x + tBox.w) : Math.min(sBox.x, tBox.x)) + bypass * 92;
+    const arcY = (sy + ty) / 2;
+    edgePath = `M ${sx} ${sy} Q ${arcX} ${arcY} ${tx} ${ty}`;
+    labelX = 0.25 * sx + 0.5 * arcX + 0.25 * tx;
+    labelY = 0.25 * sy + 0.5 * arcY + 0.25 * ty;
+  } else {
+    const sAnchor = edgeAttachment(sBox, tBox);
+    const tAnchor = edgeAttachment(tBox, sBox);
+    [edgePath, labelX, labelY] = getBezierPath({
+      sourceX: sAnchor.x,
+      sourceY: sAnchor.y,
+      sourcePosition: sAnchor.position,
+      targetX: tAnchor.x,
+      targetY: tAnchor.y,
+      targetPosition: tAnchor.position,
+      curvature: 0.24,
+    });
+  }
 
   const relation = data?.relation || "";
   const highlighted = Boolean(data?.highlighted);
@@ -164,8 +183,15 @@ function FitLoadedGraph({ layout }: { layout: string }) {
   const height = useStore((state) => state.height);
   useEffect(() => {
     if (!ready || !width || !height) return;
-    const frame = requestAnimationFrame(() => void fitView(graphFit));
-    return () => cancelAnimationFrame(frame);
+    const reduced = typeof matchMedia === "function" && matchMedia("(prefers-reduced-motion: reduce)").matches;
+    let inner = 0;
+    const outer = requestAnimationFrame(() => {
+      inner = requestAnimationFrame(() => void fitView({ ...graphFit, duration: reduced ? 0 : 200 }));
+    });
+    return () => {
+      cancelAnimationFrame(outer);
+      cancelAnimationFrame(inner);
+    };
   }, [ready, layout, fitView, width, height]);
   return null;
 }
@@ -188,20 +214,45 @@ export function Graph({
   starting: boolean;
 }) {
   const [query, setQuery] = useState(""),
+    [includeNeighbors, setIncludeNeighbors] = useState(true),
     [selected, setSelected] = useState(c.nodes[0]?.id),
     [lockedNode, setLockedNode] = useState<string | null>(null),
     [hoveredNode, setHoveredNode] = useState<string | null>(null),
     [hoveredEdge, setHoveredEdge] = useState<string | null>(null),
     [layoutTick, setLayoutTick] = useState(0);
 
-  const matches = useMemo(
-    () =>
-      c.nodes
-        .filter((n) => n.name.includes(query.trim()))
-        .sort((a, b) => b.importance - a.importance)
-        .slice(0, 40),
-    [c, query],
-  );
+  const trimmedQuery = query.trim().toLowerCase();
+  const isSearchActive = trimmedQuery.length > 0;
+
+  const { matches, matchedIds, neighborIds } = useMemo(() => {
+    if (!trimmedQuery) {
+      return {
+        matches: [...c.nodes].sort((a, b) => b.importance - a.importance).slice(0, 40),
+        matchedIds: new Set<string>(),
+        neighborIds: new Set<string>(),
+      };
+    }
+    const direct = c.nodes.filter((n) => n.name.toLowerCase().includes(trimmedQuery));
+    const mIds = new Set(direct.map((n) => n.id));
+    const nIds = new Set<string>();
+    if (includeNeighbors && direct.length) {
+      for (const l of c.links) {
+        if (mIds.has(l.from) && !mIds.has(l.to)) nIds.add(l.to);
+        if (mIds.has(l.to) && !mIds.has(l.from)) nIds.add(l.from);
+      }
+    }
+    const combined = c.nodes
+      .filter((n) => mIds.has(n.id) || nIds.has(n.id))
+      .sort((a, b) => {
+        const aDirect = mIds.has(a.id) ? 1 : 0;
+        const bDirect = mIds.has(b.id) ? 1 : 0;
+        if (aDirect !== bDirect) return bDirect - aDirect;
+        return b.importance - a.importance;
+      })
+      .slice(0, 40);
+    return { matches: combined, matchedIds: mIds, neighborIds: nIds };
+  }, [c.nodes, c.links, trimmedQuery, includeNeighbors]);
+
   const visibleEdges = useMemo(
     () =>
       c.links.filter(
@@ -242,19 +293,24 @@ export function Graph({
     const positions = graphPositions(matches, c.links);
     return matches.map(n => {
       const label = status(n, space.logs);
+      const isNeighbor = isSearchActive && neighborIds.has(n.id);
       return {
         id: n.id,
         position: positions.get(n.id)!,
-        ariaLabel: n.name + " · " + label + " " + n.score + "%",
+        ariaLabel: n.name + (isNeighbor ? " · 关联节点" : "") + " · " + label + " " + n.score + "%",
         className: "node mastery-node mastery-" + masteryForScore(n.score).tone,
         data: { label: <div className="node-content">
-          <div className="node-heading"><i aria-hidden="true" /><strong>{n.name}</strong></div>
+          <div className="node-heading">
+            <i aria-hidden="true" />
+            <strong>{n.name}</strong>
+            {isNeighbor && <span className="node-neighbor-tag">关联</span>}
+          </div>
           <div className="node-mastery"><span>{label}</span><b>{n.score}%</b></div>
           <progress max={100} value={n.score} aria-label={n.name + "掌握度"} />
         </div> },
       };
     });
-  }, [matches, c.links, space.logs]);
+  }, [matches, c.links, space.logs, isSearchActive, neighborIds]);
 
   const [nodes, setNodes, change] = useNodesState(initialNodes);
   useEffect(() => {
@@ -263,23 +319,52 @@ export function Graph({
 
   const styledNodes = useMemo(
     () =>
-      nodes.map((n) => ({
-        ...n,
-        className:
-          "node mastery-node mastery-" +
-          masteryForScore(matches.find((m) => m.id === n.id)?.score ?? 0).tone +
-          (hasFocus && !connectedNodes.has(n.id) ? " is-dimmed" : "") +
-          (activeFocusId === n.id ? " is-focused" : ""),
-      })),
-    [nodes, matches, hasFocus, connectedNodes, activeFocusId],
+      nodes.map((n) => {
+        const isDirect = isSearchActive && matchedIds.has(n.id);
+        const isNeighbor = isSearchActive && neighborIds.has(n.id);
+        return {
+          ...n,
+          className:
+            "node mastery-node mastery-" +
+            masteryForScore(matches.find((m) => m.id === n.id)?.score ?? 0).tone +
+            (isDirect ? " is-search-match" : "") +
+            (isNeighbor ? " is-search-neighbor" : "") +
+            (hasFocus && !connectedNodes.has(n.id) ? " is-dimmed" : "") +
+            (activeFocusId === n.id ? " is-focused" : ""),
+        };
+      }),
+    [nodes, matches, isSearchActive, matchedIds, neighborIds, hasFocus, connectedNodes, activeFocusId],
   );
 
   const flowEdges = useMemo(
-    () =>
-      visibleEdges.map((l) => {
+    () => {
+      const posMap = new Map(nodes.map((n) => [n.id, n.position]));
+      let bypassDir = 1;
+      return visibleEdges.map((l) => {
         const edgeId = JSON.stringify([l.from, l.to, l.label]);
-        const highlighted = hasFocus && highlightedEdges.has(edgeId);
+        const searchHighlighted = isSearchActive && !hasFocus && (matchedIds.has(l.from) || matchedIds.has(l.to));
+        const highlighted = (hasFocus && highlightedEdges.has(edgeId)) || searchHighlighted;
         const dimmed = hasFocus && !highlighted;
+        const sp = posMap.get(l.from);
+        const tp = posMap.get(l.to);
+        let bypass = 0;
+        if (sp && tp) {
+          const minY = Math.min(sp.y, tp.y);
+          const maxY = Math.max(sp.y, tp.y);
+          const avgX = (sp.x + tp.x) / 2;
+          const blocked = nodes.some(
+            (other) =>
+              other.id !== l.from &&
+              other.id !== l.to &&
+              other.position.y > minY + 20 &&
+              other.position.y < maxY - 20 &&
+              Math.abs(other.position.x - avgX) < 110,
+          );
+          if (blocked) {
+            bypass = bypassDir;
+            bypassDir = -bypassDir;
+          }
+        }
         return {
           id: edgeId,
           source: l.from,
@@ -296,11 +381,13 @@ export function Graph({
             relation: l.label,
             highlighted,
             dimmed,
+            bypass,
           },
           zIndex: highlighted ? 10 : 0,
         };
-      }),
-    [visibleEdges, hasFocus, highlightedEdges],
+      });
+    },
+    [visibleEdges, nodes, isSearchActive, hasFocus, highlightedEdges, matchedIds],
   );
 
   const resetLayout = useCallback(() => {
@@ -309,7 +396,7 @@ export function Graph({
     setLayoutTick((t) => t + 1);
   }, [initialNodes, setNodes]);
 
-  const current = matches.find((n) => n.id === selected) || matches[0];
+  const current = matches.find((n) => n.id === selected) || matches.find((n) => matchedIds.has(n.id)) || matches[0];
   return (
     <>
       <WorkspaceToolbar>
@@ -317,8 +404,19 @@ export function Graph({
           {space.courses.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}
         </select>
         <label className="search graph-search"><Search aria-hidden="true" />
-          <input aria-label="搜索知识点" placeholder="搜索知识点…" value={query} onChange={(e) => setQuery(e.target.value)} />
+          <input aria-label="搜索知识点" placeholder="搜索知识点…" value={query} onChange={(e) => { setLockedNode(null); setQuery(e.target.value); }} />
         </label>
+        {isSearchActive && (
+          <button
+            type="button"
+            className="graph-neighbor-toggle"
+            aria-pressed={includeNeighbors}
+            title={includeNeighbors ? "已包含 1 跳关联知识点，点击仅显示直接命中节点" : "仅显示直接命中节点，点击包含 1 跳关联"}
+            onClick={() => setIncludeNeighbors((v) => !v)}
+          >
+            含关联
+          </button>
+        )}
         <div className="toolbar-actions">
           <button type="button" className="compact-command" onClick={resetLayout} title="整理布局">
             <LayoutGrid aria-hidden="true" /><span>整理布局</span>
@@ -367,7 +465,7 @@ export function Graph({
             fitViewOptions={graphFit}
             minZoom={graphFit.minZoom}
           >
-            <FitLoadedGraph layout={JSON.stringify(nodes.map((n) => n.id)) + ":" + layoutTick} />
+            <FitLoadedGraph layout={JSON.stringify(initialNodes.map((n) => [n.id, n.position.x, n.position.y])) + ":" + layoutTick} />
             <Background color="var(--dot-grid)" gap={18} size={1} />
             <Controls showInteractive={false} />
           </ReactFlow>
