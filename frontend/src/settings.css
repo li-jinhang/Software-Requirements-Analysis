@@ -202,7 +202,10 @@ dialog.settings-dialog {
 }
 
 .model-card {
+  position: relative;
+  isolation: isolate;
   justify-content: space-between;
+  flex-wrap: wrap;
   padding: 12px;
   border: 1px solid var(--line);
   border-radius: 20px;
@@ -218,9 +221,51 @@ dialog.settings-dialog {
   min-width: 0;
 }
 
+.model-identity {
+  flex: 1 1 180px;
+}
+
+button.model-select {
+  justify-content: flex-start;
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  color: inherit;
+  text-align: start;
+  font: inherit;
+}
+
+/* Extend the selection target across the card, below the separate actions. */
+.model-select::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 20px;
+  cursor: pointer;
+}
+
+button.model-select:active {
+  transform: none;
+}
+
+button.model-select:focus-visible {
+  outline: none;
+}
+
+.model-select:focus-visible::after {
+  outline: 2px solid #555;
+  outline-offset: 3px;
+}
+
+.model-select:disabled::after {
+  cursor: wait;
+}
+
 .model-info {
   display: grid;
   gap: 2px;
+  overflow-wrap: anywhere;
 }
 
 .model-info small {
@@ -240,12 +285,16 @@ dialog.settings-dialog {
 }
 
 .model-actions {
+  position: relative;
+  z-index: 1;
+  pointer-events: none;
   flex-shrink: 0;
   flex-wrap: wrap;
   gap: 6px;
 }
 
 .model-actions button {
+  pointer-events: auto;
   min-height: 34px;
   padding: 5px 9px;
   font-size: 13px;

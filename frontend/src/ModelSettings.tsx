@@ -407,6 +407,7 @@ export default function Settings({
         <section
           className="settings-panel"
           aria-labelledby="settings-panel-title"
+          aria-busy={busy}
         >
           <div className="settings-panel-heading">
             <h3 id="settings-panel-title">
@@ -514,6 +515,9 @@ export default function Settings({
               <p className="meta settings-archive-hint">
                 导入会合并方案和绑定。API Key 与 ChatGPT 授权仅保存在本机。
               </p>
+              <p className="meta settings-archive-hint">
+                点击模型所在行即可切换，下一次请求生效。各教学环节单独指定的模型可在“教学设置”中调整。
+              </p>
               <div className="model-group-heading">
                 <h4>
                   <button
@@ -564,17 +568,30 @@ export default function Settings({
                     <article
                       key={p.id}
                       className="model-card"
-                      data-active={uses.length > 0}
+                      data-active={settings.bindings.default === p.id}
                     >
-                      <div className="model-identity">
+                      <button
+                        type="button"
+                        className="model-select model-identity"
+                        disabled={busy}
+                        aria-label={"切换到「" + p.name + "」"}
+                        aria-pressed={settings.bindings.default === p.id}
+                        onClick={() => {
+                          if (settings.bindings.default === p.id) return;
+                          void run(async () => {
+                            await api.bind("default", p.id);
+                            return "已切换到「" + p.name + "」，下一次请求生效。";
+                          });
+                        }}
+                      >
                         <span className="model-icon" aria-hidden="true">
                           {p.mode === "chatgpt" ? "CH" : "API"}
                         </span>
-                        <div className="model-info">
+                        <span className="model-info">
                           <strong>{p.name}</strong>
                           <small>{summary}</small>
-                        </div>
-                      </div>
+                        </span>
+                      </button>
                       <div className="model-actions">
                         {uses.length > 0 && (
                           <span
@@ -582,7 +599,7 @@ export default function Settings({
                             title={uses.map((k) => purposes[k]).join("、")}
                           >
                             {uses.includes("default")
-                              ? "默认使用中"
+                              ? "当前使用中"
                               : "教学使用中"}
                           </span>
                         )}
