@@ -103,6 +103,22 @@ def check_graph_course_switch(browser):
     print("PASS graph search, course switch, clear search and resize")
 
 
+def check_graph_load_failure(browser):
+    root = os.environ.get("FM_FRONTEND", "http://127.0.0.1:5173")
+    page = browser.new_page(viewport={"width": 1440, "height": 900})
+    try:
+        page.route(re.compile(r"/src/Insights\.tsx(?:\?|$)"), lambda route: route.abort(), times=1)
+        page.goto(root)
+        button(page, "知识图谱").click()
+        expect(page.get_by_role("alert")).to_contain_text("图谱加载失败")
+        expect(button(page, "学习资料库")).to_be_visible()
+        button(page, "重新加载工作台").click()
+        expect(page.locator(".react-flow__node").first).to_be_visible()
+    finally:
+        page.close()
+    print("PASS graph module load failure keeps navigation and reload recovers")
+
+
 def run(browser):
     root = os.environ.get("FM_FRONTEND", "http://127.0.0.1:5173")
     page = browser.new_page()
@@ -272,6 +288,7 @@ if __name__ == "__main__":
         browser = playwright.chromium.launch(channel=os.environ.get("FM_BROWSER", "msedge"))
         try:
             check_graph_course_switch(browser)
+            check_graph_load_failure(browser)
             check_local_model_settings(browser)
             run(browser)
         finally:

@@ -51,6 +51,28 @@ const pages = [
   ["reports", "历史报告", Files],
   ["admin", "后台数据中心", ChartNoAxesColumn],
 ] as const;
+
+class GraphLoadBoundary extends React.Component<React.PropsWithChildren> {
+  state = { failed: false };
+
+  static getDerivedStateFromError() {
+    return { failed: true };
+  }
+
+  render() {
+    if (!this.state.failed) return this.props.children;
+    return (
+      <div className="box empty">
+        <h1>知识记忆图谱</h1>
+        <p role="alert">图谱加载失败，请重新加载工作台。</p>
+        <button className="primary" onClick={() => window.location.reload()}>
+          重新加载工作台
+        </button>
+      </div>
+    );
+  }
+}
+
 function Auth({
   login,
   close,
@@ -442,13 +464,9 @@ function App() {
                 </div>
               )
             ) : page === "graph" && c ? (
-              <Graph
-                key={c.id}
-                space={space}
-                c={c}
-                setCourse={setDoc}
-                start={begin}
-              />
+              <GraphLoadBoundary key={c.id}>
+                <Graph space={space} c={c} setCourse={setDoc} start={begin} />
+              </GraphLoadBoundary>
             ) : page === "reports" ? (
               <Reports
                 space={space}
