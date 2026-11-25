@@ -30,6 +30,7 @@ MAX_SOURCE = 20 * 1024**2
 
 
 class SavedDocument(DocumentOut):
+    library_id: int | None = None
     file_type: Literal["pdf", "docx", "md", "txt"]
     has_source: bool
     chunks: list[str]

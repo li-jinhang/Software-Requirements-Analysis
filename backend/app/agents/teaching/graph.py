@@ -35,7 +35,8 @@ def load_context(state: TeachingState, runtime: Runtime[TeachingRuntime]):
     db, turn = runtime.context.db, runtime.context.turn
     ctx = memory.get_memory_context(db, turn.doc_id, turn.session_id)
     history = [public(m) for m in reversed(db.scalars(
-        select(Message).where(Message.session_id == turn.session_id)
+        select(Message).where(Message.session_id == turn.session_id,
+                              func.json_extract(Message.meta_json, "$.no_assessment").is_(None))
         .order_by(Message.id.desc()).limit(24)
     ).all())]
     node = None

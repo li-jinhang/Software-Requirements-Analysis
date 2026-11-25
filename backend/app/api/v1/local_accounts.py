@@ -109,6 +109,8 @@ def remove_current(body: AccountDeletion, db=Depends(get_db), user=Depends(curre
     db.add(RetiredAccountId(id=user.id))
     db.delete(user)
     delete_documents(db, docs)
+    from app.services.extension_store import purge_account
+    purge_account(user.id)
 
 
 @router.post("/import", status_code=201, response_model=AuthOut)

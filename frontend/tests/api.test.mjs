@@ -187,3 +187,21 @@ test("report ID and session ID remain distinct when restoring reports", async ()
   assert.equal(report.sessionId, "2");
   assert.deepEqual(report.scores, [80, 81, 82, 83]);
 });
+
+test("capability stream decodes text and accepts only committed completion", async () => {
+  const requests = [];
+  globalThis.fetch = async (url, options) => { requests.push({url,...options}); return eventStream(frame("status",{text:"执行中"})+frame("token",{delta:"技能结果"})+frame("done",{message_id:42})); };
+  const seen=[];
+  await api.capabilitiesApi.stream({session_id:2,window:"feynman",kind:"skill",capability_id:"s1",content:"复习",request_id:"unique-123"}, text=>seen.push(text));
+  assert.deepEqual(seen,["技能结果"]);
+  assert.match(requests[0].url,/capabilities\/execute\/stream$/);
+  assert.equal(JSON.parse(requests[0].body).capability_id,"s1");
+});
+
+test("capability failures and interrupted streams do not confirm completion", async () => {
+  const body={session_id:2,window:"feynman",kind:"progress",content:"",request_id:"unique-456"};
+  for (const [stream,pattern] of [[frame("error",{detail:"工具参数错误"}),/参数错误/],[frame("token",{delta:"未完成"}),/回复中断/],[frame("done",{}),/未确认保存/]]) {
+    globalThis.fetch=async()=>eventStream(stream);
+    await assert.rejects(api.capabilitiesApi.stream(body,()=>{}),pattern);
+  }
+});

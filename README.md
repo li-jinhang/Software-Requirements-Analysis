@@ -1,5 +1,7 @@
 # 智溯费曼 · FeynmanMind
 
+支持 `/` 命令菜单、用户 Skills 安装与调用、MCP 工具接入，见 [能力功能与验收说明](docs/CAPABILITIES_LOCAL_ACCEPTANCE.md)。
+
 React 学习工作台提供费曼反向讲解和百科溯源双窗，FastAPI 负责认证、SQL 知识图谱、ChromaDB 检索、教学会话和报告。需求规格见 [SRS.md](SRS.md)。
 
 ## 首次安装

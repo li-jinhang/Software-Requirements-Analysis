@@ -32,6 +32,7 @@ import {
 } from "./api";
 import Library from "./Library";
 import LocalAccounts from "./LocalAccounts";
+const CapabilityCenter = lazy(() => import("./CapabilityCenter"));
 import { Concept, Course, Space, initial, roles } from "./model";
 import { User, student, admin, authenticate, clearWorkspaceCache, read, write } from "./storage";
 import { Dialog } from "./ui";
@@ -254,6 +255,7 @@ function Workspace({ user, login, logout }: {
       workspaceRoute() === "models" ? "library" : workspaceRoute(),
     ),
     [settings, setSettings] = useState(() => workspaceRoute() === "models"),
+    [capabilities, setCapabilities] = useState<false | "skills" | "mcp">(false),
     [modelPrompt, setModelPrompt] = useState(""),
     [auth, setAuth] = useState(false),
     [nav, setNav] = useState(false),
@@ -554,6 +556,7 @@ function Workspace({ user, login, logout }: {
           >
             <SettingsIcon aria-hidden="true" />
           </button>
+            <button onClick={() => online ? setCapabilities("skills") : setAuth(true)}>能力中心</button>
         </header>
         <div className={"content " + (currentPage === "tutor" ? "tutor-content" : page === "studio" ? "studio" : "")}>
           {err && <p role="alert">{err}</p>}
@@ -617,6 +620,9 @@ function Workspace({ user, login, logout }: {
               )
             ) : page === "studio" && sess ? (
               <Workbench
+                openCapabilities={tab => online ? setCapabilities(tab || "skills") : setAuth(true)}
+                openModels={() => setSettings(true)}
+                openReview={() => { setDoc(sess.doc); go("review"); }}
                 online={online}
                 key={sess.id}
                 enterAssessment={(id, course) => {
@@ -686,6 +692,7 @@ function Workspace({ user, login, logout }: {
           />
         </Suspense>
       )}
+      {capabilities && online && <Suspense fallback={null}><CapabilityCenter key={user.id} admin={user.admin} initialTab={capabilities} close={() => setCapabilities(false)} /></Suspense>}
       {auth && (
         <AccountDialog current={user} login={login} logout={() => logout()} close={() => setAuth(false)}
           onDeleted={() => {

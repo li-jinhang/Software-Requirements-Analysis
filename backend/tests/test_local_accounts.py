@@ -84,6 +84,10 @@ def test_delete_requires_exact_confirmation_and_removes_only_current_account(ser
     imported = server.post(ACCOUNTS + "/import", files={"file": ("student.zip", backup.content)})
     headers = auth(imported)
     deleted_id = imported.json()["user"]["id"]
+    private_server = server.post("/api/v1/capabilities/servers", headers=headers, json={
+        "name": "账号私有连接", "url": "http://127.0.0.1:1/mcp", "token": "account-private-key",
+    })
+    assert private_server.status_code == 201, private_server.text
     [new_source] = set(uploads.iterdir()) - sources
     [doc] = server.get(DOCS, headers=headers).json()
     [session] = server.get(SESSIONS, headers=headers).json()
@@ -101,6 +105,8 @@ def test_delete_requires_exact_confirmation_and_removes_only_current_account(ser
     assert response.status_code == 204, response.text
     assert server.get(ACCOUNTS).json() == roster
     assert server.get(DOCS, headers=headers).status_code == 401
+    with sqlite3.connect(server.data_dir / "capabilities" / "private.sqlite3") as extensions:
+        assert extensions.execute("SELECT COUNT(*) FROM servers WHERE owner=?", (deleted_id,)).fetchone() == (0,)
     assert not new_source.exists() and all(source.is_file() for source in sources)
     assert not (server.data_dir / f".delete-{doc['id']}.pending").exists()
     with sqlite3.connect(server.data_dir / "feynman.db") as db:

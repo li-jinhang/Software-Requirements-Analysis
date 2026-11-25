@@ -68,6 +68,48 @@ const post = (body: unknown) => ({
   method: "POST",
   body: JSON.stringify(body),
 });
+
+export type UserSkill = { id: string; name: string; description: string; version: string; enabled: boolean; shared: boolean; editable: boolean; available: boolean; reason: string; files: string[] };
+export type McpTool = { name: string; description: string; inputSchema: Record<string, unknown>; annotations: Record<string, unknown> };
+export type McpServer = { id: string; name: string; url: string; enabled: boolean; has_token: boolean; status: string; tools: McpTool[] };
+export type CapabilityCatalog = { skills: UserSkill[]; servers: McpServer[] };
+export type CapabilityRun = { session_id: number; window: string; kind: "skill" | "mcp" | "progress" | "history" | "lookup"; capability_id?: string; content: string; tool?: string; arguments?: Record<string, unknown>; confirmed?: boolean; request_id: string };
+export const capabilitiesApi = {
+  runs: async (sessionId: string): Promise<{ id: string; kind: string; capability_id: string; status: string; created_at: string }[]> => (await request("/capabilities/runs?session_id=" + encodeURIComponent(sessionId))).json(),
+  list: async (): Promise<CapabilityCatalog> => (await request("/capabilities")).json(),
+  importSkill: async (file: File, replace: boolean) => { const body = new FormData(); body.append("file", file); body.append("replace", String(replace)); return (await request("/capabilities/skills/import", { method: "POST", body })).json(); },
+  skill: async (id: string): Promise<UserSkill & { instructions: string }> => (await request("/capabilities/skills/" + id)).json(),
+  changeSkill: (id: string, change: { enabled?: boolean; shared?: boolean }) => request("/capabilities/skills/" + id, { method: "PATCH", body: JSON.stringify(change) }),
+  removeSkill: (id: string) => request("/capabilities/skills/" + id, { method: "DELETE" }),
+  template: async () => { const r = await request("/capabilities/skills/template"); download("study-review.zip", await r.blob(), "application/zip"); },
+  saveServer: async (data: { name: string; url: string; token?: string; enabled: boolean }, id?: string): Promise<McpServer> => (await request("/capabilities/servers" + (id ? "/" + id : ""), { method: id ? "PUT" : "POST", body: JSON.stringify(data) })).json(),
+  connect: async (id: string) => (await request("/capabilities/servers/" + id + "/connect", { method: "POST" })).json(),
+  removeServer: (id: string) => request("/capabilities/servers/" + id, { method: "DELETE" }),
+  run: async (body: CapabilityRun): Promise<{ message: { id: number; content: string } }> => (await request("/capabilities/execute", post(body))).json(),
+  stream: async (body: CapabilityRun, onText: (text: string) => void) => {
+    const response = await request("/capabilities/execute/stream", post(body));
+    if (!response.body) throw Error("能力服务未返回消息流");
+    const reader = response.body.pipeThrough(new TextDecoderStream()).getReader();
+    let buffer = "", text = "";
+    try {
+      while (true) {
+        const { value, done } = await reader.read(); buffer += value || "";
+        let split: RegExpExecArray | null;
+        while ((split = /\r?\n\r?\n/.exec(buffer))) {
+          const frame = buffer.slice(0, split.index); buffer = buffer.slice(split.index + split[0].length);
+          const kind = frame.split(/\r?\n/).find(l => l.startsWith("event:"))?.slice(6).trim();
+          const data = frame.split(/\r?\n/).filter(l => l.startsWith("data:")).map(l => l.slice(5).trimStart()).join("\n");
+          if (!data) continue;
+          const payload = JSON.parse(data);
+          if (kind === "error") throw Error(payload.detail || "能力执行失败");
+          if (kind === "token") { if (typeof payload.delta !== "string") throw Error("能力消息格式无效"); text += payload.delta; onText(text); }
+          if (kind === "done") { if (!Number.isInteger(payload.message_id)) throw Error("能力结果未确认保存"); return; }
+        }
+        if (done) throw Error("能力回复中断，请刷新历史核对结果");
+      }
+    } finally { await reader.cancel().catch(() => {}); }
+  },
+};
 type AccountUser = {
   id: number;
   username: string;
@@ -276,7 +318,7 @@ type Update = {
   status: Concept["mastery"];
   tag: string;
 };
-type Meta = Partial<Correction> & { updates?: Update[]; input_kind?: string };
+type Meta = Partial<Correction> & { updates?: Update[]; input_kind?: string; no_assessment?: boolean; capability_kind?: string; skill_version?: string };
 type StreamPayloads = {
   token: { delta: string };
   preview: { text: string };
@@ -293,6 +335,7 @@ function assistant(
   return {
     id,
     who: side ? "百科" : "听众",
+    operation: meta.no_assessment,
     text,
     node: meta.updates?.length ? String(meta.updates[0].node_id) : undefined,
     badge: meta.updates
@@ -303,7 +346,7 @@ function assistant(
           .filter(Boolean)
           .join(" · ");
       })
-      .join(" / "),
+      .join(" / ") || (meta.no_assessment ? (meta.capability_kind === "skill" ? "Skill · v" + meta.skill_version : "工具操作") : undefined),
     citations: meta.citations?.filter((hit): hit is CourseCitation => "chunk_index" in hit),
     ...(meta.input_kind === "lesson" ? { lesson: true } : {}),
     ...(meta.proactive ? {correction: meta as Correction} : {}),
@@ -572,6 +615,7 @@ export async function sessionHistory(id: string, signal?: AbortSignal) {
             id: m.id,
             who: m.sender_role === "user" ? "我" : "系统",
             text: m.content,
+            operation: m.meta_json?.no_assessment,
           },
     );
   }

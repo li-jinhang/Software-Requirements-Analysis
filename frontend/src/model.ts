@@ -66,6 +66,7 @@ export type Correction = {
 };
 export type Message = {
   lesson?: boolean;
+  operation?: boolean;
   correction?: Correction;
   id?: number;
   who: "我" | "听众" | "百科" | "系统";
