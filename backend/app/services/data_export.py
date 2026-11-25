@@ -159,12 +159,13 @@ def write_sanitized_db(source, destination):
                         for col, value in clean.items():
                             if PRIVATE_FIELD.search(col) or col == "file_path":
                                 clean[col] = ""
-                            elif col in (
+                            elif value is not None and col in (
                                 "key_points",
                                 "target_item_ids",
                                 "related_node_ids",
                                 "meta_json",
                                 "weakness_summary",
+                                "library_setup",
                             ):
                                 clean[col] = json.dumps(
                                     redact(json.loads(value), secrets), ensure_ascii=False

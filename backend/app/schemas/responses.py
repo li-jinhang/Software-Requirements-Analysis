@@ -7,6 +7,9 @@ from app.schemas import Persona, Relation, Weakness
 class DocumentOut(BaseModel):
     id: int
     user_id: int
+    is_library: bool = False
+    library_id: int | None = None
+    library_setup: dict[str, Any] | None = None
     title: str
     subject: str
     file_type: str

@@ -3,7 +3,7 @@
 
 def install(replace=setattr):
     from app.agents import encyclopedia_agent, feynman_agent, model_teaching, report_agent
-    from app.services import llm_client, model_profiles
+    from app.services import course_library, llm_client, model_profiles
     from app.agents.teaching import model as teaching_model
 
     import json
@@ -44,3 +44,34 @@ def install(replace=setattr):
     replace(model_teaching, "apply", apply)
     replace(model_teaching, "diagnose", lambda db, session, profile: report_agent.generate(db, session))
     replace(llm_client, "extract", lambda text, title, profile: llm_client.local_extract(text, title))
+
+    def library_response(schema, task, material, on_chunk=None):
+        from time import monotonic, sleep
+        from app.core.config import settings
+
+        request = json.loads(material)
+        if schema is course_library.ScopeDecision:
+            if not request["answers"] and not request["use_defaults"]:
+                gate = settings.data_dir / "release-library-clarification"
+                deadline = monotonic() + 10
+                while not gate.exists() and monotonic() < deadline:
+                    sleep(0.05)
+                return schema(question="你希望侧重进程调度还是并发控制？")
+            return schema(scope="操作系统基础，重点学习进程调度。")
+        if (settings.data_dir / "fail-library-generation").exists():
+            raise model_profiles.ModelError("测试模型连接中断")
+        modules = ["进程管理", "进程调度", "并发控制"]
+        concepts = ["进程状态", "上下文切换", "就绪队列", "抢占", "时间片", "优先级", "临界区", "互斥", "死锁"]
+        def link(source, target, relation_type):
+            return dict(source=source, target=target, relation_type=relation_type, description="课程中的概念关联")
+
+        return schema(
+            structured_summary="从进程状态学到调度和同步。",
+            nodes=[dict(concept_name=n, summary=n + "的基本性质", key_points=[n + "的定义"], importance=3)
+                   for n in modules + concepts],
+            edges=[link(modules[i // 3], n, "contains") for i, n in enumerate(concepts)] + [
+                link("就绪队列", "抢占", "prerequisite"), link("抢占", "临界区", "prerequisite"),
+            ],
+        )
+
+    replace(course_library, "ModelConnection", lambda profile: SimpleNamespace(structured=library_response))

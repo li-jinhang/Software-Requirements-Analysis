@@ -52,7 +52,12 @@ JWT 有效期 24 小时。注册密码至少 6 字符且 UTF-8 编码至多 72 �
 
 | 方法和路径 | 输入 | 成功响应 |
 | --- | --- | --- |
-| POST /documents/upload | multipart/form-data：file 必填，subject 可选 | 201，Document；请求等待解析、SQL 和向量索引完成 |
+| POST /documents/course-libraries | `{"title":"线性代数"}` | 201，`{document,graph}`，创建空资料库 |
+| POST /documents/course-libraries/setup | `title`、可选 `requirements` | 202，Document；保存建库任务并在后台处理 |
+| POST /documents/{id}/library-setup | 待补充时传 `question`、`answer` 或 `use_defaults`；失败时传空对象重试 | 202，Document；继续当前建库任务 |
+| POST /documents/course-libraries/clarify | `title`、可选 `requirements`、`answers`（最多三组 `question` 和 `answer`）、`use_defaults` | 200，`{question,scope}`；其中一个为非空文本 |
+| POST /documents/course-libraries/generate | 同上，加上已确定的 `scope` | 201，`{document,graph}`，生成课程图谱、认知条目和检索索引 |
+| POST /documents/upload | multipart/form-data：file 必填，subject 可选；向课程资料库添加文件时传 `library_id` | 201，Document；请求等待解析、SQL 和向量索引完成 |
 | GET /documents | 无 | Document[]，最新优先 |
 | GET /documents/{id} | 无 | Document |
 | POST /documents/{id}/retry | 无 | Document；重试 failed 文档 |
@@ -67,6 +72,10 @@ JWT 有效期 24 小时。注册密码至少 6 字符且 UTF-8 编码至多 72 �
 ~~~json
 {"id":1,"user_id":2,"title":"机器学习基础：梯度下降与过拟合","subject":"机器学习","file_type":"md","parse_status":"completed","error_message":"","chunk_count":2,"structured_summary":"从损失最小化到泛化误差与正则化。","created_at":"2026-11-23T03:10:00"}
 ~~~
+
+`is_library` 标识课程资料库。补充文件的 `library_id` 指向当前账号的课程资料库。补充文件保留各自的图谱和学习记录，解析成功后也可供所属课程的讲解检索。删除课程资料库后，其补充文件转为独立资料。
+
+后台建库复用 Document 的 `parse_status`。`processing` 表示正在处理，`pending` 表示等待回答 `library_setup.question`，`completed` 表示图谱可读取，`failed` 表示可重试。客户端可通过资料详情接口查询状态。
 
 节点字段为 id、doc_id、concept_name、summary、key_points（核心要点数组，旧节点默认为空）、importance、mastery_score、status、lookup_count、user_note、updated_at。图谱用 id 连接边的 source_node_id 与 target_node_id；边还返回 id、doc_id、relation_type 和 description。未学习用 unlearned，中低高掌握显示 weak（红）、learning（黄）、mastered（绿）。weaknesses 项含 id、session_id、node_id、weakness_type、detail、is_resolved、created_at。导出包含“核心概念树”“概念关联说明”“已掌握清单”“薄弱点警示”四个部分。
 

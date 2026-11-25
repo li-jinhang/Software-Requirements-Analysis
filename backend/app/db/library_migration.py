@@ -10,4 +10,6 @@ def migrate_document_library(execute):
             "ALTER TABLE documents ADD COLUMN library_id INTEGER "
             "REFERENCES documents(id) ON DELETE SET NULL"
         )
+    if "library_setup" not in columns:
+        execute("ALTER TABLE documents ADD COLUMN library_setup JSON")
     execute("CREATE INDEX IF NOT EXISTS ix_documents_library_id ON documents(library_id)")

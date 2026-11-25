@@ -97,14 +97,16 @@ def index(doc_id, title, chunks, *, strict_remote=False, local_only=False):
                 use_api = False
 
 
-def search(doc_id, query, top_k=4, *, strict_remote=False):
+def search(doc_id, query, top_k=4, *, strict_remote=False, source_ids=()):
     if not 1 <= top_k <= 30:
         raise ValueError("top_k 范围为 1–30")
     col = collection()
     vec = lite(query)
-    if settings.embedding_provider == "api":
+    where = {"doc_id": {"$in": [doc_id, *source_ids]}} if source_ids else {"doc_id": doc_id}
+    if settings.embedding_provider == "api" and not source_ids:
         other = collection(api_name())
-        if other.get(where={"doc_id": doc_id}, limit=1, include=[])["ids"]:
+        # A library may contain locally indexed imports; use a common index for all its sources.
+        if other.get(where=where, limit=1, include=[])["ids"]:
             try:
                 vec = remote([query])[0]
                 col = other
@@ -116,12 +118,16 @@ def search(doc_id, query, top_k=4, *, strict_remote=False):
             raise RuntimeError("未找到远程向量索引")
     result = col.query(
         query_embeddings=[vec],
-        where={"doc_id": doc_id},
+        where=where,
         n_results=max(12, top_k * 3),
         include=["documents", "distances", "metadatas"],
     )
+    def chunk_key(meta):
+        index = meta["chunk_index"]
+        return (meta["doc_id"], index) if source_ids else index
+
     semantic = {
-        m["chunk_index"]: max(0.0, min(1.0, 1.0 - distance))
+        chunk_key(m): max(0.0, min(1.0, 1.0 - distance))
         for m, distance in zip(result["metadatas"][0], result["distances"][0])
     }
 
@@ -130,7 +136,7 @@ def search(doc_id, query, top_k=4, *, strict_remote=False):
         offset = 0
         while True:
             batch = collection().get(
-                where={"doc_id": doc_id},
+                where=where,
                 limit=256,
                 offset=offset,
                 include=["documents", "metadatas"],
@@ -140,7 +146,7 @@ def search(doc_id, query, top_k=4, *, strict_remote=False):
                 return
             offset += len(batch["ids"])
 
-    return hybrid_rank(query, pages(), semantic, top_k)
+    return hybrid_rank(query, pages(), semantic, top_k, chunk_key)
 
 
 def normalize(text):
@@ -155,7 +161,7 @@ def lexical_terms(text):
             yield from (word[i : i + 2] for i in range(len(word) - 1))
 
 
-def hybrid_rank(query, chunks, semantic, top_k):
+def hybrid_rank(query, chunks, semantic, top_k, chunk_key=lambda meta: meta["chunk_index"]):
     terms = set(lexical_terms(query))
     phrase = "".join(normalize(query).split())
     candidates = []
@@ -164,7 +170,7 @@ def hybrid_rank(query, chunks, semantic, top_k):
     for meta, text in chunks:
         words = list(lexical_terms(text))
         counts = Counter(w for w in words if w in terms)
-        idx = meta["chunk_index"]
+        idx = chunk_key(meta)
         total += 1
         length_sum += len(words)
         df.update(counts.keys())
@@ -181,7 +187,7 @@ def hybrid_rank(query, chunks, semantic, top_k):
         )
         lexical = bm / (bm + sum(idf.values()) or 1)
         idx = meta["chunk_index"]
-        score = 0.35 * semantic.get(idx, 0) + 0.20 * lexical + 0.45 * exact
+        score = 0.35 * semantic.get(chunk_key(meta), 0) + 0.20 * lexical + 0.45 * exact
         heading = re.match(r"^#{1,6}\s+([^\n]+)", text)
         named = heading and "".join(normalize(heading[1]).split()) in phrase
         if named and not exact:

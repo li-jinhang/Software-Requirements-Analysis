@@ -15,6 +15,11 @@ export type Course = {
   id: string;
   title: string;
   subject: string;
+  isLibrary?: boolean;
+  libraryId?: string;
+  setupQuestion?: string;
+  setupAnswers?: { question: string; answer: string }[];
+  overview?: string;
   format: string;
   cover: number;
   parseStatus?: string;

@@ -2,16 +2,17 @@ from app.schemas.responses import CognitiveDocOut, DocumentOut, NodeOut, GraphOu
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
-from fastapi import APIRouter, Depends, Form, UploadFile, HTTPException, Response
+from fastapi import APIRouter, BackgroundTasks, Depends, Form, UploadFile, HTTPException, Response
 from fastapi.responses import JSONResponse
 from fastapi.encoders import jsonable_encoder
-from sqlalchemy import select
+from pydantic import BaseModel
+from sqlalchemy import select, update
 from app.core.security import current_user
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models import CognitiveItem, Document, KnowledgeNode, public
 from app.schemas import Note, ReviewFeedback, TimeAdvance
-from app.services import cognitive, memory_service as memory, review
+from app.services import cognitive, course_library, memory_service as memory, review
 from app.services.model_profiles import require_profile
 
 router = APIRouter(prefix="/documents", tags=["资料"])
@@ -66,6 +67,83 @@ def generate_from_topic(body: cognitive.Topic, db=Depends(get_db), user=Depends(
     return cognitive.generate(db, user.id, body, require_profile("extract"))
 
 
+class CreatedLibrary(BaseModel):
+    document: DocumentOut
+    graph: GraphOut
+
+
+@router.post("/course-libraries", status_code=201, response_model=CreatedLibrary)
+def create_library(body: course_library.LibraryName, db=Depends(get_db), user=Depends(current_user)):
+    doc = Document(
+        user_id=user.id, title=body.title, subject=body.title, is_library=True,
+        file_type="md", file_path="", parse_status="completed",
+    )
+    db.add(doc)
+    db.commit()
+    return {"document": public(doc), "graph": {"nodes": [], "edges": []}}
+
+
+@router.post("/course-libraries/clarify", response_model=course_library.ScopeDecision)
+def clarify_library(body: course_library.CourseRequest, user=Depends(current_user)):
+    return course_library.clarify(body, require_profile("extract"))
+
+
+@router.post("/course-libraries/generate", status_code=201, response_model=CreatedLibrary)
+def generate_library(body: course_library.GenerationRequest, db=Depends(get_db), user=Depends(current_user)):
+    doc = course_library.generate(db, user.id, body, require_profile("extract"))
+    return {"document": doc, "graph": memory.get_memory_context(db, doc["id"])}
+
+
+@router.post("/course-libraries/setup", status_code=202, response_model=DocumentOut)
+def start_library_setup(
+    body: course_library.CourseBrief, tasks: BackgroundTasks,
+    db=Depends(get_db), user=Depends(current_user),
+):
+    profile = require_profile("extract")
+    state = course_library.SetupState(request=course_library.CourseRequest(**body.model_dump()))
+    doc = Document(
+        user_id=user.id, title=body.title, subject=body.title, file_type="md",
+        file_path="", is_library=True, parse_status="processing", library_setup=state.model_dump(),
+    )
+    db.add(doc)
+    db.commit()
+    tasks.add_task(course_library.run_setup, doc.id, profile)
+    return public(doc)
+
+
+@router.post("/{id}/library-setup", status_code=202, response_model=DocumentOut)
+def continue_library_setup(
+    id: int, body: course_library.ContinueSetup, tasks: BackgroundTasks,
+    db=Depends(get_db), user=Depends(current_user),
+):
+    doc = owned(db, Document, id, user)
+    if not doc.is_library or not doc.library_setup:
+        raise HTTPException(404, "建库任务不存在")
+    state = course_library.SetupState.model_validate(doc.library_setup)
+    if doc.parse_status == "pending":
+        if body.question != state.question:
+            raise HTTPException(409, "课程问题已更新，请刷新资料库后继续。")
+        if not body.answer and not body.use_defaults:
+            raise HTTPException(422, "请输入补充信息或选择按通用范围生成。")
+        if body.answer:
+            state.request.answers.append(course_library.Clarification(question=state.question, answer=body.answer))
+        state.request.use_defaults = body.use_defaults
+        state.question = ""
+    elif doc.parse_status != "failed" or body.question or body.answer or body.use_defaults:
+        raise HTTPException(409, "该建库任务已处理，请查看资料库中的状态。")
+    profile = require_profile("extract")
+    result = db.execute(update(Document).where(
+        Document.id == id, Document.parse_status == doc.parse_status,
+        Document.library_setup == doc.library_setup,
+    ).values(parse_status="processing", library_setup=state.model_dump(), error_message=""))
+    if not result.rowcount:
+        raise HTTPException(409, "建库任务已更新，请刷新资料库后查看。")
+    db.commit()
+    db.refresh(doc)
+    tasks.add_task(course_library.run_setup, id, profile)
+    return public(doc)
+
+
 @router.get("/{doc_id}/cognitive-doc", response_model=CognitiveDocOut)
 def cognitive_doc(doc_id: int, session_id: int | None = None, db=Depends(get_db), user=Depends(current_user)):
     from app.db.models import Session
@@ -89,9 +167,15 @@ def cognitive_doc(doc_id: int, session_id: int | None = None, db=Depends(get_db)
 def upload(
     file: UploadFile,
     subject: str = Form("", max_length=100),
+    library_id: int | None = Form(None, gt=0),
     db=Depends(get_db),
     user=Depends(current_user),
 ):
+    if library_id is not None:
+        library = owned(db, Document, library_id, user)
+        if not library.is_library:
+            raise HTTPException(404, "课程资料库不存在")
+        subject = library.subject
     name = Path(file.filename or "untitled").name
     ext = Path(name).suffix.lower()
     if ext not in {".txt", ".md", ".docx", ".pdf"}:
@@ -108,6 +192,7 @@ def upload(
                 f.write(block)
         doc = Document(
             user_id=user.id,
+            library_id=library_id,
             title=Path(name).stem,
             subject=subject,
             file_type=ext[1:],
@@ -130,7 +215,8 @@ def run_ingest(db, id, profile):
 
 @router.post("/{id}/retry", response_model=DocumentOut)
 def retry(id: int, db=Depends(get_db), user=Depends(current_user)):
-    if owned(db, Document, id, user).parse_status != "failed":
+    doc = owned(db, Document, id, user)
+    if doc.is_library or doc.parse_status != "failed":
         raise HTTPException(409, "仅失败的文档可以重试")
     return run_ingest(db, id, require_profile("extract"))
 
@@ -157,7 +243,7 @@ def delete(id: int, db=Depends(get_db), user=Depends(current_user)):
 
     doc = owned(db, Document, id, user)
     if doc.parse_status == "processing":
-        raise HTTPException(409, "正在解析")
+        raise HTTPException(409, "课程框架正在创建" if doc.is_library else "正在解析")
     session_ids = list(db.scalars(select(Session.id).where(Session.doc_id == doc.id)))
     memory.delete_document(db, doc)
     extension_store.purge_sessions(user.id, session_ids)

@@ -175,8 +175,10 @@ def restore(db, user, archive, backup, paths, indexed):
             with path.open("xb") as dest, archive.open(record.entry()) as source:
                 shutil.copyfileobj(source, dest)
         values = record.model_dump(exclude={"id", "user_id", "has_source", "chunks", "library_id"})
-        if record.parse_status in ("processing", "pending"):
-            values.update(parse_status="failed", error_message="导入后可重新解析")
+        if record.parse_status == "processing" or (record.parse_status == "pending" and not record.library_setup):
+            values.update(parse_status="failed", error_message=(
+                "导入后可重新生成" if record.library_setup else "导入后可重新解析"
+            ))
         return {**values, "user_id": user.id, "file_path": str(path), "chunk_count": len(record.chunks)}
 
     docs = insert(Document, backup.documents, document_values)

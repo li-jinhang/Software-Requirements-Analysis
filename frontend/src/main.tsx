@@ -36,6 +36,7 @@ import {
   currentService,
   localModelSettings,
   refreshMemory,
+  readLibrarySetup,
   preserveNotes,
   reviews,
   ApiError,
@@ -383,6 +384,39 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
       window.removeEventListener("fm:expired", expired);
     };
   }, [user, retry]);
+  const processingLibraries = space.courses.filter(c => c.isLibrary && c.parseStatus === "processing")
+    .map(c => c.id).join(",");
+  useEffect(() => {
+    if (!online || ready !== user.id || !processingLibraries) return;
+    const ctrl = new AbortController();
+    const ids = processingLibraries.split(",");
+    let timer: number;
+    async function check() {
+      const results = await Promise.allSettled(ids.map(id => readLibrarySetup(id, ctrl.signal)));
+      if (ctrl.signal.aborted) return;
+      const changed = new Map<string, Course>();
+      for (const result of results) {
+        if (result.status === "fulfilled" && result.value.parseStatus !== "processing") {
+          changed.set(result.value.id, result.value);
+        }
+      }
+      if (changed.size) {
+        try {
+          save(s => ({ ...s, courses: s.courses.map(c =>
+            c.parseStatus === "processing" ? changed.get(c.id) || c : c,
+          ) }));
+        } catch {
+          // save reports the storage error. Keep polling so a later write can recover.
+        }
+      }
+      timer = window.setTimeout(check, 1800);
+    }
+    void check();
+    return () => {
+      ctrl.abort();
+      window.clearTimeout(timer);
+    };
+  }, [online, ready, user.id, processingLibraries]);
   useEffect(() => {
     if (!online || ready !== user.id || page !== "reports") return;
     const ctrl = new AbortController();
@@ -395,7 +429,8 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
       });
     return () => ctrl.abort();
   }, [page, user.id, ready]);
-  const c = space.courses.find((x) => x.id === doc) || space.courses[0];
+  const c = space.courses.find((x) => x.id === doc) ||
+    space.courses.find((x) => x.nodes.length) || space.courses[0];
   const practiceSessions = space.sessions.filter((s) => !s.guided);
   const guideSessions = space.sessions.filter((s) => s.guided);
   const sess = practiceSessions.find((s) => s.id === sid && (online || !s.closed)) ||
@@ -633,13 +668,14 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
         );
         save((s) => ({
           ...s,
-          courses: s.courses.filter((x) => x.id !== courseId),
+          courses: s.courses.filter(x => x.id !== courseId)
+            .map(x => x.libraryId === courseId ? { ...x, libraryId: undefined } : x),
           sessions: s.sessions.filter((s) => s.doc !== courseId),
           logs: s.logs.filter((w) => w.doc !== courseId && !removedSessionIds.has(w.session)),
           reports: s.reports.filter((r) => r.doc !== courseId && !(r.sessionId && removedSessionIds.has(r.sessionId))),
         }));
         if (doc === courseId || !nextCourses.some((x) => x.id === doc)) {
-          setDoc(nextCourses[0]?.id || "");
+          setDoc((nextCourses.find(x => x.nodes.length) || nextCourses[0])?.id || "");
         }
         if (removedSessionIds.has(sid) || (sess && removedSessionIds.has(sess.id))) {
           const nextPractice = nextSessions.filter((s) => !s.guided);
@@ -1208,6 +1244,7 @@ function Workspace({ user, login, logout, theme, toggleTheme }: Appearance & {
               <>
                 确定要删除「<strong>{confirmDelete.course.title}</strong>
                 」吗？将一并删除该课程的知识点、图谱、对话记录与复习进度，且不可恢复。
+                {confirmDelete.course.isLibrary && "补充资料将保留为独立资料。"}
               </>
             ) : confirmDelete.kind === "session" ? (
               <>

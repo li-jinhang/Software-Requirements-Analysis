@@ -9,6 +9,7 @@ from pathlib import Path
 from collections import defaultdict
 from tempfile import NamedTemporaryFile
 from app.core.config import settings
+from app.db.database import SessionLocal
 from sqlalchemy import select, update, func, case
 
 from app.db.models import (
@@ -63,7 +64,18 @@ def ingest_document(db, doc_id, profile):
 
 
 def search_rag(doc_id, query, top_k=4):
-    return rag_store.search(doc_id, query.strip(), top_k) if query.strip() else []
+    query = query.strip()
+    if not query:
+        return []
+    with SessionLocal() as db:
+        owner = select(Document.user_id).where(
+            Document.id == doc_id, Document.is_library.is_(True),
+        ).correlate(None).scalar_subquery()
+        sources = db.scalars(select(Document.id).where(
+            Document.library_id == doc_id, Document.user_id == owner,
+            Document.parse_status == "completed",
+        )).all()
+    return rag_store.search(doc_id, query, top_k, source_ids=sources)
 
 
 def _learning_path(db, doc_id, nodes, edges):

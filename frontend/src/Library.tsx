@@ -10,10 +10,13 @@ import {
   UploadCloud,
   GraduationCap,
   Trash2,
+  LibraryBig,
+  Workflow,
 } from "lucide-react";
 import { Concept, Course, Space, archive, mean, status } from "./model";
 import {
   generateCourse,
+  continueLibrarySetup,
   uploadRemote,
   syncNote,
   ApiError,
@@ -23,6 +26,14 @@ import {
   type TeachingPurpose,
 } from "./api";
 import { Dialog, relationLabel } from "./ui";
+import CourseLibrarySetup from "./CourseLibrarySetup";
+import "./library.css";
+
+const setupLabels: Record<string, string> = {
+  processing: "创建中",
+  pending: "待补充",
+  failed: "生成失败",
+};
 type Props = {
   online: boolean;
   space: Space;
@@ -66,9 +77,39 @@ export default function Library({
   const [topic, setTopic] = useState("");
   const [topicSubject, setTopicSubject] = useState("");
   const [dragging, setDragging] = useState(false);
+  const [setupOpen, setSetupOpen] = useState<string>();
+  const [libraryId, setLibraryId] = useState("");
+
+  function saveCourse(course: Course) {
+    save(s => ({
+      ...s,
+      courses: s.courses.some(c => c.id === course.id)
+        ? s.courses.map(c => c.id === course.id ? course : c)
+        : [course, ...s.courses],
+    }));
+  }
+  function created(course: Course) {
+    saveCourse(course);
+    setSetupOpen(undefined);
+    setQuery("");
+    setSubject("");
+    if (course.parseStatus === "completed") setLibraryId(course.id);
+  }
+  async function retryCourse(course: Course) {
+    setBusy(true);
+    setError("");
+    try {
+      saveCourse(await (course.isLibrary ? continueLibrarySetup(course.id) : retryRemote(course.id)));
+    } catch (e) {
+      if (!modelRequired(e)) setError((e as Error).message);
+    } finally {
+      setBusy(false);
+    }
+  }
   async function openUploadModal() {
     if (!(await canLearn("extract"))) return;
-    setError("");
+    chooseFile();
+    setTag("");
     setDragging(false);
     setUpload(true);
   }
@@ -89,7 +130,7 @@ export default function Library({
     setError("");
     try {
       const course = await generateCourse(topic.trim(), topicSubject.trim());
-      save(s => ({ ...s, courses: [course, ...s.courses] }));
+      saveCourse(course);
       setTopicOpen(false);
       setTopic("");
       setTopicSubject("");
@@ -102,11 +143,23 @@ export default function Library({
   const courses = space.courses,
     nodes = courses.flatMap((c) => c.nodes),
     doc = courses.find((c) => c.id === detail),
-    visible = courses.filter(
+    library = courses.find(c => c.id === libraryId && c.isLibrary),
+    setupCourse = courses.find(c => c.id === setupOpen);
+  const sources = new Map<string, Course[]>();
+  for (const course of courses) {
+    if (!course.libraryId) continue;
+    const siblings = sources.get(course.libraryId);
+    if (siblings) siblings.push(course);
+    else sources.set(course.libraryId, [course]);
+  }
+  const topLevel = courses.filter(c => !c.libraryId);
+  const needle = query.trim().toLowerCase();
+  const visible = topLevel.filter(
       (c) =>
-        c.title.toLowerCase().includes(query.toLowerCase()) &&
+        [c, ...(sources.get(c.id) || [])].some(d => d.title.toLowerCase().includes(needle)) &&
         (!subject || c.subject === subject),
     );
+  const recentGraph = courses.find(c => c.nodes.length);
   const weakConcepts = courses.flatMap((c) =>
     c.nodes
       .filter((n) => status(n, space.logs) === "待补漏" || n.score < 60)
@@ -143,16 +196,25 @@ export default function Library({
         throw Error("请选择 20 MB 以内的 PDF、DOCX、MD 或 TXT 文件。");
       const c = failedId
         ? await retryRemote(failedId)
-        : await uploadRemote(file, tag);
+        : await uploadRemote(file, tag, library?.id);
       setFailedId(undefined);
-      save((s) => ({ ...s, courses: [c, ...s.courses] }));
+      saveCourse(c);
       setUpload(false);
-      setDetail(c.id);
+      if (!library) setDetail(c.id);
       setFile(undefined);
       setTag("");
     } catch (e) {
       if (modelRequired(e)) return;
-      if (e instanceof ApiError) setFailedId(e.docId);
+      if (e instanceof ApiError && e.docId) {
+        setFailedId(e.docId);
+        const dot = file.name.lastIndexOf(".");
+        saveCourse({
+          id: String(e.docId), title: file.name.slice(0, dot),
+          format: file.name.slice(dot + 1).toUpperCase(), cover: 3,
+          subject: library?.subject || tag || "未分类", libraryId: library?.id,
+          parseStatus: "failed", error: e.message, nodes: [], links: [],
+        });
+      }
       setError((e as Error).message);
     } finally {
       setBusy(false);
@@ -163,21 +225,18 @@ export default function Library({
       <div className="pagehead">
         <h1>学习资料库</h1>
         <div className="tools">
-        <button onClick={() => void openTopicModal()}><NotebookPen aria-hidden="true" />输入知识点生成</button>
-        <button
-          className="primary"
-          onClick={() => void openUploadModal()}
-        >
-          <Plus />
-          上传资料
-        </button>
+          <button onClick={() => void openTopicModal()}><NotebookPen aria-hidden="true" />输入知识点生成</button>
+          <button onClick={() => void openUploadModal()}><UploadCloud aria-hidden="true" /> 上传资料</button>
+          <button className="primary" disabled={!online} onClick={() => setSetupOpen("")}>
+            <Plus aria-hidden="true" /> 新建资料库
+          </button>
         </div>
       </div>
       <div className="library-layout">
         <div className="library-main">
           <div className="sectionhead">
             <h2>
-              全部资料 <small>{visible.length}</small>
+              资料库与独立资料 <small>{visible.length}</small>
             </h2>
             <div className="tools">
               <label className="search">
@@ -195,23 +254,31 @@ export default function Library({
                 onChange={(e) => setSubject(e.target.value)}
               >
                 <option value="">全部学科</option>
-                {[...new Set(courses.map((c) => c.subject))].map((s) => (
+                {[...new Set(topLevel.map((c) => c.subject))].map((s) => (
                   <option key={s}>{s}</option>
                 ))}
               </select>
             </div>
           </div>
-          {!upload && !topicOpen && !doc && error && <p role="alert">{error}</p>}
+          {!upload && !topicOpen && !doc && !library && error && <p role="alert">{error}</p>}
           <div className="cards">
             {visible.map((c) => {
               const avg = mean(c.nodes.map((n) => n.score));
+              const setupStatus = c.isLibrary && setupLabels[c.parseStatus || ""];
               return (
                 <article className="card" key={c.id}>
                   <div className="cardbody">
                     <div className="row between meta">
-                      <span className="subject-tag"><BookOpen aria-hidden="true" />{c.subject}</span>
+                      <span className="subject-tag">
+                        {c.isLibrary ? <LibraryBig aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
+                        {c.isLibrary ? "课程资料库" : c.subject}
+                      </span>
                       <div className="card-meta-actions">
-                        <span className="format-mark"><FileText aria-hidden="true" />{c.format}</span>
+                        <span className="format-mark" aria-live={c.isLibrary ? "polite" : undefined}>
+                          {c.isLibrary
+                            ? setupStatus || (c.nodes.length ? "AI 课程框架" : "空白框架")
+                            : <><FileText aria-hidden="true" />{c.format}</>}
+                        </span>
                         {onDelete && (
                           <button
                             type="button"
@@ -231,38 +298,37 @@ export default function Library({
                     </div>
                     <h2>{c.title}</h2>
                     <p className="meta">
-                      {c.nodes.length} 个知识点 ·{" "}
-                      {c.parseStatus === "failed"
+                      {setupStatus ? (
+                        c.parseStatus === "processing" ? "可继续使用工作台，完成后会更新图谱。"
+                          : c.parseStatus === "pending" ? "补充课程信息后继续生成。"
+                            : c.error || "可以重新生成课程框架。"
+                      ) : <>{c.nodes.length} 个知识点 ·{" "}
+                      {c.isLibrary ? `${sources.get(c.id)?.length || 0} 份补充资料` : c.parseStatus === "failed"
                         ? c.error || "解析失败"
                         : !c.parseStatus || c.parseStatus === "completed"
                           ? "已解析"
-                          : "解析中"}
+                          : "解析中"}</>}
                     </p>
-                    <div className="row between meta">
+                    {c.nodes.length > 0 && <><div className="row between meta">
                       <span>掌握度</span>
                       <b>{avg}%</b>
                     </div>
-                    <progress aria-label="资料掌握度" value={avg} max="100" />
+                    <progress aria-label="资料掌握度" value={avg} max="100" /></>}
                     <footer>
-                      {c.parseStatus === "failed" ? (
+                      {c.isLibrary ? (
+                        <>
+                          <button className="primary" onClick={() => { setError(""); setLibraryId(c.id); }}>
+                            <LibraryBig aria-hidden="true" /> 打开资料库
+                          </button>
+                          {c.nodes.length > 0 && onOpenGraph &&
+                            <button onClick={() => onOpenGraph(c.id)}><Workflow aria-hidden="true" /> 查看图谱</button>}
+                          {c.parseStatus === "pending" && <button onClick={() => setSetupOpen(c.id)}>补充课程信息</button>}
+                          {c.parseStatus === "failed" && <button disabled={busy} onClick={() => void retryCourse(c)}>重新生成</button>}
+                        </>
+                      ) : c.parseStatus === "failed" ? (
                         <button
                           disabled={busy}
-                          onClick={async () => {
-                            setBusy(true);
-                            try {
-                              const course = await retryRemote(c.id);
-                              save((s) => ({
-                                ...s,
-                                courses: s.courses.map((d) =>
-                                  d.id === course.id ? course : d,
-                                ),
-                              }));
-                            } catch (e) {
-                              if (!modelRequired(e)) setError((e as Error).message);
-                            } finally {
-                              setBusy(false);
-                            }
-                          }}
+                          onClick={() => void retryCourse(c)}
                         >
                           重新解析
                         </button>
@@ -277,7 +343,7 @@ export default function Library({
                           </button>
                         </>
                       )}
-                      <button
+                      {!c.isLibrary && <button
                         disabled={!c.nodes.length}
                         className="quiet"
                         onClick={() => {
@@ -287,7 +353,7 @@ export default function Library({
                       >
                         记忆档案
                         <ArrowUpRight />
-                      </button>
+                      </button>}
                     </footer>
                   </div>
                 </article>
@@ -331,7 +397,7 @@ export default function Library({
               <div><dt>平均掌握度</dt><dd>{mean(nodes.map(n => n.score))}<small>%</small></dd></div>
             </dl>
           </div>
-          {(activePractice || activeGuide || courses[0]) && (
+          {(activePractice || activeGuide || recentGraph) && (
             <div className="aside-section">
               <h3>最近学习入口</h3>
               <div className="aside-actions">
@@ -347,9 +413,9 @@ export default function Library({
                     <ArrowRight aria-hidden="true" />
                   </button>
                 )}
-                {courses[0] && onOpenGraph && (
-                  <button className="aside-link" onClick={() => onOpenGraph(courses[0].id)}>
-                    <span>查看知识图谱 · {courses[0].title}</span>
+                {recentGraph && onOpenGraph && (
+                  <button className="aside-link" onClick={() => onOpenGraph(recentGraph.id)}>
+                    <span>查看知识图谱 · {recentGraph.title}</span>
                     <ArrowUpRight aria-hidden="true" />
                   </button>
                 )}
@@ -379,6 +445,8 @@ export default function Library({
           </div>
         </aside>
       </div>
+      {setupOpen !== undefined && <CourseLibrarySetup key={setupOpen} course={setupCourse}
+        close={() => setSetupOpen(undefined)} created={created} modelRequired={modelRequired} />}
       {topicOpen && <Dialog title="按知识点生成认知文档" close={() => { if (!busy) setTopicOpen(false); }}>
         <form onSubmit={e => { e.preventDefault(); void generate(); }}>
           <label>知识点名称<input required data-initial-focus maxLength={150} value={topic}
@@ -391,9 +459,66 @@ export default function Library({
           </button>
         </form>
       </Dialog>}
+      {library && !upload && !doc && (
+        <Dialog drawer title="课程资料库" close={() => { if (!busy) setLibraryId(""); }}>
+          <h2 className="course-library-name">{library.title}</h2>
+          <section className="course-framework" aria-label="课程框架">
+            <div className="row between">
+              <h3><Workflow aria-hidden="true" /> 课程框架</h3>
+              {library.nodes.length > 0 && <small>{library.nodes.length} 个节点 · {library.links.length} 条关系</small>}
+            </div>
+            <p>{library.overview || (
+              library.parseStatus === "processing" ? "课程框架正在后台创建，可以继续添加资料或前往其他页面。"
+                : library.parseStatus === "pending" ? library.setupQuestion
+                  : library.parseStatus === "failed" ? library.error || "课程框架生成失败。"
+                    : "资料库已创建。添加课件或参考文件后，可以从对应资料开始学习。"
+            )}</p>
+            {library.parseStatus === "pending" && <button onClick={() => setSetupOpen(library.id)}>补充课程信息</button>}
+            {library.parseStatus === "failed" && <button disabled={busy} onClick={() => void retryCourse(library)}>重新生成</button>}
+            {library.nodes.length > 0 && (
+              <div className="tools">
+                {onOpenGraph && <button className="primary" onClick={() => onOpenGraph(library.id)}>查看知识图谱</button>}
+                <button disabled={starting || !library.nodes.some(n => n.score < 80)} onClick={() => guide(library)}>先听 AI 讲解</button>
+                <button disabled={starting} onClick={() => start(library)}>开讲</button>
+                <button onClick={() => { setError(""); setDetail(library.id); }}>记忆档案</button>
+              </div>
+            )}
+          </section>
+          <section className="course-sources" aria-label="补充资料">
+            <div className="row between">
+              <h3>补充资料 <small>{sources.get(library.id)?.length || 0}</small></h3>
+              <button disabled={busy} onClick={() => void openUploadModal()}><Plus aria-hidden="true" /> 添加资料</button>
+            </div>
+            {error && <p role="alert">{error}</p>}
+            {sources.get(library.id)?.map(source => (
+              <article key={source.id} className="course-source">
+                <div className="row between">
+                  <h4>{source.title}</h4>
+                  {onDelete && <button className="icon-button card-delete" aria-label={"删除补充资料 " + source.title}
+                    disabled={source.parseStatus === "processing"} onClick={() => onDelete(source)}>
+                    <Trash2 aria-hidden="true" />
+                  </button>}
+                </div>
+                <p className="meta">{source.format} · {source.parseStatus === "failed" ? source.error || "解析失败"
+                  : source.parseStatus === "completed" ? `${source.nodes.length} 个知识点` : "解析中"}</p>
+                <div className="tools">
+                  {source.parseStatus === "failed" && <button disabled={busy} onClick={() => void retryCourse(source)}>重新解析</button>}
+                  {source.nodes.length > 0 && <>
+                    {onOpenGraph && <button onClick={() => onOpenGraph(source.id)}>查看图谱</button>}
+                    <button disabled={starting || !source.nodes.some(n => n.score < 80)} onClick={() => guide(source)}>先听 AI 讲解</button>
+                    <button disabled={starting} onClick={() => start(source)}>开讲</button>
+                    <button onClick={() => { setError(""); setDetail(source.id); }}>记忆档案</button>
+                  </>}
+                </div>
+              </article>
+            ))}
+            {!sources.get(library.id)?.length && <p className="meta">还没有补充资料。</p>}
+          </section>
+        </Dialog>
+      )}
       {upload && (
         <Dialog
-          title="上传学习资料"
+          title={library ? "添加补充资料" : "上传学习资料"}
           close={() => {
             if (!busy) setUpload(false);
           }}
@@ -430,18 +555,18 @@ export default function Library({
                 ? <span>{file.size < 1024 * 1024 ? Math.max(1, Math.ceil(file.size / 1024)) + " KB" : (file.size / 1024 / 1024).toFixed(1) + " MB"} · <u>重新选择</u></span>
                 : <span>PDF、DOCX、MD、TXT · 最大 20 MB</span>}
             </label>
-            <label>
+            {library ? <p className="meta">添加到《{library.title}》</p> : <label>
               学科标签
               <input
                 value={tag}
                 onChange={(e) => setTag(e.target.value)}
                 placeholder="选填，如数据结构"
               />
-            </label>
+            </label>}
             <p className="meta">上传后由模型解析资料。</p>
-            <p role="alert">{error}</p>
+            {error && <p role="alert">{error}</p>}
             <button className="primary" disabled={!file || busy}>
-              {busy ? "正在解析…" : error ? "重新解析" : "解析资料"}
+              {busy ? "正在解析…" : failedId ? "重新解析" : "解析资料"}
               <ArrowRight />
             </button>
           </form>

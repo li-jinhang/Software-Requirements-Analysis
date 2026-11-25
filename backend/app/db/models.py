@@ -53,6 +53,7 @@ class Document(Base):
     library_id: Mapped[int | None] = mapped_column(
         ForeignKey("documents.id", ondelete="SET NULL"), index=True
     )
+    library_setup: Mapped[dict | None] = mapped_column(JSON, nullable=True)
     title: Mapped[str]
     subject: Mapped[str]
     file_type: Mapped[str]

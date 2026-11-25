@@ -146,9 +146,22 @@ function FloatingEdge({ id, source, target, markerEnd, label, data }: EdgeProps<
 const edgeTypes = { floating: FloatingEdge };
 
 // Rank the visible graph topologically and sort each layer by parent barycenter to minimize crossings.
-function graphPositions(concepts: Concept[], links: Link[]) {
-  const remaining = new Set(concepts.map(n => n.id));
+function graphPositions(concepts: Concept[], links: Link[], groupByModule: boolean) {
   const positions = new Map<string, { x: number; y: number }>();
+  if (groupByModule) {
+    const containment = links.filter(link => link.label === "contains");
+    const modules = [...new Set(containment.map(link => link.from))];
+    modules.forEach((id, column) => {
+      const x = (column - (modules.length - 1) / 2) * colSpacing;
+      positions.set(id, { x, y: 0 });
+      containment.filter(link => link.from === id).forEach((link, row) => {
+        positions.set(link.to, { x, y: (row + 1) * rowSpacing });
+      });
+    });
+    if (concepts.every(concept => positions.has(concept.id))) return positions;
+    positions.clear();
+  }
+  const remaining = new Set(concepts.map(n => n.id));
   let row = 0;
   while (remaining.size) {
     const layer = concepts.filter(n => remaining.has(n.id) &&
@@ -290,7 +303,7 @@ export function Graph({
   }, [activeFocusId, hoveredEdge, visibleEdges]);
 
   const initialNodes = useMemo(() => {
-    const positions = graphPositions(matches, c.links);
+    const positions = graphPositions(matches, c.links, !!c.isLibrary && !isSearchActive);
     return matches.map(n => {
       const label = status(n, space.logs);
       const isNeighbor = isSearchActive && neighborIds.has(n.id);
@@ -310,7 +323,7 @@ export function Graph({
         </div> },
       };
     });
-  }, [matches, c.links, space.logs, isSearchActive, neighborIds]);
+  }, [matches, c.links, c.isLibrary, space.logs, isSearchActive, neighborIds]);
 
   const [nodes, setNodes, change] = useNodesState(initialNodes);
   useEffect(() => {
@@ -401,7 +414,11 @@ export function Graph({
     <>
       <WorkspaceToolbar>
         <select className="graph-course" aria-label="图谱资料" value={c.id} onChange={(e) => { setLockedNode(null); setCourse(e.target.value); }}>
-          {space.courses.map((x) => <option key={x.id} value={x.id}>{x.title}</option>)}
+          {space.courses.map((course) => <option key={course.id} value={course.id}>
+            {course.libraryId
+              ? `${space.courses.find(library => library.id === course.libraryId)?.title || "补充资料"} / ${course.title}`
+              : course.title}
+          </option>)}
         </select>
         <label className="search graph-search"><Search aria-hidden="true" />
           <input aria-label="搜索知识点" placeholder="搜索知识点…" value={query} onChange={(e) => { setLockedNode(null); setQuery(e.target.value); }} />

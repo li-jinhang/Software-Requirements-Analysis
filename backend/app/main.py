@@ -13,7 +13,7 @@ from app.db.library_migration import migrate_document_library
 from app.db.review_migration import migrate_reviews
 from app.db.seed import seed
 from app.services.memory_service import recover_deletions
-from sqlalchemy import select, update
+from sqlalchemy import case, select, update
 from app.db.models import CognitiveItem, Document
 from app.services import cognitive
 
@@ -39,13 +39,16 @@ async def lifespan(app):
                 "ALTER TABLE sessions ADD COLUMN target_node_id INTEGER "
                 "REFERENCES knowledge_nodes(id) ON DELETE SET NULL"
             )
-    # With the single-worker deployment a processing row at startup is an interrupted ingest.
+    # Processing rows left by the previous process can be retried.
     with SessionLocal.begin() as db:
         recover_deletions(db)
         db.execute(
             update(Document)
             .where(Document.parse_status == "processing")
-            .values(parse_status="failed", error_message="上次解析中断，可重新解析")
+            .values(parse_status="failed", error_message=case(
+                (Document.is_library.is_(True), "上次生成因服务重启中断，可重新生成。"),
+                else_="上次解析中断，可重新解析",
+            ))
         )
     if settings.seed_demo:
         with SessionLocal() as db:

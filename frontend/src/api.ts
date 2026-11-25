@@ -189,6 +189,10 @@ type DocumentRow = {
   id: number;
   title: string;
   subject: string;
+  is_library?: boolean;
+  library_id?: number | null;
+  library_setup?: { question: string; request: { answers: { question: string; answer: string }[] } } | null;
+  structured_summary?: string;
   file_type: string;
   parse_status: string;
   error_message?: string;
@@ -212,6 +216,11 @@ function mapCourse(doc: DocumentRow, data: Memory): Course {
     id: String(doc.id),
     title: doc.title,
     subject: doc.subject || "未分类",
+    isLibrary: doc.is_library,
+    libraryId: doc.library_id ? String(doc.library_id) : undefined,
+    setupQuestion: doc.library_setup?.question,
+    setupAnswers: doc.library_setup?.request.answers,
+    overview: doc.structured_summary,
     format: doc.file_type.toUpperCase(),
     cover: 3,
     parseStatus: doc.parse_status,
@@ -238,16 +247,42 @@ function mapCourse(doc: DocumentRow, data: Memory): Course {
 async function uploaded(doc: DocumentRow) {
   return mapCourse(doc, await json<Memory>("/documents/" + doc.id + "/graph"));
 }
-export async function uploadRemote(file: File, subject: string) {
+export async function uploadRemote(file: File, subject: string, libraryId?: string) {
   const data = new FormData();
   data.append("file", file);
   data.append("subject", subject);
+  if (libraryId) data.append("library_id", libraryId);
   return uploaded(
     await json<DocumentRow>("/documents/upload", {
       method: "POST",
       body: data,
     }),
   );
+}
+const libraryPath = "/documents/course-libraries";
+type CreatedLibrary = { document: DocumentRow; graph: Memory };
+export async function createLibrary(title: string) {
+  const result = await json<CreatedLibrary>(libraryPath, post({ title }));
+  return mapCourse(result.document, result.graph);
+}
+export async function startLibrarySetup(title: string, requirements: string) {
+  const doc = await json<DocumentRow>(libraryPath + "/setup", post({ title, requirements }));
+  return mapCourse(doc, { nodes: [], edges: [] });
+}
+export async function continueLibrarySetup(id: string, response?: {
+  question: string;
+  answer: string;
+  use_defaults: boolean;
+}) {
+  const doc = await json<DocumentRow>("/documents/" + id + "/library-setup", post(response || {}));
+  return mapCourse(doc, { nodes: [], edges: [] });
+}
+export async function readLibrarySetup(id: string, signal: AbortSignal) {
+  const doc = await json<DocumentRow>("/documents/" + id, { signal });
+  const graph = doc.parse_status === "completed"
+    ? await json<Memory>("/documents/" + id + "/graph", { signal })
+    : { nodes: [], edges: [] };
+  return mapCourse(doc, graph);
 }
 export function cognitiveDoc(doc: string, session: string, signal: AbortSignal) {
   return json<CognitiveDoc>(`/documents/${doc}/cognitive-doc?session_id=${session}`, { signal });
@@ -689,6 +724,9 @@ export async function refreshMemory(course: Course, signal: AbortSignal) {
     id: Number(course.id),
     title: course.title,
     subject: course.subject,
+    is_library: course.isLibrary,
+    library_id: course.libraryId ? Number(course.libraryId) : undefined,
+    structured_summary: course.overview,
     file_type: course.format,
     parse_status: course.parseStatus || "completed",
   };

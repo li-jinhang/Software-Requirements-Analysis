@@ -77,7 +77,10 @@ def generate(db, user_id, request, profile):
         "key_criteria 列出判分所需的实际事实或条件，避免只说‘能说明原因’。名称完全一致。简洁准确。",
         request.model_dump_json(exclude_none=True),
     )
-    title = request.topic.strip()
+    return persist_plan(db, user_id, request.topic.strip(), request.subject or "", plan)
+
+
+def persist_plan(db, user_id, title, subject, plan, *, is_library=False, document=None):
     groups = defaultdict(list)
     for item in plan.cognitive_items:
         groups[item.concept_name].append(item)
@@ -91,18 +94,20 @@ def generate(db, user_id, request, profile):
         )
     source = "\n\n".join(sections)
     path = settings.data_dir / "uploads" / (uuid4().hex + ".md")
-    doc = Document(
+    doc = document if document is not None else Document(
         user_id=user_id,
         title=title,
-        subject=request.subject or "",
+        subject=subject,
+        is_library=is_library,
         file_type="md",
-        file_path=str(path),
-        parse_status="completed",
-        structured_summary=plan.structured_summary,
     )
     indexed_id = None
     try:
         path.write_text(source, encoding="utf-8")
+        doc.file_path = str(path)
+        doc.parse_status = "completed"
+        doc.structured_summary = plan.structured_summary
+        doc.library_setup = None
         db.add(doc)
         db.flush()
         nodes = store_graph(db, doc.id, plan)
@@ -119,6 +124,8 @@ def generate(db, user_id, request, profile):
             )
         chunks = doc_parser.split_chunks(source)
         indexed_id = doc.id
+        if document is not None:
+            rag_store.remove(doc.id)
         rag_store.index(doc.id, title, chunks)
         doc.chunk_count = len(chunks)
         db.commit()
