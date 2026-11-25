@@ -214,20 +214,26 @@ def test_due_reviews_traceability_and_ai_challenge_verify(teaching):
     assert 1 <= len(card["source_snippets"]) <= 2
     assert any("负梯度" in s["snippet"] for s in card["source_snippets"])
 
-    # Without a configured model, both endpoints degrade gracefully without raising.
+    # Without a configured model, fallback challenge rewrites without leaking statement/key_criteria verbatim.
     t.monkeypatch.setattr(review, "resolve", lambda purpose: None)
     ch_fallback = t.api.post(path + "/reviews/1/ai-challenge")
     assert ch_fallback.status_code == 200
-    assert ch_fallback.json()["available"] is False
-    assert "核验判据" in ch_fallback.json()["hint"]
-    assert "尚未配置" in ch_fallback.json()["notice"]
+    ch_fb_json = ch_fallback.json()
+    assert ch_fb_json["available"] is False
+    assert ch_fb_json["scenario_question"] == ch_fb_json["challenge"]
+    assert "？" in ch_fb_json["scenario_question"]
+    assert SOURCE not in ch_fb_json["scenario_question"]
+    assert "能解释方向" not in ch_fb_json["scenario_question"]
+    assert "能解释方向" not in ch_fb_json["hint"]
+    assert "尚未配置" in ch_fb_json["notice"]
 
     vr_fallback = t.api.post(path + "/reviews/1/ai-verify", json={"answer": "沿负梯度下降"})
     assert vr_fallback.status_code == 200
     assert vr_fallback.json()["available"] is False
     assert vr_fallback.json()["score_hint"] == "again"
+    assert vr_fallback.json()["evidence_evolved"] is False
 
-    # With a configured fixture model, structured challenge & verification respect schema and do not mutate schedule.
+    # With a configured fixture model: challenge, round-1 partial Socratic followup, and round-2 pass evolving evidence.
     t.monkeypatch.setattr(
         review,
         "resolve",
@@ -241,32 +247,56 @@ def test_due_reviews_traceability_and_ai_challenge_verify(teaching):
         if "learner_answer" not in payload:
             assert payload["issue_note"] == "曾忽略学习率过大的震荡边界"
             return schema(
-                challenge="假设损失曲面前方突然变陡，此时该如何解释更新方向与步长风险？",
-                hint="回顾负号含义与过大步长的震荡条件",
+                scenario_question="假设损失曲面前方突然变陡，此时该如何确定更新方向与步长边界？",
+                hint="回顾负号含义与过大步长的风险",
             )
+        if not payload["is_second_round"]:
+            return schema(
+                verdict="partial",
+                score_hint="again",
+                feedback="正确说明了负梯度方向，但遗漏了步长边界条件。",
+                socratic_followup="如果步长选得特别大，跨越谷底后会发生什么现象？",
+                missing_points=["学习率过大会引起震荡或发散"],
+                matched_criteria=["能解释方向"],
+            )
+        assert "震荡" in payload["followup_answer"]
         return schema(
-            verdict="partial",
-            score_hint="again",
-            feedback="正确说明了负梯度方向，但未指出步长过大会导致震荡。",
-            missing_points=["学习率过大会引起震荡或发散"],
-            matched_criteria=["能解释方向"],
+            verdict="pass",
+            score_hint="remembered",
+            feedback="完整补齐了负梯度方向与学习率震荡边界条件。",
+            socratic_followup="",
+            missing_points=[],
+            matched_criteria=["能解释方向", "步长边界清晰"],
         )
 
     t.monkeypatch.setattr(review, "ModelConnection", lambda profile: SimpleNamespace(structured=fake_structured))
     ch_live = t.api.post(path + "/reviews/1/ai-challenge").json()
     assert ch_live["available"] is True
-    assert "更新方向" in ch_live["challenge"]
+    assert "更新方向" in ch_live["scenario_question"]
 
-    vr_live = t.api.post(path + "/reviews/1/ai-verify", json={"answer": "沿负梯度更新"}).json()
-    assert vr_live["available"] is True
-    assert vr_live["verdict"] == "partial"
-    assert vr_live["score_hint"] == "again"
-    assert vr_live["matched_criteria"] == ["能解释方向"]
-    assert vr_live["missing_points"] == ["学习率过大会引起震荡或发散"]
+    vr_round1 = t.api.post(path + "/reviews/1/ai-verify", json={"answer": "沿负梯度更新"}).json()
+    assert vr_round1["available"] is True
+    assert vr_round1["verdict"] == "partial"
+    assert vr_round1["score_hint"] == "again"
+    assert "震荡" in vr_round1["socratic_followup"] or "跨越谷底" in vr_round1["socratic_followup"]
+    assert vr_round1["evidence_evolved"] is False
 
-    # AI checks never alter Ebbinghaus review count, stage, or schedule.
+    vr_round2 = t.api.post(
+        path + "/reviews/1/ai-verify",
+        json={"answer": "沿负梯度更新", "followup_answer": "步长过大会在谷底两侧震荡甚至发散"},
+    ).json()
+    assert vr_round2["available"] is True
+    assert vr_round2["verdict"] == "pass"
+    assert vr_round2["score_hint"] == "remembered"
+    assert vr_round2["socratic_followup"] == ""
+    assert vr_round2["evidence_evolved"] is True
+    assert vr_round2["previous_evidence"] == "沿负梯度方向逐步迭代更新参数。"
+    assert "补充：步长过大会在谷底两侧震荡" in vr_round2["updated_evidence"]
+
+    # Pass updates user_evidence for memory evolution, while never altering Ebbinghaus count, stage, or schedule.
     with t.factory() as db:
         row = db.get(CognitiveItem, 1)
+        assert row.user_evidence == vr_round2["updated_evidence"]
         assert row.review_count == 0
         assert row.review_stage == 0
         assert row.next_review_at == start - timedelta(hours=2)

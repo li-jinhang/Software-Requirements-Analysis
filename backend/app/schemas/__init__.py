@@ -54,6 +54,7 @@ class ReviewFeedback(Input):
 
 class ReviewAnswerIn(Input):
     answer: str = Field(min_length=1, max_length=4000, pattern=r"\S")
+    followup_answer: str = Field(default="", max_length=4000)
 
 
 class SessionCreate(PersonaChange):

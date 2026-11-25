@@ -78,7 +78,9 @@ def review_ai_challenge(doc_id: int, item_id: int, db=Depends(get_db), user=Depe
 def review_ai_verify(
     doc_id: int, item_id: int, body: ReviewAnswerIn, db=Depends(get_db), user=Depends(current_user)
 ):
-    return review.verify_answer(db, owned_review_card(db, doc_id, item_id, user), body.answer)
+    return review.verify_answer(
+        db, owned_review_card(db, doc_id, item_id, user), body.answer, body.followup_answer
+    )
 
 
 @router.post("/{doc_id}/simulate-time-advance", response_model=ReviewListsOut)

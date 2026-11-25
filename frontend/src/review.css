@@ -4,7 +4,7 @@
   gap: 24px;
   align-items: start;
   width: 100%;
-  max-width: 1380px;
+  max-width: 1260px;
   margin-inline: auto;
 }
 .review-stage {
@@ -12,26 +12,24 @@
   display: grid;
   gap: 14px;
 }
-.review-stage .ebbinghaus-bar,
 .review-stage .review-card,
 .review-stage .review-empty,
+.review-stage .review-feedback,
 .view-review > .review-empty {
-  width: min(100%, 840px);
-}
-.view-review > .review-empty {
+  width: min(100%, 740px);
   margin-inline: auto;
 }
 .review-queue-rail {
   min-width: 0;
   display: grid;
-  gap: 14px;
-  padding-bottom: 18px;
+  gap: 10px;
+  padding-bottom: 16px;
   border-bottom: 1px solid var(--line);
 }
 @container workspace (min-width: 740px) {
   .review-layout {
-    grid-template-columns: 272px minmax(0, 1fr);
-    gap: 22px;
+    grid-template-columns: 260px minmax(0, 1fr);
+    gap: 24px;
   }
   .review-queue-rail {
     position: sticky;
@@ -42,48 +40,28 @@
     border-inline-end: 1px solid var(--line);
   }
 }
-@container workspace (min-width: 1020px) {
+@container workspace (min-width: 1040px) {
   .review-layout {
-    grid-template-columns: 310px minmax(0, 1fr);
-    gap: 28px;
+    grid-template-columns: 280px minmax(0, 1fr);
+    gap: 32px;
   }
   .review-queue-rail {
     padding-inline-end: 22px;
   }
 }
-.review-rail-head {
-  display: grid;
-  gap: 8px;
-}
 .review-rail-head h3 {
   margin: 0;
-  font-size: 13px;
+  font-size: 12.5px;
+  font-weight: 550;
   color: var(--muted);
-}
-.review-rail-stats {
-  display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 6px;
-  padding: 8px 10px;
-  border-radius: 7px;
-  border: 1px solid var(--line);
-  background: var(--card);
-  font-size: 11.5px;
-  color: var(--muted);
-}
-.review-rail-stats b {
-  display: block;
-  font: 600 14px var(--mono);
-  color: var(--ink);
-  margin-top: 2px;
 }
 .review-queue-list {
   list-style: none;
   margin: 0;
   padding: 0;
   display: grid;
-  gap: 4px;
-  max-height: 66dvh;
+  gap: 3px;
+  max-height: 74dvh;
   overflow-y: auto;
   scrollbar-width: thin;
 }
@@ -93,7 +71,7 @@
   align-items: flex-start;
   text-align: left;
   gap: 9px;
-  padding: 9px 10px;
+  padding: 8px 10px;
   border-color: transparent;
   background: transparent;
 }
@@ -115,11 +93,11 @@
   min-width: 0;
   flex: 1;
   display: grid;
-  gap: 5px;
+  gap: 4px;
 }
 .review-queue-body strong {
   font-size: 12.5px;
-  font-weight: 550;
+  font-weight: 500;
   line-height: 1.4;
   color: var(--ink);
   display: -webkit-box;
@@ -130,34 +108,18 @@
 .review-queue-meta {
   display: flex;
   align-items: center;
-  flex-wrap: wrap;
-  gap: 5px;
-}
-.review-node-badge {
-  display: inline-block;
-  max-width: 125px;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  padding: 1px 6px;
-  border-radius: 4px;
-  font-size: 10.5px;
-  font-weight: 500;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  color: var(--ink);
+  gap: 6px;
 }
 .review-queue-meta small {
-  font: 10.5px var(--mono);
-  color: var(--muted);
+  font: 11px var(--mono);
+  color: var(--subtle);
 }
-.review-issue-flag {
-  padding: 1px 5px;
-  border-radius: 4px;
-  font-size: 10px;
-  font-weight: 500;
-  color: var(--amber-ink);
-  background: var(--amber-wash);
+.review-issue-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 99px;
+  background: var(--amber);
+  flex: none;
 }
 .review-unlock-list {
   display: grid;
@@ -228,74 +190,10 @@
   box-shadow: var(--shadow-sm);
 }
 
-/* Ebbinghaus top strip */
-.ebbinghaus-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 12px 18px;
-  padding: 10px 14px;
-  border: 1px solid var(--line);
-  border-radius: 9px;
-  background: var(--card);
-}
-.ebbinghaus-stages {
-  display: flex;
-  align-items: center;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.ebbinghaus-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  padding: 3px 8px;
-  border-radius: 6px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  font-size: 11.5px;
-  color: var(--muted);
-}
-.ebbinghaus-pill strong {
-  font: 600 12px var(--mono);
-  color: var(--ink);
-}
-.ebbinghaus-progress {
-  flex: 1 1 210px;
-  min-width: 180px;
-  display: grid;
-  gap: 5px;
-}
-.ebbinghaus-metrics {
-  display: flex;
-  justify-content: space-between;
-  font-size: 11.5px;
-  color: var(--muted);
-}
-.ebbinghaus-metrics b {
-  font-family: var(--mono);
-  color: var(--ink);
-}
-.ebbinghaus-track {
-  height: 4px;
-  border-radius: 99px;
-  background: var(--surface);
-  border: 1px solid var(--line);
-  overflow: hidden;
-}
-.ebbinghaus-track > span {
-  display: block;
-  height: 100%;
-  background: var(--accent);
-  border-radius: 99px;
-  transition: width 220ms var(--ease-out);
-}
-
-/* Active Flashcard */
+/* Single Focused Flashcard */
 .review-card {
   overflow-wrap: anywhere;
-  padding: 22px 24px;
+  padding: 24px 26px;
   border: 1px solid var(--control-line);
   border-radius: 10px;
   background: var(--card);
@@ -320,7 +218,7 @@
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 8px;
 }
 .review-card > header small {
   padding: 1px 7px;
@@ -330,21 +228,14 @@
   color: var(--ink);
   font-weight: 500;
 }
-.review-section-tag {
+.review-meta-line {
   font-size: 12px;
   color: var(--muted);
 }
-.review-stage-chip {
-  font: 11px var(--mono);
-  padding: 1px 7px;
-  border-radius: 4px;
-  background: var(--surface);
-  color: var(--muted);
-}
 .review-concept-head {
-  margin-top: 16px;
+  margin-top: 18px;
   display: grid;
-  gap: 6px;
+  gap: 7px;
 }
 .review-card h2 {
   font-size: 20px;
@@ -365,15 +256,15 @@
   color: var(--muted);
 }
 
-/* Heuristic cue & AI challenge */
+/* Zero-spoiler Scenario Challenge & Collapsible Hint */
 .review-cue-box {
-  margin-top: 14px;
-  padding: 12px 14px;
+  margin-top: 16px;
+  padding: 14px 16px;
   border-radius: 8px;
   border: 1px solid var(--line);
   background: var(--surface);
   display: grid;
-  gap: 6px;
+  gap: 8px;
 }
 .review-cue-head {
   display: flex;
@@ -389,47 +280,124 @@
   font-weight: 600;
   color: var(--muted);
 }
-.review-cue-title svg,
-.review-challenge-btn svg {
+.review-cue-title svg {
   width: 13px;
   height: 13px;
 }
 .review-challenge-btn {
-  min-height: 26px;
-  padding: 2px 8px;
+  min-height: 24px;
+  padding: 1px 8px;
   font-size: 12px;
-  color: var(--accent);
+}
+.review-cue-loading {
+  margin: 0;
+  font-size: 13.5px;
+  color: var(--subtle);
 }
 .review-challenge-question {
   margin: 0;
-  font-size: 14px;
-  line-height: 1.6;
+  font-size: 15px;
+  line-height: 1.65;
   font-weight: 500;
   color: var(--ink);
+}
+.review-hint-wrap {
+  display: grid;
+  justify-items: start;
+  gap: 6px;
+}
+.review-hint-toggle {
+  min-height: 24px;
+  padding: 1px 6px;
+  margin-left: -6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.review-hint-toggle:enabled:hover {
+  color: var(--accent);
+}
+.review-hint-toggle svg {
+  width: 13px;
+  height: 13px;
 }
 .review-cue-text {
   margin: 0;
   font-size: 13px;
   line-height: 1.6;
   color: var(--muted);
+  padding: 6px 10px;
+  border-left: 2px solid var(--accent);
+  background: var(--card);
+  border-radius: 0 5px 5px 0;
 }
 .review-cue-notice {
   font-size: 11.5px;
   color: var(--subtle);
 }
 
-/* One-line Feynman quick verify input */
-.review-quick-form {
-  margin-top: 12px;
+/* 3-Row Feynman Recall Area & Socratic Round 2 */
+.review-recall-form {
+  margin-top: 14px;
+  display: grid;
+  gap: 10px;
+}
+.review-recall-form textarea,
+.review-socratic-form textarea {
+  width: 100%;
+  padding: 10px 12px;
+  line-height: 1.6;
+  font-size: 13.5px;
+}
+.review-recall-form textarea:disabled {
+  opacity: 0.72;
+  background: var(--surface);
+}
+.review-recall-actions {
   display: flex;
+  align-items: center;
+  flex-wrap: wrap;
   gap: 8px;
 }
-.review-quick-form input {
-  flex: 1;
-  min-width: 0;
+
+.review-socratic-box {
+  margin-top: 14px;
+  padding: 14px 16px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, var(--accent) 28%, var(--line));
+  background: var(--surface);
+  display: grid;
+  gap: 8px;
+  animation: show-answer 180ms var(--ease-out);
 }
-.review-quick-form button {
-  flex: none;
+.review-socratic-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent);
+}
+.review-socratic-head svg {
+  width: 14px;
+  height: 14px;
+}
+.review-socratic-feedback {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--muted);
+}
+.review-socratic-question {
+  margin: 0;
+  font-size: 14px;
+  line-height: 1.6;
+  font-weight: 500;
+  color: var(--ink);
+}
+.review-socratic-form {
+  display: grid;
+  gap: 10px;
+  margin-top: 2px;
 }
 
 .review-card > footer {
@@ -457,13 +425,84 @@
   color: var(--accent);
 }
 
-/* Answer & Traceability Archive */
+/* Back Side: Verification, Standard, Memory Evolution & Collapsible Archive */
 .review-answer {
-  margin-top: 16px;
+  margin-top: 18px;
   display: grid;
   gap: 12px;
   animation: show-answer 180ms var(--ease-out);
 }
+.review-verify-card {
+  padding: 12px 14px;
+  border-radius: 8px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  display: grid;
+  gap: 8px;
+}
+.review-verify-card.verdict-pass {
+  border-color: color-mix(in srgb, var(--green-ink) 35%, var(--line));
+  background: var(--green-wash);
+}
+.review-verify-card.verdict-partial,
+.review-verify-card.verdict-fail {
+  border-color: color-mix(in srgb, var(--amber) 38%, var(--line));
+  background: var(--amber-wash);
+}
+.review-verify-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.review-verify-head strong {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 13px;
+}
+.review-verify-head svg {
+  width: 14px;
+  height: 14px;
+}
+.review-score-hint {
+  font: 11px var(--mono);
+  color: var(--muted);
+}
+.review-verify-card p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.6;
+}
+.review-criteria-list {
+  list-style: none;
+  margin: 2px 0 0;
+  padding: 8px 0 0;
+  border-top: 1px dashed var(--line);
+  display: grid;
+  gap: 5px;
+}
+.review-criteria-list li {
+  display: flex;
+  align-items: baseline;
+  gap: 7px;
+  font-size: 12.5px;
+  line-height: 1.5;
+}
+.review-criteria-list li > span:first-child {
+  font: 700 12px var(--mono);
+  flex: none;
+  width: 14px;
+  text-align: center;
+}
+.review-criteria-list li.is-matched {
+  color: var(--green-ink);
+}
+.review-criteria-list li.is-missing {
+  color: var(--amber-ink);
+}
+
 .review-standard-block {
   border-left: 3px solid var(--accent);
   background: color-mix(in srgb, var(--surface) 55%, transparent);
@@ -495,91 +534,83 @@
   line-height: 1.55;
   color: var(--ink);
 }
-.review-verify-card {
-  padding: 11px 14px;
-  border-radius: 8px;
-  border: 1px solid var(--line);
-  background: var(--surface);
-  display: grid;
-  gap: 6px;
-}
-.review-verify-card.verdict-pass {
-  border-color: color-mix(in srgb, var(--green-ink) 35%, var(--line));
-  background: var(--green-wash);
-}
-.review-verify-card.verdict-partial,
-.review-verify-card.verdict-fail {
-  border-color: color-mix(in srgb, var(--amber) 38%, var(--line));
-  background: var(--amber-wash);
-}
-.review-verify-head {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  flex-wrap: wrap;
-  gap: 8px;
-}
-.review-verify-head strong {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  font-size: 12.5px;
-}
-.review-verify-head svg {
-  width: 14px;
-  height: 14px;
-}
-.review-score-hint {
-  font: 11px var(--mono);
-  color: var(--muted);
-}
-.review-verify-card p {
-  margin: 0;
-  font-size: 13px;
-  line-height: 1.55;
-}
-.review-verify-points {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 6px;
-}
-.verify-chip {
-  font-size: 11.5px;
-  padding: 2px 7px;
-  border-radius: 5px;
-  border: 1px solid var(--line);
-  background: var(--card);
-}
-.verify-chip.matched {
-  color: var(--green-ink);
-}
-.verify-chip.missing {
-  color: var(--amber-ink);
-}
 
-.review-trace-panel {
+/* Memory Evolution Comparison */
+.review-evolution-box {
   border: 1px solid var(--line);
   border-radius: 8px;
-  padding: 12px 14px;
   background: var(--surface);
+  padding: 12px 14px;
+}
+.review-evolution-grid {
   display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
 }
-.review-trace-head {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 12px;
+.evolution-col {
+  display: grid;
+  gap: 4px;
+  padding: 9px 11px;
+  border-radius: 6px;
+  background: var(--card);
+  border: 1px solid var(--line);
+  align-content: start;
+}
+.evolution-col.is-evolved {
+  border-color: color-mix(in srgb, var(--green-ink) 35%, var(--line));
+}
+.evolution-col small {
+  font-size: 11px;
   font-weight: 600;
   color: var(--muted);
 }
-.review-trace-head svg {
-  width: 13px;
-  height: 13px;
+.evolution-col.is-evolved small {
+  color: var(--green-ink);
 }
-.review-trace-grid {
+.evolution-col p {
+  margin: 0;
+  font-size: 13px;
+  line-height: 1.55;
+  color: var(--ink);
+}
+
+/* Collapsible Traceability Details */
+.review-trace-details {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.review-trace-details summary {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  cursor: pointer;
+  list-style: none;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--muted);
+}
+.review-trace-details summary::-webkit-details-marker {
+  display: none;
+}
+.review-trace-details summary svg {
+  width: 14px;
+  height: 14px;
+  transition: transform 140ms var(--ease-snappy);
+}
+.review-trace-details[open] summary svg {
+  transform: rotate(90deg);
+}
+.review-trace-details summary small {
+  margin-inline-start: auto;
+  font-size: 11.5px;
+  color: var(--subtle);
+}
+.review-trace-body {
+  padding: 0 12px 12px;
   display: grid;
-  gap: 10px;
+  gap: 8px;
 }
 .review-trace-item {
   display: grid;
@@ -722,12 +753,8 @@
   .review-card {
     padding: 14px;
   }
+  .review-evolution-grid,
   .review-victory .victory-metrics {
     grid-template-columns: 1fr;
-  }
-}
-@container workspace (max-width: 500px) {
-  .review-quick-form {
-    flex-direction: column;
   }
 }
