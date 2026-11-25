@@ -14,42 +14,40 @@
   max-width: 225px;
   min-width: 64px;
 }
-.graph-legend {
-  display: inline-flex;
+.graph-mastery-key { position: relative; }
+.graph-mastery-key details { display: none; padding: 0; border: 0; }
+.graph-mastery-key summary {
+  display: flex;
   align-items: center;
-  gap: 10px;
-  margin-inline: 2px 5px;
+  height: 30px;
+  padding: 0 7px;
+  font-size: 12px;
+  color: var(--muted);
+  list-style: none;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
 }
-.graph-legend > span,
-.node-status {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
+.graph-mastery-key summary::-webkit-details-marker { display: none; }
+.graph-mastery-key summary:hover { background: var(--selected); color: var(--ink); }
+.graph-mastery-key details .mastery-legend {
+  position: absolute;
+  top: calc(100% + 4px);
+  right: 0;
+  display: grid;
+  min-width: 100px;
+  gap: 5px;
+  padding: 6px 8px;
+  border: 1px solid var(--control-line);
+  border-radius: var(--radius-sm);
+  background: var(--card);
 }
-.graph-legend i,
-.node-heading i,
-.node-status::before {
+.topline:has(.graph-mastery-key details[open]) { position: relative; z-index: 2; }
+.node-heading i {
   flex: none;
-  display: inline-block;
   width: 6px;
   height: 6px;
   border-radius: 50%;
-  background: var(--tone, var(--subtle));
-}
-.graph-legend .green,
-.node.green,
-.node-status.green {
-  --tone: var(--green);
-}
-.graph-legend .amber,
-.node.amber,
-.node-status.amber {
-  --tone: var(--amber);
-}
-.graph-legend .red,
-.node.red,
-.node-status.red {
-  --tone: var(--red);
+  background: var(--mastery-ink);
 }
 .graphlayout {
   display: grid;
@@ -120,6 +118,9 @@
   border-radius: 6px;
   box-shadow: none;
 }
+.graph .react-flow__node.mastery-node {
+  border-inline-start: 2px solid var(--mastery-ink);
+}
 .graph .react-flow__node.node:is(.selected, :focus-visible) {
   outline: 1px solid var(--accent);
   outline-offset: 1px;
@@ -155,7 +156,7 @@
   font: 11px var(--mono);
 }
 .node-content progress {
-  --progress: var(--tone, var(--subtle));
+  --progress: var(--mastery-ink);
   margin: 0;
   height: 2px;
 }
@@ -175,17 +176,6 @@
 .node-detail h2 {
   margin: 12px 0 6px;
   font-size: 16px;
-}
-.node-status {
-  font-size: 12px;
-  color: var(--muted);
-}
-.node-status::before {
-  content: "";
-}
-.node-detail progress {
-  margin: 6px 0 14px;
-  height: 2px;
 }
 .node-detail h3 {
   padding-top: 10px;
@@ -244,16 +234,8 @@
   padding-block: 2px;
 }
 @container workspace (max-width: 940px) {
-  .graph-legend {
-    gap: 6px;
-  }
-  .graph-legend > span > span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
-  }
+  .graph-mastery-key > .mastery-legend { display: none; }
+  .graph-mastery-key details { display: block; }
   .toolbar-slot .graph-course {
     max-width: 200px;
   }
@@ -273,10 +255,6 @@
   }
   .graph-search {
     flex: 1 1 80px;
-  }
-  .graph-legend {
-    gap: 3px;
-    margin: 0;
   }
   .report-figure {
     grid-template-columns: 1fr;

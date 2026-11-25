@@ -1,11 +1,13 @@
 import React, { useEffect, useRef, useState } from "react";
 import { lookupQuestion } from "./lookup";
+import CommandComposer from "./CommandComposer";
+import { commands } from "./slash";
 import { animateCorrection, scrollToLatestMessage } from "./correctionFlight";
 import { Dialog, WorkspaceToolbar } from "./ui";
 import "./cognitive.css";
 import { CourseText, CorrectionDetails, MessageSources } from "./LearningMessage";
 import {
-  ArrowUp,
+  History,
   FileCheck2,
   Workflow,
   ListChecks,
@@ -13,7 +15,6 @@ import {
   ArrowRight,
   BookOpen,
   MessagesSquare,
-  CornerDownLeft,
   PanelRightClose,
   PanelRightOpen,
 } from "lucide-react";
@@ -24,6 +25,7 @@ import {
   setPersona,
   cognitiveDoc, refreshMemory, createRemote,
   type TeachingPurpose,
+  capabilitiesApi, type CapabilityRun,
 } from "./api";
 import {
   CognitiveDoc, CognitiveItem, CognitiveUpdate, Correction,
@@ -34,6 +36,7 @@ import {
   mean,
   roles,
   status,
+  download,
 } from "./model";
 
 type PendingTurn = { question: string; reply: string };
@@ -93,8 +96,11 @@ export default function Workbench({
   graph,
   report,
   canLearn,
-  modelRequired, enterAssessment,
+  modelRequired, enterAssessment, openCapabilities, openModels, openReview,
 }: {
+  openCapabilities: (tab?: "skills" | "mcp") => void;
+  openModels: () => void;
+  openReview: () => void;
   enterAssessment: (id: string, course: Course) => void;
   online: boolean;
   space: Space;
@@ -136,6 +142,10 @@ export default function Workbench({
   }, [pushCount]);
   const arrivals = useRef(new Set<number>());
   const [startingAssessment, setStartingAssessment] = useState(false);
+  const [capBusy, setCapBusy] = useState(false), [help, setHelp] = useState(false), [rolePicker, setRolePicker] = useState(false), [reportConfirm, setReportConfirm] = useState(false);
+  const requests = useRef(new Map<string, string>());
+  const [runLog, setRunLog] = useState<Awaited<ReturnType<typeof capabilitiesApi.runs>> | null>(null);
+  async function showRuns() { try { setRunLog(await capabilitiesApi.runs(session.id)); } catch (e) { setNotice((e as Error).message); } }
   async function startAssessment(ids: number[]) {
     if (startingAssessment || pending.some(Boolean)) return;
     setStartingAssessment(true);
@@ -215,6 +225,7 @@ export default function Workbench({
     return () => ctrl.abort();
   }, [online, session.id, reload]);
   const locked =
+    capBusy ||
     session.closed ||
     changingRole ||
     finishing ||
@@ -329,11 +340,52 @@ export default function Workbench({
     if (online) void onlineSend(side, text);
     else void canLearn(side ? "encyclopedia" : "feynman");
   }
+  async function executeCapability(side: number, body: Pick<CapabilityRun, "kind" | "capability_id" | "tool" | "arguments" | "content" | "confirmed">) {
+    if (!online || capBusy || pending.some(Boolean)) { setNotice("请登录账号，并等待当前回复完成。"); return false; }
+    if (body.kind === "skill" && !(await canLearn("encyclopedia"))) return false;
+    const key = JSON.stringify([side, body]);
+    const request_id = requests.current.get(key) || crypto.randomUUID();
+    requests.current.set(key, request_id);
+    setCapBusy(true); setNotice("正在执行能力，请等待结果保存…");
+    try {
+      setPending(v => v.map((old, index) => index === side ? { question: body.content, reply: "" } : old));
+      await capabilitiesApi.stream({ ...body, request_id, session_id: Number(session.id), window: side ? "encyclopedia" : "feynman" },
+        reply => setPending(v => v.map((old, index) => index === side ? { question: body.content, reply } : old)));
+      const history = await sessionHistory(session.id);
+      save(s => ({ ...s, sessions: s.sessions.map(v => {
+        if (v.id !== session.id) return v;
+        const drafts: [string, string] = [...v.drafts];
+        if (drafts[side] === session.drafts[side] && (drafts[side].trim() === body.content.trim() || drafts[side].startsWith("/"))) drafts[side] = "";
+        return { ...v, ...history, drafts };
+      }) }));
+      requests.current.delete(key); setNotice("已完成并保存。本次工具或技能操作不计入讲解评分。");
+      return true;
+    } catch (e) { if (!modelRequired(e)) setNotice((e as Error).message + " 可刷新历史核对结果；请勿重复执行不确定的外部操作。"); return false; }
+    finally { setCapBusy(false); setPending(v => v.map((old, index) => index === side ? null : old)); }
+  }
+  function runCommand(side: number, name: string, argument: string) {
+    if (capBusy || pending.some(Boolean)) return;
+    const clear = () => { const drafts: [string, string] = [...session.drafts]; drafts[side] = ""; patch({ drafts }); };
+    if (name === "skills" || name === "mcp") { openCapabilities(name); clear(); }
+    else if (["help", "tools"].includes(name)) { setHelp(true); clear(); }
+    else if (name === "model") { openModels(); clear(); }
+    else if (name === "graph") { graph(); clear(); }
+    else if (name === "review") { openReview(); clear(); }
+    else if (name === "report") setReportConfirm(true);
+    else if (name === "role") {
+      const labels: Record<string, string> = { child: roles[0], 小学生: roles[0], peer: roles[1], 同窗: roles[1], examiner: roles[2], 考官: roles[2] };
+      if (argument && (labels[argument] || roles.includes(argument))) { void changeRole(labels[argument] || argument); clear(); }
+      else { setRolePicker(true); clear(); }
+    } else if (name === "lookup") {
+      if (!argument) { setNotice("用法：/lookup 你想查证的问题"); return; }
+      focus(1); void executeCapability(1, { kind: "lookup", content: argument }).then(ok => { if (ok && side === 0) clear(); });
+    } else if (name === "progress" || name === "history") void executeCapability(side, { kind: name, content: "/" + name });
+  }
   async function finish() {
     setFinishing(true);
     try {
       if (!(await canLearn("report"))) return;
-      if (session.left.filter((m) => m.who === "我").length < 2) {
+      if (session.left.filter((m) => m.who === "我" && !m.operation).length < 2) {
         setNotice("至少完成两轮讲解后即可生成报告。");
         return;
       }
@@ -360,6 +412,11 @@ export default function Workbench({
           <ChevronsUpDown aria-hidden="true" />
         </button>
         <div className="toolbar-actions">
+          {online && (
+            <button className="compact-command" title="能力运行记录" onClick={() => void showRuns()}>
+              <History aria-hidden="true" /><span>能力运行记录</span>
+            </button>
+          )}
           {online && rubric && <button className="rubric-trigger compact-command" onClick={() => setRubricOpen(true)}
             title={`Agent 认知文档（已掌握 ${rubric.mastered_count}/${rubric.total}）`}>
             <ListChecks aria-hidden="true" /><span>Agent 认知文档（已掌握 {rubric.mastered_count}/{rubric.total}）</span>
@@ -376,6 +433,10 @@ export default function Workbench({
       {session.targeted && <p className="assessment-state">{session.assessmentCompleted ? "本轮定向考核已完成" : "正在考核选定条目"}</p>}
       {rubricOpen && rubric && <Rubric doc={rubric} assess={startAssessment} busy={startingAssessment || pending.some(Boolean)} close={() => setRubricOpen(false)} />}
       {notice && <p role="status">{notice}</p>}
+      {runLog && <Dialog title="能力运行记录" close={() => setRunLog(null)}>{!runLog.length && <p>本轮尚未运行工具或技能。</p>}{runLog.map(run => <p key={run.id}><strong>{run.kind}</strong> · {run.status === "completed" ? "已完成" : run.status === "running" ? "执行中 / 待核对" : "失败或结果待核对"} · {run.created_at}<br /><small>{run.id}</small></p>)}</Dialog>}
+      {help && <Dialog title="命令与工具" close={() => setHelp(false)}><p>输入 / 搜索，↑ ↓ 选择、Enter 确认，Shift+Enter 换行。Skills 选择后再输入任务；工具操作不作为讲解评分。</p>{commands.map(c => <p key={c.id}><strong>{c.command} · {c.name}</strong>　{c.description}</p>)}<button onClick={() => { setHelp(false); openCapabilities(); }}>打开能力中心</button></Dialog>}
+      {rolePicker && <Dialog title="选择听众" close={() => setRolePicker(false)}><div className="tools">{roles.map(role => <button key={role} onClick={() => { void changeRole(role); setRolePicker(false); }}>{role}</button>)}</div></Dialog>}
+      {reportConfirm && <Dialog title="结束并生成报告" close={() => setReportConfirm(false)}><p>生成诊断报告后，本轮教学会话将结束。</p><button onClick={() => { setReportConfirm(false); void finish(); }}>确认生成报告</button></Dialog>}
       {historyError && (
         <button onClick={() => setReload((v) => v + 1)}>刷新会话历史</button>
       )}
@@ -490,6 +551,7 @@ export default function Workbench({
                   >
                     <small>{m.who}</small>
                     <CourseText text={m.text} />
+                    {m.operation && m.who !== "我" && <button className="quiet" onClick={() => download(c.title + "-能力结果.md", m.text, "text/markdown")}>下载结果</button>}
                     {m.badge && (
                       <small className="pill">{displayBadge(m)}</small>
                     )}
@@ -559,53 +621,15 @@ export default function Workbench({
                   </>
                 )}
               </div>
-              <div className="composer reply-box">
-                <textarea
-                  aria-label={i ? "百科问题" : "讲解内容"}
-                  ref={(el) => {
-                    fields.current[i] = el;
-                  }}
-                  readOnly={session.closed || (i === 0 && session.assessmentCompleted) || !!pending[i]}
-                  value={
-                    pending[i]?.question === session.drafts[i].trim()
-                      ? ""
-                      : session.drafts[i]
-                  }
-                  onChange={(e) => {
-                    const drafts: [string, string] = [...session.drafts];
-                    drafts[i] = e.target.value;
-                    patch({ drafts });
-                  }}
-                  placeholder={i ? "向百科助教提问…" : "用自己的话讲一讲…"}
-                  onKeyDown={(e) => {
-                    if (
-                      e.key !== "Enter" ||
-                      e.shiftKey ||
-                      e.altKey ||
-                      e.nativeEvent.isComposing ||
-                      e.nativeEvent.keyCode === 229
-                    )
-                      return;
-                    e.preventDefault();
-                    if (!e.repeat) send(i, session.drafts[i]);
-                  }}
-                />
-                <div className="composer-tools">
-                  <button className="quiet switch-pane" type="button" onClick={() => focus(i ? 0 : 1)}>
-                    {i ? <MessagesSquare aria-hidden="true" /> : <BookOpen aria-hidden="true" />}
-                    {i ? "回到讲解" : "前往查证"}
-                  </button>
-                  <small className="compose-hint"><CornerDownLeft aria-hidden="true" /> 发送 · Shift + Enter 换行</small>
-                  <button
-                    className="send"
-                    aria-label={i ? "提交查证" : "发送讲解"}
-                    disabled={locked || (i === 0 && session.assessmentCompleted) || !!pending[i] || !session.drafts[i].trim()}
-                    onClick={() => send(i, session.drafts[i])}
-                  >
-                    <ArrowUp />
-                  </button>
-                </div>
-              </div>
+              <CommandComposer side={i} online={online} revision={reload} locked={locked || !!pending[i]}
+                context={{ title: c.title, content: [...session.left, ...session.right].filter(m => m.who !== "我").sort((a,b) => (a.id || 0) - (b.id || 0)).at(-1)?.text || "", date: new Date(Date.now() + 86400000).toISOString().slice(0,10) }}
+                readOnly={session.closed || (i === 0 && session.assessmentCompleted) || !!pending[i]}
+                value={pending[i]?.question === session.drafts[i].trim() ? "" : session.drafts[i]}
+                change={value => { const drafts: [string, string] = [...session.drafts]; drafts[i] = value; patch({ drafts }); }}
+                send={text => send(i, text)} command={(name, argument) => runCommand(i, name, argument)}
+                execute={body => executeCapability(i, body)} manager={openCapabilities}
+                onSwitchPane={() => focus(i ? 0 : 1)}
+                field={el => { fields.current[i] = el; }} />
             </section>
           </React.Fragment>
         ))}

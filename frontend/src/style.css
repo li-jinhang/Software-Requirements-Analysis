@@ -416,7 +416,70 @@ input[type="checkbox"] {
   font-size: 10px;
   margin-top: 2px;
 }
-main {
+.account-entry {
+  position: relative;
+  display: grid;
+  place-items: center;
+  min-height: 100dvh;
+  padding: 16px;
+  background: var(--canvas);
+}
+.account-entry > .theme-toggle {
+  position: absolute;
+  inset-block-start: 12px;
+  inset-inline-end: 14px;
+}
+.entry-panel {
+  width: min(100%, 340px);
+  padding: 24px;
+  color: var(--ink);
+  background: var(--card);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.entry-brand {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+.entry-brand > svg {
+  width: 25px;
+  height: 25px;
+  padding: 4px;
+  border-radius: var(--radius-sm);
+  color: var(--action-ink);
+  background: var(--action);
+}
+.entry-panel > p {
+  margin: 10px 0 16px;
+  color: var(--muted);
+}
+.entry-panel > [role="alert"] {
+  color: var(--red-ink);
+}
+.entry-panel > button {
+  width: 100%;
+  min-height: 32px;
+}
+.entry-panel > button + button {
+  margin-top: 6px;
+}
+button.account-delete {
+  color: var(--red-ink);
+  background: var(--card);
+  border-color: color-mix(in srgb, var(--red) 42%, var(--line));
+}
+button.account-delete:enabled:hover {
+  color: var(--red-ink);
+  border-color: var(--red);
+  background: var(--red-wash);
+}
+.account-deletion-note {
+  color: var(--muted);
+  border-inline-start: 2px solid var(--red);
+  padding-inline-start: 9px;
+}
+.shell > main {
   container: workspace / inline-size;
   display: grid;
   grid-template-rows: var(--topbar-height) minmax(0, 1fr);
@@ -482,6 +545,10 @@ main {
 }
 .toolbar-slot > select {
   max-width: min(29vw, 320px);
+}
+.capabilities-trigger {
+  flex: none;
+  height: 30px;
 }
 .toolbar-actions {
   margin-inline-start: auto;
@@ -733,7 +800,7 @@ progress::-moz-progress-bar {
 .reply-box:focus-within {
   border-color: var(--muted);
 }
-.reply-box textarea {
+.reply-box > textarea {
   display: block;
   width: 100%;
   padding: 2px 3px;
@@ -743,7 +810,7 @@ progress::-moz-progress-bar {
   font-size: 14px;
   line-height: 1.5;
 }
-.reply-box textarea:focus-visible {
+.reply-box > textarea:focus-visible {
   outline: 0;
 }
 .reply-box :is(.send, .chat-send) {
@@ -1063,6 +1130,20 @@ details label {
     padding-inline: 7px;
   }
 }
+@container workspace (max-width: 980px) {
+  .compact-command {
+    width: 30px;
+    flex: none;
+    padding: 0;
+  }
+  .compact-command > span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    clip-path: inset(50%);
+    overflow: hidden;
+  }
+}
 @container workspace (max-width: 760px) {
   .topline:has(.toolbar-slot:not(:empty)) .workspace-location {
     position: absolute;
@@ -1077,18 +1158,6 @@ details label {
   }
   .toolbar-slot > select {
     max-width: 36cqi;
-  }
-  .compact-command {
-    width: 30px;
-    flex: none;
-    padding: 0;
-  }
-  .compact-command > span {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    clip-path: inset(50%);
-    overflow: hidden;
   }
   .toolbar-actions {
     gap: 4px;

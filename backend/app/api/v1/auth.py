@@ -5,15 +5,17 @@ from sqlalchemy.exc import IntegrityError
 from app.schemas import Register, Login, UserOut, AuthOut
 from app.core.security import hash_password, token, current_user
 from app.db.database import get_db
-from app.db.models import User, public
+from app.db.models import User, next_account_id, public
 
 router = APIRouter(prefix="/auth", tags=["认证"])
 
 
 @router.post("/register", response_model=UserOut, status_code=201)
 def register(body: Register, db=Depends(get_db)):
+    password_hash = hash_password(body.password)
+    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
     u = User(
-        username=body.username, nickname=body.nickname, password_hash=hash_password(body.password)
+        id=next_account_id(db), username=body.username, nickname=body.nickname, password_hash=password_hash,
     )
     db.add(u)
     try:

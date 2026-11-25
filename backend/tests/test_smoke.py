@@ -60,6 +60,7 @@ def serve(tmp_path_factory, *, fixture_inference=False):
             with httpx.Client(
                 base_url=f"http://127.0.0.1:{port}", timeout=25, trust_env=False
             ) as api:
+                api.data_dir = work / "data"
                 for _ in range(150):
                     if proc.poll() is not None:
                         pytest.fail(

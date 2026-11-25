@@ -13,7 +13,7 @@ from playwright.sync_api import expect, sync_playwright
 
 
 def login(page, username, password=None):
-    page.locator(".account button").click()
+    page.locator(".account button").or_(button(page, "选择本机账号")).first.click()
     dialog = page.get_by_role("dialog", name="本机账号", exact=True)
     nickname = {"admin": "教学管理员", "student": "演示学生"}[username]
     dialog.get_by_text(nickname, exact=True).click()
@@ -26,6 +26,67 @@ def login(page, username, password=None):
 
 def button(page, name):
     return page.get_by_role("button", name=name, exact=True)
+
+
+def check_account_gate(browser):
+    root = os.environ.get("FM_FRONTEND", "http://127.0.0.1:5173")
+    page = browser.new_page()
+    private_requests = []
+    page.on("request", lambda request: private_requests.append(request.url)
+            if re.search(r"/api/v1/(documents|sessions|admin)(?:[/?]|$)", request.url) else None)
+    choice = button(page, "选择本机账号")
+    dialog = page.get_by_role("dialog", name="本机账号", exact=True)
+    cards = page.locator(".cards .card")
+    try:
+        for route in ("library", "graph", "studio", "tutor", "review", "reports", "admin"):
+            page.goto(root + "/#" + route)
+            expect(choice).to_be_visible()
+            expect(page.locator(".sidebar")).to_have_count(0)
+            expect(cards).to_have_count(0)
+        page.goto(root + "/#library")
+        choice.click()
+        dialog.get_by_text("演示学生", exact=True).click()
+        dialog.get_by_label("密码", exact=True).fill("wrong-test-password")
+        button(dialog, "切换账号").click()
+        expect(dialog.get_by_role("alert")).to_contain_text("正确密码")
+        assert not private_requests
+        dialog.get_by_label("密码", exact=True).fill(os.environ["FM_STUDENT_PASSWORD"])
+        button(dialog, "切换账号").click()
+        expect(cards.first).to_be_visible()
+        page.reload()
+        expect(cards.first).to_be_visible()
+
+        page.locator(".account button").click()
+        button(dialog, "新建账号").click()
+        nickname = "隔离测试-" + uuid4().hex[:8]
+        dialog.get_by_label("账号名称", exact=True).fill(nickname)
+        button(dialog, "创建账号").click()
+        expect(page.locator(".account")).to_contain_text(nickname)
+        expect(cards).to_have_count(0)
+        page.reload()
+        expect(page.locator(".account")).to_contain_text(nickname)
+        expect(cards).to_have_count(0)
+        login(page, "student")
+        expect(cards.first).to_be_visible()
+
+        page.locator(".account button").click()
+        button(dialog, "退出当前账号").click()
+        expect(choice).to_be_visible()
+        expect(cards).to_have_count(0)
+        login(page, "student")
+        expect(cards.first).to_be_visible()
+        page.evaluate("""() => {
+            const key = Object.keys(sessionStorage).find((name) => name.startsWith('fm.jwt:'));
+            sessionStorage.setItem(key, 'invalid-test-token');
+        }""")
+        private_requests.clear()
+        page.reload()
+        expect(page.get_by_role("alert")).to_contain_text("登录已失效")
+        expect(cards).to_have_count(0)
+        assert not private_requests
+    finally:
+        page.close()
+    print("PASS signed-out routes, wrong password, login, reload, account isolation, logout and expired token")
 
 
 def check_local_model_settings(browser):
@@ -42,36 +103,34 @@ def check_local_model_settings(browser):
         }],
         "bindings": {},
     }
-    for online in (False, True):
-        page = browser.new_page()
-        try:
-            page.goto(root)
-            if online:
-                login(page, "student")
-            button(page, "设置").click()
-            settings = page.get_by_role("dialog", name="设置", exact=True)
-            button(settings, "新建配置").click()
-            editor = page.get_by_role("dialog", name="新建配置", exact=True)
-            expect(editor).to_be_visible()
-            button(editor, "关闭").click()
-            with page.expect_file_chooser() as chooser:
-                button(settings, "导入配置").click()
-            chooser.value.set_files({
-                "name": "models.json", "mimeType": "application/json",
-                "buffer": json.dumps(archive, ensure_ascii=False).encode("utf-8"),
-            })
-            expect(settings.get_by_role("status")).to_contain_text("已导入 1 个配置")
-            with page.expect_download() as download:
-                button(settings, "导出配置").click()
-            backup = json.loads(download.value.path().read_bytes())
-            assert archive["profiles"][0] in backup["profiles"]
-            card = settings.get_by_role("article").filter(has_text=archive["profiles"][0]["name"])
-            button(card, "删除").click()
-            button(page.get_by_role("dialog", name="删除模型配置"), "确认删除").click()
-            expect(card).to_have_count(0)
-        finally:
-            page.close()
-    print("PASS local model settings import and export from demo and student sessions")
+    page = browser.new_page()
+    try:
+        page.goto(root)
+        login(page, "student")
+        button(page, "设置").click()
+        settings = page.get_by_role("dialog", name="设置", exact=True)
+        button(settings, "新建配置").click()
+        editor = page.get_by_role("dialog", name="新建配置", exact=True)
+        expect(editor).to_be_visible()
+        button(editor, "关闭").click()
+        with page.expect_file_chooser() as chooser:
+            button(settings, "导入配置").click()
+        chooser.value.set_files({
+            "name": "models.json", "mimeType": "application/json",
+            "buffer": json.dumps(archive, ensure_ascii=False).encode("utf-8"),
+        })
+        expect(settings.get_by_role("status")).to_contain_text("已导入 1 个配置")
+        with page.expect_download() as download:
+            button(settings, "导出配置").click()
+        backup = json.loads(download.value.path().read_bytes())
+        assert archive["profiles"][0] in backup["profiles"]
+        card = settings.get_by_role("article").filter(has_text=archive["profiles"][0]["name"])
+        button(card, "删除").click()
+        button(page.get_by_role("dialog", name="删除模型配置"), "确认删除").click()
+        expect(card).to_have_count(0)
+    finally:
+        page.close()
+    print("PASS local model settings import and export from an authenticated student session")
 
 
 def check_graph_course_switch(browser):
@@ -79,12 +138,19 @@ def check_graph_course_switch(browser):
     page = browser.new_page(viewport={"width": 1440, "height": 900})
     try:
         page.goto(root + "/#graph")
+        login(page, "student")
         nodes = page.locator(".react-flow__node")
         search = page.get_by_label("搜索知识点")
+        picker = page.get_by_label("图谱资料")
+        demo_title = "机器学习基础：梯度下降与过拟合"
+        # The upload scenario puts its new course first. Search in the seeded course, then switch away.
+        picker.select_option(label=demo_title)
+        other_titles = [title for title in picker.locator("option").all_text_contents() if title != demo_title]
+        assert other_titles, "The graph switch requires the second course uploaded by the student flow."
         expect(nodes.first).to_be_visible()
         search.fill("学习率")
         expect(nodes).to_have_count(1)
-        page.get_by_label("图谱资料").select_option(index=1)
+        picker.select_option(label=other_titles[0])
         expect(search).to_have_value("")
         expect(page.locator(".react-flow__edge").first).to_be_visible()
         search.fill("没有这个知识点")
@@ -109,6 +175,7 @@ def check_graph_load_failure(browser):
     try:
         page.route(re.compile(r"/src/Insights\.tsx(?:\?|$)"), lambda route: route.abort(), times=1)
         page.goto(root)
+        login(page, "student")
         button(page, "知识图谱").click()
         expect(page.get_by_role("alert")).to_contain_text("图谱加载失败")
         expect(button(page, "学习资料库")).to_be_visible()
@@ -287,9 +354,10 @@ if __name__ == "__main__":
     with sync_playwright() as playwright:
         browser = playwright.chromium.launch(channel=os.environ.get("FM_BROWSER", "msedge"))
         try:
-            check_graph_course_switch(browser)
+            check_account_gate(browser)
             check_graph_load_failure(browser)
             check_local_model_settings(browser)
             run(browser)
+            check_graph_course_switch(browser)
         finally:
             browser.close()

@@ -14,7 +14,7 @@ from sqlalchemy import select
 from app.core.config import settings
 from app.db.models import (
     CognitiveItem, DiagnosticReport, Document, KnowledgeEdge, KnowledgeNode,
-    Message, Session, User, WeaknessLog, public,
+    Message, Session, User, WeaknessLog, next_account_id, public,
 )
 from app.schemas.responses import (
     CognitiveItemOut, DocumentOut, EdgeOut, MessageOut, NodeOut, ReportOut, SessionOut,
@@ -30,6 +30,7 @@ MAX_SOURCE = 20 * 1024**2
 
 
 class SavedDocument(DocumentOut):
+    library_id: int | None = None
     file_type: Literal["pdf", "docx", "md", "txt"]
     has_source: bool
     chunks: list[str]
@@ -67,7 +68,7 @@ def new_account(db, name, *, imported=False):
         suffix = "（导入）" if index == 1 else f"（导入 {index}）"
         label = name[:64 - len(suffix)] + suffix
         index += 1
-    user = User(username="local_" + uuid4().hex, nickname=label, password_hash="")
+    user = User(id=next_account_id(db), username="local_" + uuid4().hex, nickname=label, password_hash="")
     db.add(user)
     db.flush()
     return user
@@ -173,12 +174,18 @@ def restore(db, user, archive, backup, paths, indexed):
             paths.append(path)
             with path.open("xb") as dest, archive.open(record.entry()) as source:
                 shutil.copyfileobj(source, dest)
-        values = record.model_dump(exclude={"id", "user_id", "has_source", "chunks"})
+        values = record.model_dump(exclude={"id", "user_id", "has_source", "chunks", "library_id"})
         if record.parse_status in ("processing", "pending"):
             values.update(parse_status="failed", error_message="导入后可重新解析")
         return {**values, "user_id": user.id, "file_path": str(path), "chunk_count": len(record.chunks)}
 
     docs = insert(Document, backup.documents, document_values)
+    for record in backup.documents:
+        if record.library_id is not None:
+            library = docs.get(record.library_id)
+            if record.is_library or not library or not library.is_library:
+                raise ValueError("备份中的资料库归属无效。")
+            docs[record.id].library_id = library.id
 
     def doc_values(record, exclude=()):
         return {**record.model_dump(exclude={"id", "doc_id", *exclude}), "doc_id": docs[record.doc_id].id}

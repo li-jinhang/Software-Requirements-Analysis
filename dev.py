@@ -15,6 +15,8 @@ def ensure_langgraph(python: Path, backend: Path):
     probe = [
         python,
         "-c",
+        "import yaml, jsonschema; "
+        "from mcp.client.streamable_http import streamable_http_client; "
         "from langgraph.config import get_stream_writer; "
         "from langgraph.graph import END, START, StateGraph; "
         "from langgraph.runtime import Runtime",
@@ -29,7 +31,7 @@ def ensure_langgraph(python: Path, backend: Path):
     if subprocess.run(install, cwd=backend).returncode != 0:
         sys.exit("后端依赖安装失败，请查看上方 pip 输出。")
     if subprocess.run(probe, cwd=backend).returncode != 0:
-        sys.exit("LangGraph 仍无法导入，请检查上方 Python 错误。")
+        sys.exit("后端依赖仍无法导入，请检查上方 Python 错误。")
 
 
 def main():

@@ -14,9 +14,10 @@ from starlette.background import BackgroundTask
 
 from app.core.security import current_user, require_local_workbench, token
 from app.db.database import get_db
-from app.db.models import User, public
+from app.db.models import Document, RetiredAccountId, User, public
 from app.schemas import AuthOut, UserOut
 from app.services import account_backup as backup
+from app.services.memory_service import delete_documents
 
 
 router = APIRouter(
@@ -31,6 +32,11 @@ class AccountName(BaseModel):
 
 class AccountAccess(BaseModel):
     password: str = Field(default="", max_length=72)
+
+
+class AccountDeletion(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    confirmation: str = Field(max_length=32)
 
 
 class LocalAccount(UserOut):
@@ -88,6 +94,23 @@ def export(db=Depends(get_db), user=Depends(current_user)):
         path, filename=f"{user.nickname}.zip", media_type="application/zip",
         headers={"Cache-Control": "no-store"}, background=BackgroundTask(path.unlink, missing_ok=True),
     )
+
+
+@router.delete("/current", status_code=204)
+def remove_current(body: AccountDeletion, db=Depends(get_db), user=Depends(current_user)):
+    if body.confirmation != "确认删除":
+        raise HTTPException(422, "请输入完整的「确认删除」。")
+    db.connection().exec_driver_sql("BEGIN IMMEDIATE")
+    if db.get(User, user.id, populate_existing=True) is None:
+        raise HTTPException(401, "请重新登录。")
+    docs = list(db.scalars(select(Document).where(Document.user_id == user.id)))
+    if any(doc.parse_status == "processing" for doc in docs):
+        raise HTTPException(409, "还有资料正在解析，请解析完成后再删除账号。")
+    db.add(RetiredAccountId(id=user.id))
+    db.delete(user)
+    delete_documents(db, docs)
+    from app.services.extension_store import purge_account
+    purge_account(user.id)
 
 
 @router.post("/import", status_code=201, response_model=AuthOut)

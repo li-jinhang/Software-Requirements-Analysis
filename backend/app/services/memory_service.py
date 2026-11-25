@@ -3,6 +3,7 @@
 import re
 import json
 import heapq
+import logging
 from graphlib import CycleError, TopologicalSorter
 from pathlib import Path
 from collections import defaultdict
@@ -382,7 +383,8 @@ def export_memory_markdown(db, doc_id):
 
 def _finish_delete(marker, doc_id, filename):
     rag_store.remove(doc_id)
-    (settings.data_dir / "uploads" / Path(filename).name).unlink(missing_ok=True)
+    if filename:
+        (settings.data_dir / "uploads" / Path(filename).name).unlink(missing_ok=True)
     marker.unlink(missing_ok=True)
 
 
@@ -397,6 +399,10 @@ def recover_deletions(db):
 
 
 def delete_document(db, doc):
+    delete_documents(db, [doc])
+
+
+def _stage_delete(doc):
     doc_id, filename = doc.id, Path(doc.file_path).name
     marker = settings.data_dir / f".delete-{doc_id}.pending"
     with NamedTemporaryFile(
@@ -404,6 +410,18 @@ def delete_document(db, doc):
     ) as temp:
         temp.write(filename)
     Path(temp.name).replace(marker)
-    db.delete(doc)
+    return marker, doc_id, filename
+
+
+def delete_documents(db, docs):
+    """Journal file and index cleanup, then commit the caller's changes once."""
+    removals = [_stage_delete(doc) for doc in docs]
+    for doc in docs:
+        db.delete(doc)
     db.commit()
-    _finish_delete(marker, doc_id, filename)
+    for marker, doc_id, filename in removals:
+        try:
+            _finish_delete(marker, doc_id, filename)
+        except Exception:
+            # The SQL deletion is final. The existing journal will retry physical cleanup on startup.
+            logging.getLogger(__name__).exception("资料 %s 的删除清理将在重启时重试", doc_id)

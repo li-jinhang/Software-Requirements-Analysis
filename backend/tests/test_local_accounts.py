@@ -2,6 +2,7 @@
 
 from io import BytesIO
 import json
+import sqlite3
 from zipfile import ZipFile
 
 from test_smoke import server
@@ -70,3 +71,77 @@ def test_local_accounts_round_trip_without_cross_account_access(server):
             archive.writestr(name, data)
     assert server.post(ACCOUNTS + "/import", files={"file": ("broken.zip", broken.getvalue())}).status_code == 422
     assert server.get(ACCOUNTS).json() == roster
+
+
+def test_delete_requires_exact_confirmation_and_removes_only_current_account(server):
+    roster = server.get(ACCOUNTS).json()
+    student_id = next(account["id"] for account in roster if account["username"] == "student")
+    original = auth(server.post(f"{ACCOUNTS}/{student_id}/activate", json={"password": "123456"}))
+    backup = server.get(ACCOUNTS + "/export", headers=original)
+    backup.raise_for_status()
+    uploads = server.data_dir / "uploads"
+    sources = set(uploads.iterdir())
+    imported = server.post(ACCOUNTS + "/import", files={"file": ("student.zip", backup.content)})
+    headers = auth(imported)
+    deleted_id = imported.json()["user"]["id"]
+    private_server = server.post("/api/v1/capabilities/servers", headers=headers, json={
+        "name": "账号私有连接", "url": "http://127.0.0.1:1/mcp", "token": "account-private-key",
+    })
+    assert private_server.status_code == 201, private_server.text
+    [new_source] = set(uploads.iterdir()) - sources
+    [doc] = server.get(DOCS, headers=headers).json()
+    [session] = server.get(SESSIONS, headers=headers).json()
+    endpoint = ACCOUNTS + "/current"
+    exact = {"confirmation": "确认删除"}
+    assert server.request("DELETE", endpoint, json=exact).status_code == 401
+    assert server.request("DELETE", endpoint, json=exact,
+                          headers={**headers, "Origin": "https://outside.example"}).status_code == 403
+    for invalid in ({}, {"confirmation": "确认"}, {"confirmation": "确认删除 "}, {**exact, "id": student_id}):
+        assert server.request("DELETE", endpoint, headers=headers, json=invalid).status_code == 422
+    assert server.get(DOCS, headers=headers).json() == [doc]
+    assert new_source.is_file()
+
+    response = server.request("DELETE", endpoint, headers=headers, json=exact)
+    assert response.status_code == 204, response.text
+    assert server.get(ACCOUNTS).json() == roster
+    assert server.get(DOCS, headers=headers).status_code == 401
+    with sqlite3.connect(server.data_dir / "capabilities" / "private.sqlite3") as extensions:
+        assert extensions.execute("SELECT COUNT(*) FROM servers WHERE owner=?", (deleted_id,)).fetchone() == (0,)
+    assert not new_source.exists() and all(source.is_file() for source in sources)
+    assert not (server.data_dir / f".delete-{doc['id']}.pending").exists()
+    with sqlite3.connect(server.data_dir / "feynman.db") as db:
+        for table, column, value in [("users", "id", deleted_id), ("documents", "id", doc["id"]),
+                                     ("knowledge_nodes", "doc_id", doc["id"]), ("sessions", "id", session["id"]),
+                                     ("messages", "session_id", session["id"]),
+                                     ("diagnostic_reports", "session_id", session["id"])]:
+            assert db.execute(f"SELECT COUNT(*) FROM {table} WHERE {column}=?", (value,)).fetchone() == (0,)
+    assert len(server.get(DOCS, headers=original).json()) == 1
+    assert len(server.get(SESSIONS, headers=original).json()) == 1
+    registered = server.post("/api/v1/auth/register", json={
+        "username": "replacement", "nickname": "新注册账号", "password": "test-pass-123",
+    })
+    assert registered.status_code == 201 and registered.json()["id"] > deleted_id
+    replacement = server.post(ACCOUNTS, json={"name": imported.json()["user"]["nickname"]})
+    assert replacement.status_code == 201 and replacement.json()["user"]["id"] > registered.json()["id"]
+    assert server.get(DOCS, headers=headers).status_code == 401
+
+
+def test_seed_leaves_an_intentionally_empty_account_list_empty(tmp_path, monkeypatch):
+    from sqlalchemy import create_engine, select
+    from sqlalchemy.orm import Session
+    from app.core.config import settings
+    from app.db.database import Base
+    from app.db.models import RetiredAccountId, User
+    from app.db.seed import seed
+
+    monkeypatch.setattr(settings, "data_dir", tmp_path)
+    engine = create_engine("sqlite://")
+    try:
+        Base.metadata.create_all(engine)
+        with Session(engine) as db:
+            db.add(RetiredAccountId(id=2))
+            db.commit()
+            seed(db)
+            assert db.scalar(select(User.id)) is None
+    finally:
+        engine.dispose()

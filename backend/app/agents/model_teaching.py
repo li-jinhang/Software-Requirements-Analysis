@@ -5,7 +5,7 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, create_model
 from pydantic_core import from_json
-from sqlalchemy import select
+from sqlalchemy import select, func
 
 from app.agents.contracts import Citation, MemoryUpdate, NodeUpdate, Report, Token, TurnMetadata, tokens
 from app.agents.encyclopedia_agent import Explanation as LessonExplanation
@@ -37,7 +37,8 @@ class GuidedLesson(BaseModel):
 
 def history(db, id):
     rows = db.scalars(
-        select(Message).where(Message.session_id == id).order_by(Message.id.desc()).limit(32)
+        select(Message).where(Message.session_id == id,
+            func.json_extract(Message.meta_json, "$.no_assessment").is_(None)).order_by(Message.id.desc()).limit(32)
     ).all()
     return [
         {"window": m.window_type, "speaker": m.sender_role, "text": m.content[:1600]}

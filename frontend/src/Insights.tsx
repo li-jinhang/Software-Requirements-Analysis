@@ -19,10 +19,10 @@ import { relationLabel, WorkspaceToolbar, type ColorTheme } from "./ui";
 import { CourseText } from "./LearningMessage";
 import "./insights.css";
 import { GraduationCap, Search } from "lucide-react";
+import { MasteryLegend, MasteryProgress, masteryForScore } from "./MasteryProgress";
 echarts.use([RadarChart, RadarComponent, CanvasRenderer]);
 const graphFit = { padding: 0.20, minZoom: 0.025, maxZoom: 1.2 };
 const rowSpacing = 144;
-const nodeTones = { 未学习: "neutral", 已掌握: "green", 巩固中: "amber", 待补漏: "red" };
 
 // Rank the visible graph for display; user dragging and the underlying learning order stay independent.
 function graphPositions(concepts: Concept[], links: Link[]) {
@@ -87,7 +87,7 @@ export function Graph({
       const label = status(n, space.logs);
       return {
         id: n.id, position: positions.get(n.id)!, ariaLabel: n.name + " · " + label + " " + n.score + "%",
-        className: "node " + nodeTones[label],
+        className: "node mastery-node mastery-" + masteryForScore(n.score).tone,
         data: { label: <div className="node-content">
           <div className="node-heading"><i aria-hidden="true" /><strong>{n.name}</strong></div>
           <div className="node-mastery"><span>{label}</span><b>{n.score}%</b></div>
@@ -110,11 +110,13 @@ export function Graph({
           <input aria-label="搜索知识点" placeholder="搜索知识点…" value={query} onChange={(e) => setQuery(e.target.value)} />
         </label>
         <div className="toolbar-actions">
-          <small className="graph-legend" aria-label="掌握状态图例">
-            <span className="green" title="已掌握 ≥80"><i /><span>已掌握</span></span>
-            <span className="amber" title="巩固中 40–79"><i /><span>巩固中</span></span>
-            <span className="red" title="待补漏 &lt;40 或有薄弱记录"><i /><span>待补漏</span></span>
-          </small>
+          <div className="graph-mastery-key">
+            <MasteryLegend />
+            <details>
+              <summary aria-label="掌握进度分档图例">图例</summary>
+              <MasteryLegend />
+            </details>
+          </div>
           <button className="primary compact-command" disabled={starting || !c.nodes.some((n) => n.score < 80)}
             onClick={() => guide(c)} title="按图谱顺序学习">
             <GraduationCap aria-hidden="true" /><span>按图谱顺序学习</span>
@@ -171,10 +173,8 @@ export function Graph({
             <>
               <small>节点详情</small>
               <h2>{current.name}</h2>
-              <span className={"node-status " + nodeTones[status(current, space.logs)]}>
-                {status(current, space.logs)} · {current.score}%
-              </span>
-              <progress value={current.score} max={100} aria-label="当前节点掌握度" />
+              <MasteryProgress key={current.id + ":" + current.score} score={current.score}
+                status={status(current, space.logs)} />
               <div className="node-summary"><CourseText text={current.summary} /></div>
               <h3>薄弱记录</h3>
               {space.logs

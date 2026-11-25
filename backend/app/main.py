@@ -5,7 +5,7 @@ from app.services.model_profiles import ModelError, ModelRequired
 from app.services.chatgpt_login import end_login
 from app.api.v1 import model_settings
 from fastapi.middleware.cors import CORSMiddleware
-from app.api.v1 import auth, documents, sessions, admin, local_accounts
+from app.api.v1 import auth, documents, sessions, admin, local_accounts, capabilities
 from app.core.config import settings
 from app.core.security import signing_key
 from app.db.database import Base, engine, SessionLocal
@@ -85,6 +85,7 @@ async def model_required(request, exc):
 
 for router in (
     auth.router,
+    capabilities.router,
     local_accounts.router,
     documents.router,
     sessions.router,

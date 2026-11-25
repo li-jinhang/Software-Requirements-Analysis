@@ -1,6 +1,6 @@
 import React, { createContext, useContext, useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { ChevronRight, Menu, X, type LucideIcon } from "lucide-react";
+import { Blocks, ChevronRight, Menu, X, type LucideIcon } from "lucide-react";
 export type ColorTheme = "light" | "dark";
 const ToolbarTarget = createContext<HTMLDivElement | null>(null);
 
@@ -10,9 +10,10 @@ type FrameProps = React.PropsWithChildren<{
   heading: boolean;
   navOpen: boolean;
   onMenu: () => void;
+  onCapabilities: () => void;
 }>;
 
-export function WorkspaceFrame({ children, title, icon: Icon, heading, navOpen, onMenu }: FrameProps) {
+export function WorkspaceFrame({ children, title, icon: Icon, heading, navOpen, onMenu, onCapabilities }: FrameProps) {
   const [target, setTarget] = useState<HTMLDivElement | null>(null);
   const Label = heading ? "h1" : "strong";
   return (
@@ -29,6 +30,10 @@ export function WorkspaceFrame({ children, title, icon: Icon, heading, navOpen, 
           <Label>{title}</Label>
         </div>
         <div className="toolbar-slot" ref={setTarget} />
+        <button type="button" className="quiet capabilities-trigger compact-command" title="能力中心"
+          aria-haspopup="dialog" onClick={onCapabilities}>
+          <Blocks aria-hidden="true" /><span>能力中心</span>
+        </button>
       </header>
       <ToolbarTarget.Provider value={target}>{children}</ToolbarTarget.Provider>
     </main>
