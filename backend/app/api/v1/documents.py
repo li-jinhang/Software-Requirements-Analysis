@@ -1,4 +1,14 @@
-from app.schemas.responses import CognitiveDocOut, DocumentOut, NodeOut, GraphOut, ContextOut, LearningStep, ReviewListsOut
+from app.schemas.responses import (
+    CognitiveDocOut,
+    DocumentOut,
+    NodeOut,
+    GraphOut,
+    ContextOut,
+    LearningStep,
+    ReviewChallengeOut,
+    ReviewListsOut,
+    ReviewVerifyOut,
+)
 from pathlib import Path
 from typing import Literal
 from uuid import uuid4
@@ -11,7 +21,7 @@ from app.core.security import current_user
 from app.core.config import settings
 from app.db.database import get_db
 from app.db.models import CognitiveItem, Document, KnowledgeNode, public
-from app.schemas import Note, ReviewFeedback, TimeAdvance
+from app.schemas import Note, ReviewAnswerIn, ReviewFeedback, TimeAdvance
 from app.services import cognitive, course_library, memory_service as memory, review
 from app.services.model_profiles import require_profile
 
@@ -53,6 +63,18 @@ def record_review(doc_id: int, item_id: int, body: ReviewFeedback, db=Depends(ge
 def skip_review(doc_id: int, item_id: int, db=Depends(get_db), user=Depends(current_user)):
     review.skip(db, owned_review_card(db, doc_id, item_id, user))
     return review.lists(db, doc_id)
+
+
+@router.post("/{doc_id}/reviews/{item_id}/ai-challenge", response_model=ReviewChallengeOut)
+def review_ai_challenge(doc_id: int, item_id: int, db=Depends(get_db), user=Depends(current_user)):
+    return review.challenge_card(db, owned_review_card(db, doc_id, item_id, user))
+
+
+@router.post("/{doc_id}/reviews/{item_id}/ai-verify", response_model=ReviewVerifyOut)
+def review_ai_verify(
+    doc_id: int, item_id: int, body: ReviewAnswerIn, db=Depends(get_db), user=Depends(current_user)
+):
+    return review.verify_answer(db, owned_review_card(db, doc_id, item_id, user), body.answer)
 
 
 @router.post("/{doc_id}/simulate-time-advance", response_model=ReviewListsOut)

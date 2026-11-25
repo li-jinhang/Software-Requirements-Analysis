@@ -1,5 +1,5 @@
 import {
-  CognitiveDoc, CognitiveUpdate, Correction, ReviewCard, ReviewLists,
+  CognitiveDoc, CognitiveUpdate, Correction, ReviewCard, ReviewChallenge, ReviewLists, ReviewVerifyResult,
   CourseCitation,
   Concept,
   Course,
@@ -315,6 +315,10 @@ export const reviews = {
     }),
   skip: (doc: string, item: number, signal: AbortSignal) =>
     json<ReviewLists>(`/documents/${doc}/reviews/${item}/skip`, { ...post({}), signal }),
+  aiChallenge: (doc: string, item: number, signal?: AbortSignal) =>
+    json<ReviewChallenge>(`/documents/${doc}/reviews/${item}/ai-challenge`, { ...post({}), signal }),
+  aiVerify: (doc: string, item: number, answer: string, signal?: AbortSignal) =>
+    json<ReviewVerifyResult>(`/documents/${doc}/reviews/${item}/ai-verify`, { ...post({ answer }), signal }),
 };
 async function createSession(doc: string, role: string, node?: string, options?: {
   mode: "assessment" | "guided";
